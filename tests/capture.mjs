@@ -1,0 +1,12 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1448, height: 1086 }, deviceScaleFactor: 1 });
+const errors = [];
+page.on('pageerror', e => errors.push(e.message));
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+await page.goto('http://127.0.0.1:5173', { waitUntil: 'networkidle' });
+await page.locator('canvas').waitFor();
+await page.waitForTimeout(1800);
+await page.screenshot({ path: 'docs/screenshots/hero-desktop.png' });
+console.log(JSON.stringify({ title: await page.title(), canvas: await page.locator('canvas').count(), errors, screenshot: 'docs/screenshots/hero-desktop.png' }));
+await browser.close();
