@@ -1,11 +1,18 @@
 import { test, expect } from '@playwright/test';
 const key = 'desktwin.workspace.v1';
 let pageErrors: string[] = [];
-test.beforeEach(async ({ page }) => { pageErrors = []; page.on('pageerror', e => pageErrors.push(e.message)); });
-test.afterEach(() => { expect(pageErrors).toEqual([]); });
+test.beforeEach(async ({ page }) => {
+  pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+});
+test.afterEach(() => {
+  expect(pageErrors).toEqual([]);
+});
 test('renders a real canvas without claiming detected hardware', async ({ page }) => {
-  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto('/'); await expect(page.getByTestId('desk-canvas')).toBeVisible();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await expect(page.getByTestId('desk-canvas')).toBeVisible();
   await expect(page.getByText('예시 기반 3D 장면 · 실시간 감지 아님')).toBeVisible();
   await page.getByRole('button', { name: '기기 목록', exact: true }).click();
   await expect(page.getByRole('button', { name: /MacBook 노트북/ })).toBeVisible();
@@ -15,122 +22,210 @@ test('renders a real canvas without claiming detected hardware', async ({ page }
   expect(errors).toEqual([]);
 });
 test('adds a device and persists across reload', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '기기 추가', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('button', { name: '기기 추가', exact: true }).click();
   const modal = page.getByRole('dialog', { name: '기기 추가' });
   await modal.getByLabel('기기 이름').fill('테스트 디스플레이');
   await modal.getByRole('button', { name: '내 책상에 추가' }).click();
-  await page.reload(); await page.getByRole('button', { name: '기기 목록', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '기기 목록', exact: true }).click();
   await expect(page.getByRole('button', { name: /테스트 디스플레이 모니터/ })).toBeVisible();
-  const stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key);
-  expect(stored.devices.find((d: {name: string}) => d.name === '테스트 디스플레이').source).toBe('user-reported');
-  expect(stored.devices.find((d: {name: string}) => d.name === '테스트 디스플레이').status).toBe('unknown');
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.devices.find((d: { name: string }) => d.name === '테스트 디스플레이').source).toBe(
+    'user-reported',
+  );
+  expect(stored.devices.find((d: { name: string }) => d.name === '테스트 디스플레이').status).toBe(
+    'unknown',
+  );
 });
 test('conversation proposals require confirmation and never verify operation', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('textbox', { name: 'DeskTwin에게 메시지' }).fill('오른쪽 모니터를 Dock에 HDMI로 연결했어');
+  await page
+    .getByRole('textbox', { name: 'DeskTwin에게 메시지' })
+    .fill('오른쪽 모니터를 Dock에 HDMI로 연결했어');
   await page.getByRole('button', { name: '메시지 보내기' }).click();
   await expect(page.getByRole('button', { name: '확인하고 반영' })).toBeVisible();
-  expect(await page.evaluate(k => localStorage.getItem(k), key)).toBeNull();
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: '확인하고 반영' }).click();
-  const stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key);
-  expect(stored.connections.filter((c: {source: string}) => c.source === 'user-reported')).toHaveLength(1);
-  expect(stored.devices.every((d: {status: string}) => d.status === 'unknown')).toBe(true);
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(
+    stored.connections.filter((c: { source: string }) => c.source === 'user-reported'),
+  ).toHaveLength(1);
+  expect(stored.devices.every((d: { status: string }) => d.status === 'unknown')).toBe(true);
   await expect(page.getByText('확인 후 반영됨')).toBeVisible();
 });
 test('supports manual connections and undo', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '연결 보기', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('button', { name: '연결 보기', exact: true }).click();
   await page.getByRole('button', { name: '연결 추가', exact: true }).click();
   const modal = page.getByRole('dialog', { name: '연결 관계 알려주기' });
-  await modal.getByLabel('첫 번째 기기').selectOption('laptop'); await modal.getByLabel('두 번째 기기').selectOption('monitor-right');
+  await modal.getByLabel('첫 번째 기기').selectOption('laptop');
+  await modal.getByLabel('두 번째 기기').selectOption('monitor-right');
   await modal.getByLabel('연결 방식').selectOption('HDMI');
   await modal.getByRole('button', { name: '사용자 입력으로 저장' }).click();
-  let stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key); expect(stored.connections).toHaveLength(8);
+  let stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.connections).toHaveLength(8);
   await page.getByRole('button', { name: '실행 취소', exact: true }).click();
-  stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key); expect(stored.connections).toHaveLength(7);
+  stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.connections).toHaveLength(7);
 });
 test('rejects invalid import without replacing the workspace', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '설정 열기' }).click();
-  await page.getByLabel('작업실 이름').fill('보존할 작업실'); await page.getByRole('dialog').getByLabel('조명').focus();
-  const before = await page.evaluate(k => localStorage.getItem(k), key);
-  await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"schemaVersion":999}') });
-  await expect(page.getByText('올바른 DeskTwin v1 JSON 파일이 아닙니다. 기존 구성은 유지했습니다.')).toBeVisible();
-  expect(await page.evaluate(k => localStorage.getItem(k), key)).toBe(before);
+  await page.goto('/');
+  await page.getByRole('button', { name: '설정 열기' }).click();
+  await page.getByLabel('작업실 이름').fill('보존할 작업실');
+  await page.getByRole('dialog').getByLabel('조명').focus();
+  const before = await page.evaluate((k) => localStorage.getItem(k), key);
+  await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles({
+    name: 'bad.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"schemaVersion":999}'),
+  });
+  await expect(
+    page.getByText('올바른 DeskTwin v1 JSON 파일이 아닙니다. 기존 구성은 유지했습니다.'),
+  ).toBeVisible();
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBe(before);
 });
 test('mobile layout fits the viewport and opens a usable device dialog', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 }); await page.goto('/');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
   await page.getByRole('button', { name: '기기 추가', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await page.screenshot({ path: 'docs/screenshots/hero-mobile.png' });
 });
 test('guided troubleshooting records only an explicit user test', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '기기 목록', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('button', { name: '기기 목록', exact: true }).click();
   await page.getByRole('button', { name: /오른쪽 모니터 모니터/ }).click();
   await page.getByRole('button', { name: '모니터 문제 단계별 확인' }).click();
   await expect(page.getByRole('heading', { name: '전원과 입력 소스 확인' })).toBeVisible();
   await page.getByRole('button', { name: '여전히 안 나와요' }).click();
   await expect(page.getByRole('heading', { name: '현재 케이블 연결 확인' })).toBeVisible();
   await page.getByRole('button', { name: '화면이 나와요' }).click();
-  expect(await page.evaluate(k => localStorage.getItem(k), key)).toBeNull();
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: '확인 결과를 사용자 보고로 저장' }).click();
-  const stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key);
-  const monitor = stored.devices.find((d: {id: string}) => d.id === 'monitor-right');
-  expect(monitor.status).toBe('reported-working'); expect(monitor.statusNote).toContain('원인은 확정하지 않음');
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  const monitor = stored.devices.find((d: { id: string }) => d.id === 'monitor-right');
+  expect(monitor.status).toBe('reported-working');
+  expect(monitor.statusNote).toContain('원인은 확정하지 않음');
 });
-test('photo selection alone never sends an image; adding a proposal needs a second confirmation', async ({ page }) => {
-  await page.route('**/api/health', route => route.fulfill({ json: { mode: 'meta', model: 'test-model', photoAvailable: true } }));
+test('photo selection alone never sends an image; adding a proposal needs a second confirmation', async ({
+  page,
+}) => {
+  await page.route('**/api/health', (route) =>
+    route.fulfill({ json: { mode: 'meta', model: 'test-model', photoAvailable: true } }),
+  );
   let calls = 0;
-  await page.route('**/api/photo', async route => {
+  await page.route('**/api/photo', async (route) => {
     calls++;
-    const data = route.request().postDataJSON(); expect(data.consent).toBe(true); expect(data.image).toMatch(/^data:image\/jpeg;base64,/);
-    await route.fulfill({ json: { mode: 'meta', message: '사진에서 모니터로 보이는 물체를 찾았습니다.', proposals: [{ type: 'add-device', kind: 'monitor', name: '사진 속 모니터', x: 1, z: -.6, reason: '사진의 시각적 추정' }] } });
+    const data = route.request().postDataJSON();
+    expect(data.consent).toBe(true);
+    expect(data.image).toMatch(/^data:image\/jpeg;base64,/);
+    await route.fulfill({
+      json: {
+        mode: 'meta',
+        message: '사진에서 모니터로 보이는 물체를 찾았습니다.',
+        proposals: [
+          {
+            type: 'add-device',
+            kind: 'monitor',
+            name: '사진 속 모니터',
+            x: 1,
+            z: -0.6,
+            reason: '사진의 시각적 추정',
+          },
+        ],
+      },
+    });
   });
-  await page.goto('/'); await page.getByRole('button', { name: '책상 사진', exact: true }).click();
-  const dataURL = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 8; canvas.height = 8; return canvas.toDataURL('image/png'); });
-  await page.getByLabel('책상 사진 파일').setInputFiles({ name: 'desk.png', mimeType: 'image/png', buffer: Buffer.from(dataURL.split(',')[1], 'base64') });
+  await page.goto('/');
+  await page.getByRole('button', { name: '책상 사진', exact: true }).click();
+  const dataURL = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    return canvas.toDataURL('image/png');
+  });
+  await page.getByLabel('책상 사진 파일').setInputFiles({
+    name: 'desk.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(dataURL.split(',')[1], 'base64'),
+  });
   await expect(page.getByAltText('사용자가 선택한 책상 참고 사진')).toBeVisible();
   expect(calls).toBe(0);
   await expect(page.getByRole('button', { name: 'Meta로 기기·배치 분석' })).toBeDisabled();
   await page.getByRole('checkbox', { name: /이 사진과 기기 구성을/ }).check();
   await page.getByRole('button', { name: 'Meta로 기기·배치 분석' }).click();
-  await expect(page.getByRole('button', { name: '확인하고 추가' })).toBeVisible(); expect(calls).toBe(1);
-  expect(await page.evaluate(k => localStorage.getItem(k), key)).toBeNull();
+  await expect(page.getByRole('button', { name: '확인하고 추가' })).toBeVisible();
+  expect(calls).toBe(1);
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: '확인하고 추가' }).click();
-  const stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key);
-  expect(stored.devices.at(-1).source).toBe('photo-inferred'); expect(stored.devices.at(-1).status).toBe('unknown');
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.devices.at(-1).source).toBe('photo-inferred');
+  expect(stored.devices.at(-1).status).toBe('unknown');
 });
-test('Meta is off until explicitly enabled and provider errors preserve state', async ({ page }) => {
-  await page.route('**/api/health', route => route.fulfill({ json: { mode: 'meta', model: 'test-model', photoAvailable: true } }));
+test('Meta is off until explicitly enabled and provider errors preserve state', async ({
+  page,
+}) => {
+  await page.route('**/api/health', (route) =>
+    route.fulfill({ json: { mode: 'meta', model: 'test-model', photoAvailable: true } }),
+  );
   let calls = 0;
-  await page.route('**/api/chat', async route => { calls++; expect(route.request().postDataJSON().consent).toBe(true); await route.fulfill({ status: 502, json: { error: '테스트용 공급자 오류' } }); });
-  await page.goto('/'); await expect(page.getByText('로컬 데모 · 외부 전송 없음')).toBeVisible();
+  await page.route('**/api/chat', async (route) => {
+    calls++;
+    expect(route.request().postDataJSON().consent).toBe(true);
+    await route.fulfill({ status: 502, json: { error: '테스트용 공급자 오류' } });
+  });
+  await page.goto('/');
+  await expect(page.getByText('로컬 데모 · 외부 전송 없음')).toBeVisible();
   await page.getByRole('button', { name: 'Meta API 연결' }).click();
   await page.getByRole('button', { name: '전송 내용을 확인했고 Meta 연결 켜기' }).click();
-  await page.getByRole('textbox', { name: 'DeskTwin에게 메시지' }).fill('오른쪽 모니터를 Dock에 연결했어');
+  await page
+    .getByRole('textbox', { name: 'DeskTwin에게 메시지' })
+    .fill('오른쪽 모니터를 Dock에 연결했어');
   await page.getByRole('button', { name: '메시지 보내기' }).click();
-  await expect(page.getByText(/테스트용 공급자 오류/)).toBeVisible(); expect(calls).toBe(1);
-  expect(await page.evaluate(k => localStorage.getItem(k), key)).toBeNull();
+  await expect(page.getByText(/테스트용 공급자 오류/)).toBeVisible();
+  expect(calls).toBe(1);
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
 });
 test('position changes and deletes can be undone', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '배치 편집', exact: true }).first().click();
+  await page.goto('/');
+  await page.getByRole('button', { name: '배치 편집', exact: true }).first().click();
   await page.getByRole('button', { name: '기기 목록', exact: true }).click();
   await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
   await page.getByRole('slider', { name: '기기 좌우 위치' }).fill('1.25');
-  let stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key);
-  expect(stored.devices.find((d: {id: string}) => d.id === 'dock').placement.x).toBe(1.25);
+  let stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.devices.find((d: { id: string }) => d.id === 'dock').placement.x).toBe(1.25);
   await page.getByRole('button', { name: '기기 삭제', exact: true }).click();
   await page.getByRole('button', { name: '삭제 확인', exact: true }).click();
-  stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key); expect(stored.devices).toHaveLength(7);
-  expect(stored.connections.some((c: {from: string; to: string}) => c.from === 'dock' || c.to === 'dock')).toBe(false);
+  stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.devices).toHaveLength(7);
+  expect(
+    stored.connections.some(
+      (c: { from: string; to: string }) => c.from === 'dock' || c.to === 'dock',
+    ),
+  ).toBe(false);
   await page.getByRole('button', { name: '실행 취소', exact: true }).click();
-  stored = await page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key); expect(stored.devices).toHaveLength(8);
+  stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
+  expect(stored.devices).toHaveLength(8);
 });
 test('exports inspectable workspace JSON without chat or photos', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: '설정 열기' }).click();
-  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'JSON 내보내기' }).click();
-  const file = await download; expect(file.suggestedFilename()).toBe('desktwin-workspace.json');
-  const stream = await file.createReadStream(); const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(chunk);
-  const data = JSON.parse(Buffer.concat(chunks).toString()); expect(data.schemaVersion).toBe(1); expect(data.devices).toHaveLength(8); expect(data).not.toHaveProperty('messages'); expect(data).not.toHaveProperty('photo');
+  await page.goto('/');
+  await page.getByRole('button', { name: '설정 열기' }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'JSON 내보내기' }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('desktwin-workspace.json');
+  const stream = await file.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(chunk);
+  const data = JSON.parse(Buffer.concat(chunks).toString());
+  expect(data.schemaVersion).toBe(1);
+  expect(data.devices).toHaveLength(8);
+  expect(data).not.toHaveProperty('messages');
+  expect(data).not.toHaveProperty('photo');
 });
