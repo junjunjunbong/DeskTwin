@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
 import { DiagnosticPanel } from './DiagnosticPanel';
+import { TransformEditor } from './TransformEditor';
 import {
   kindLabels,
   sourceLabels,
@@ -120,37 +121,13 @@ export function DeviceInspector({
               <PencilSimple size={16} />
               Edit placement
             </h3>
-            <p className="muted">Drag in the scene or adjust the values below.</p>
-            {(['x', 'z', 'rotation'] as const).map((axis) => (
-              <label className="range-label" key={axis}>
-                {axis === 'rotation' ? 'Rotation' : axis === 'x' ? 'Left / right' : 'Front / back'}
-                <output>
-                  {d.placement[axis]}
-                  {axis === 'rotation' ? '°' : ''}
-                </output>
-                <input
-                  type="range"
-                  aria-label={
-                    axis === 'rotation'
-                      ? 'Device rotation'
-                      : axis === 'x'
-                        ? 'Device left / right position'
-                        : 'Device front / back position'
-                  }
-                  min={axis === 'rotation' ? -180 : axis === 'x' ? -3.2 : -1.3}
-                  max={axis === 'rotation' ? 180 : axis === 'x' ? 3.2 : 1.3}
-                  step={axis === 'rotation' ? 5 : 0.05}
-                  value={d.placement[axis]}
-                  onChange={(e) =>
-                    onCommand({
-                      type: 'update-device',
-                      id: d.id,
-                      patch: { placement: { ...d.placement, [axis]: Number(e.target.value) } },
-                    })
-                  }
-                />
-              </label>
-            ))}
+            <p className="muted">Drag in the scene or adjust position, size, and color below.</p>
+            <TransformEditor
+              placement={d.placement}
+              visual={d.visual}
+              prefix="Device"
+              onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
+            />
           </section>
         )}
         <section className="panel-section">

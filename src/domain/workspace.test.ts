@@ -88,7 +88,7 @@ describe('evidence-aware workspace', () => {
     expect(() => parseWorkspace(w)).toThrow();
   });
   it('rejects future versions and invalid placement', () => {
-    expect(() => parseWorkspace({ ...createDemoWorkspace(), schemaVersion: 2 })).toThrow();
+    expect(() => parseWorkspace({ ...createDemoWorkspace(), schemaVersion: 3 })).toThrow();
     expect(() =>
       applyCommand(createDemoWorkspace(), {
         type: 'update-device',

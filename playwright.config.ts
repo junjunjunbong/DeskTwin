@@ -12,6 +12,13 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     reducedMotion: 'reduce',
+    // Optional preinstalled Chromium for offline CI; the normal Playwright browser stays default.
+    launchOptions: process.env.DESKTWIN_CHROMIUM_EXECUTABLE
+      ? {
+          executablePath: process.env.DESKTWIN_CHROMIUM_EXECUTABLE,
+          args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+        }
+      : {},
   },
   projects: [
     {

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "name": "My saved desk",
+  "devices": [
+    {
+      "id": "work-laptop",
+      "kind": "laptop",
+      "name": "Work MacBook",
+      "model": "M1 Max",
+      "placement": { "x": -2.1, "z": 0.1, "rotation": 10 },
+      "source": "user-reported",
+      "status": "reported-working",
+      "statusNote": "I checked the display today."
+    },
+    {
+      "id": "my-monitor",
+      "kind": "monitor",
+      "name": "Office monitor",
+      "model": "",
+      "placement": { "x": 1.15, "z": -0.7, "rotation": -8 },
+      "source": "photo-inferred",
+      "status": "reported-issue",
+      "statusNote": "No signal after reconnecting HDMI."
+    }
+  ],
+  "connections": [
+    {
+      "id": "reported-link",
+      "from": "work-laptop",
+      "to": "my-monitor",
+      "connector": "HDMI",
+      "fromPort": "Right HDMI",
+      "toPort": "HDMI 1",
+      "source": "user-reported",
+      "note": "Entered manually. Cable operation not verified."
+    }
+  ],
+  "history": [
+    {
+      "id": "event-legacy",
+      "at": "2026-10-26T14:00:00.000Z",
+      "summary": "Saved a user-reported connection",
+      "source": "user-reported"
+    }
+  ],
+  "appearance": { "lighting": "night", "labels": true, "decor": false }
+}
