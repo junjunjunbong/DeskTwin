@@ -119,6 +119,7 @@ describe('local API and Meta boundary', () => {
     expect(body.response_format.json_schema.strict).toBe(true);
     expect(body.max_completion_tokens).toBe(4096);
     expect(body.messages[0].role).toBe('developer');
+    expect(body.messages[0].content).toContain('English');
   });
   it('rejects nonexistent references without changing data', async () => {
     const fetchImpl = vi
@@ -184,6 +185,7 @@ describe('local API and Meta boundary', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
     expect(body.messages.at(-1).content[1].type).toBe('image_url');
+    expect(body.messages.at(-1).content[0].text).toContain('in English');
   });
   it('does not allow arbitrary URL fetches or non-Meta key destinations', async () => {
     const fetchImpl = vi.fn();

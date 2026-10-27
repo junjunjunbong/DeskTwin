@@ -22,7 +22,7 @@ export function useWorkspace() {
       return {
         workspace: createDemoWorkspace(),
         error:
-          '저장된 구성을 읽지 못해 예시를 열었습니다. 원본은 새 변경을 저장하기 전까지 유지됩니다.',
+          'Could not read the saved workspace, so an example was opened. The original remains until you save a new change.',
       };
     }
   });
@@ -38,7 +38,7 @@ export function useWorkspace() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       setError('');
     } catch {
-      setError('브라우저에 저장하지 못했습니다. JSON으로 내보내면 현재 구성을 보관할 수 있습니다.');
+      setError('Could not save in your browser. Export as JSON to keep the current workspace.');
     }
   }
   function replace(next: Workspace) {

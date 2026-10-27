@@ -82,7 +82,7 @@ export function Modal({
             <span className="eyebrow">YOUR WORKSPACE</span>
             <h2>{title}</h2>
           </div>
-          <button className="icon-button" aria-label="닫기" onClick={onClose}>
+          <button className="icon-button" aria-label="Close" onClick={onClose}>
             <X size={20} />
           </button>
         </div>

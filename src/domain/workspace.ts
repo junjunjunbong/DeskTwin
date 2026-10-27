@@ -91,24 +91,24 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type Source = z.infer<typeof SourceSchema>;
 
 export const kindLabels: Record<DeviceKind, string> = {
-  laptop: '노트북',
-  monitor: '모니터',
+  laptop: 'Laptop',
+  monitor: 'Monitor',
   dock: 'Dock',
-  ssd: '외장 SSD',
-  router: '공유기',
-  keyboard: '키보드',
-  mouse: '마우스',
-  desktop: '데스크톱',
+  ssd: 'External SSD',
+  router: 'Router',
+  keyboard: 'Keyboard',
+  mouse: 'Mouse',
+  desktop: 'Desktop',
 };
 export const sourceLabels: Record<Source, string> = {
-  demo: '예시 데이터',
-  'user-reported': '사용자 입력',
-  'photo-inferred': '사진에서 추정',
+  demo: 'Example data',
+  'user-reported': 'User-reported',
+  'photo-inferred': 'Photo-inferred',
 };
 export const statusLabels: Record<Device['status'], string> = {
-  unknown: '작동 상태 미확인',
-  'reported-working': '사용자: 정상 동작',
-  'reported-issue': '사용자: 문제 있음',
+  unknown: 'Status unknown',
+  'reported-working': 'User reports working',
+  'reported-issue': 'User reports an issue',
 };
 
 export function createDemoWorkspace(): Workspace {
@@ -137,20 +137,20 @@ export function createDemoWorkspace(): Workspace {
     fromPort: '',
     toPort: '',
     source: 'demo',
-    note: '체험용 예시입니다. 실제 연결이 아닙니다.',
+    note: 'Example only. This is not a confirmed connection.',
   });
   return WorkspaceSchema.parse({
     schemaVersion: 1,
-    name: '나의 작은 작업실',
+    name: 'My workspace',
     devices: [
       device('laptop', 'laptop', 'MacBook', -2.1, 0.1, 10),
-      device('monitor-left', 'monitor', '왼쪽 모니터', -0.7, -0.7),
-      device('monitor-right', 'monitor', '오른쪽 모니터', 1.15, -0.7, -8),
+      device('monitor-left', 'monitor', 'Left monitor', -0.7, -0.7),
+      device('monitor-right', 'monitor', 'Right monitor', 1.15, -0.7, -8),
       device('dock', 'dock', 'USB-C Dock', 0.15, 0.05),
-      device('ssd', 'ssd', '외장 SSD', 1.65, 0.6, -12),
-      device('router', 'router', '공유기', 2.55, -0.55),
-      device('keyboard', 'keyboard', '키보드', -0.15, 0.88),
-      device('mouse', 'mouse', '마우스', 0.98, 0.96),
+      device('ssd', 'ssd', 'External SSD', 1.65, 0.6, -12),
+      device('router', 'router', 'Router', 2.55, -0.55),
+      device('keyboard', 'keyboard', 'Keyboard', -0.15, 0.88),
+      device('mouse', 'mouse', 'Mouse', 0.98, 0.96),
     ],
     connections: [
       edge('laptop', 'dock', 'USB-C'),
@@ -164,6 +164,37 @@ export function createDemoWorkspace(): Workspace {
     history: [],
     appearance: { lighting: 'sunset', labels: false, decor: true },
   });
+}
+
+/**
+ * Translate only unchanged defaults from the original Korean demo for display.
+ * User-authored values and the stored workspace are never changed by this function.
+ */
+export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
+  const localized = structuredClone(workspace);
+  if (localized.name === '나의 작은 작업실') localized.name = 'My workspace';
+
+  const legacyDeviceNames: Record<string, { original: string; english: string }> = {
+    'monitor-left': { original: '왼쪽 모니터', english: 'Left monitor' },
+    'monitor-right': { original: '오른쪽 모니터', english: 'Right monitor' },
+    ssd: { original: '외장 SSD', english: 'External SSD' },
+    router: { original: '공유기', english: 'Router' },
+    keyboard: { original: '키보드', english: 'Keyboard' },
+    mouse: { original: '마우스', english: 'Mouse' },
+  };
+  for (const device of localized.devices) {
+    const legacy = legacyDeviceNames[device.id];
+    if (device.source === 'demo' && legacy && device.name === legacy.original)
+      device.name = legacy.english;
+  }
+  for (const connection of localized.connections) {
+    if (
+      connection.source === 'demo' &&
+      connection.note === '체험용 예시입니다. 실제 연결이 아닙니다.'
+    )
+      connection.note = 'Example only. This is not a confirmed connection.';
+  }
+  return localized;
 }
 
 export type WorkspaceCommand =
@@ -186,19 +217,18 @@ export function applyCommand(
   switch (command.type) {
     case 'add-device':
       next.devices.push(DeviceSchema.parse(command.device));
-      summary = `${command.device.name} 추가`;
+      summary = `Added ${command.device.name}`;
       break;
     case 'update-device': {
       const index = next.devices.findIndex((d) => d.id === command.id);
-      if (index < 0) throw new Error('기기를 찾지 못했습니다. 최신 구성을 확인해 주세요.');
+      if (index < 0) throw new Error('Device not found. Check the latest workspace.');
       next.devices[index] = DeviceSchema.parse({ ...next.devices[index], ...command.patch });
-      summary = `${next.devices[index].name} 정보 수정`;
+      summary = `Updated ${next.devices[index].name}`;
       break;
     }
     case 'remove-device':
-      if (!next.devices.some((d) => d.id === command.id))
-        throw new Error('기기를 찾지 못했습니다.');
-      summary = `${next.devices.find((d) => d.id === command.id)!.name} 삭제`;
+      if (!next.devices.some((d) => d.id === command.id)) throw new Error('Device not found.');
+      summary = `Removed ${next.devices.find((d) => d.id === command.id)!.name}`;
       next.devices = next.devices.filter((d) => d.id !== command.id);
       next.connections = next.connections.filter(
         (c) => c.from !== command.id && c.to !== command.id,
@@ -210,19 +240,19 @@ export function applyCommand(
         (e) => !((e.from === c.from && e.to === c.to) || (e.from === c.to && e.to === c.from)),
       );
       next.connections.push(c);
-      summary = `${c.connector} 연결 구성 저장 · 작동 여부는 미확인`;
+      summary = `Saved ${c.connector} connection · Working status unverified`;
       break;
     }
     case 'remove-connection':
       next.connections = next.connections.filter((c) => c.id !== command.id);
-      summary = '연결 구성 삭제';
+      summary = 'Removed connection';
       break;
     case 'appearance':
       next.appearance = { ...next.appearance, ...command.patch };
       break;
     case 'rename':
       next.name = command.name;
-      summary = '작업실 이름 변경';
+      summary = 'Renamed workspace';
       break;
   }
   if (summary)

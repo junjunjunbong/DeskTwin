@@ -20,8 +20,8 @@ export function AddDeviceDialog({
   const [kind, setKind] = useState<DeviceKind>('monitor');
   const [name, setName] = useState('');
   return (
-    <Modal title="기기 추가" onClose={onClose}>
-      <p className="muted">사진이 없어도 직접 구성할 수 있습니다.</p>
+    <Modal title="Add device" onClose={onClose}>
+      <p className="muted">You can build your setup without a photo.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -42,7 +42,7 @@ export function AddDeviceDialog({
         }}
       >
         <label>
-          종류
+          Type
           <select value={kind} onChange={(e) => setKind(e.target.value as DeviceKind)}>
             {DeviceKindSchema.options.map((k) => (
               <option key={k} value={k}>
@@ -52,19 +52,19 @@ export function AddDeviceDialog({
           </select>
         </label>
         <label>
-          기기 이름
+          Device name
           <input
             value={name}
             maxLength={60}
             onChange={(e) => setName(e.target.value)}
-            placeholder="예: 작업용 모니터"
+            placeholder="e.g. Work monitor"
           />
         </label>
         <p className="micro-note">
-          추가한 기기는 상태 미확인으로 시작합니다. 배치 편집에서 위치를 옮길 수 있습니다.
+          Added devices start with an unconfirmed status. You can move them in placement editing.
         </p>
         <button className="button primary full" type="submit">
-          <Plus size={18} />내 책상에 추가
+          <Plus size={18} /> Add to my desk
         </button>
       </form>
     </Modal>
@@ -88,8 +88,10 @@ export function ConnectionDialog({
   const [toPort, setToPort] = useState('');
   const valid = from && to && from !== to;
   return (
-    <Modal title="연결 관계 알려주기" onClose={onClose}>
-      <p className="muted">무엇과 무엇을 연결했는지 기록합니다. 실제 작동 여부와는 별개입니다.</p>
+    <Modal title="Record a connection" onClose={onClose}>
+      <p className="muted">
+        Record which devices are connected. This does not confirm whether the connection works.
+      </p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -104,7 +106,7 @@ export function ConnectionDialog({
               fromPort,
               toPort,
               source: 'user-reported',
-              note: '사용자가 연결 구성을 직접 입력했습니다.',
+              note: 'The user entered this connection.',
             },
           });
           onClose();
@@ -112,7 +114,7 @@ export function ConnectionDialog({
       >
         <div className="connection-form-row">
           <label>
-            첫 번째 기기
+            First device
             <select value={from} onChange={(e) => setFrom(e.target.value)}>
               {workspace.devices.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -123,7 +125,7 @@ export function ConnectionDialog({
           </label>
           <ArrowRight size={20} />
           <label>
-            두 번째 기기
+            Second device
             <select value={to} onChange={(e) => setTo(e.target.value)}>
               {workspace.devices.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -134,7 +136,7 @@ export function ConnectionDialog({
           </label>
         </div>
         <label>
-          연결 방식
+          Connector
           <select
             value={connector}
             onChange={(e) => setConnector(e.target.value as Connection['connector'])}
@@ -146,32 +148,32 @@ export function ConnectionDialog({
         </label>
         <div className="two-columns">
           <label>
-            첫 기기의 포트 <span className="muted">선택</span>
+            First device port <span className="muted">optional</span>
             <input
               value={fromPort}
               maxLength={40}
               onChange={(e) => setFromPort(e.target.value)}
-              placeholder="예: 왼쪽 USB-C"
+              placeholder="e.g. Left USB-C"
             />
           </label>
           <label>
-            상대 기기의 포트 <span className="muted">선택</span>
+            Second device port <span className="muted">optional</span>
             <input
               value={toPort}
               maxLength={40}
               onChange={(e) => setToPort(e.target.value)}
-              placeholder="예: HDMI 1"
+              placeholder="e.g. HDMI 1"
             />
           </label>
         </div>
         {from === to && (
           <p role="alert" className="form-error">
-            서로 다른 기기를 선택하세요.
+            Select two different devices.
           </p>
         )}
         <button className="button primary full" disabled={!valid} type="submit">
           <Link size={18} />
-          사용자 입력으로 저장
+          Save as user-reported
         </button>
       </form>
     </Modal>

@@ -29,17 +29,17 @@ export function AssistantPanel({
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages, pending]);
   const deviceName = (id: string) =>
-    workspace.devices.find((d) => d.id === id)?.name || '삭제된 기기';
+    workspace.devices.find((d) => d.id === id)?.name || 'Deleted device';
   const title = (p: Proposal) =>
     p.type === 'connect'
       ? `${deviceName(p.from)} ↔ ${deviceName(p.to)} · ${p.connector}`
       : p.type === 'add-device'
-        ? `${p.name} 추가`
+        ? `Add ${p.name}`
         : p.type === 'rename-device'
           ? `${deviceName(p.deviceId)} → ${p.name}`
-          : `${deviceName(p.deviceId)} · 사용자 상태 보고`;
+          : `${deviceName(p.deviceId)} · user-reported status`;
   return (
-    <aside className="floating-panel assistant-panel" aria-label="DeskTwin 대화">
+    <aside className="floating-panel assistant-panel" aria-label="DeskTwin conversation">
       <div className="panel-heading">
         <div className="device-heading">
           <span className="assistant-glyph">
@@ -48,11 +48,11 @@ export function AssistantPanel({
           <div>
             <h2>DeskTwin Assistant</h2>
             <small className="muted">
-              {mode === 'demo' ? '로컬 데모 · LLM 미연결' : 'Meta AI · 서버 연결'}
+              {mode === 'demo' ? 'Local demo · no LLM connected' : 'Meta AI · server connected'}
             </small>
           </div>
         </div>
-        <button className="icon-button" aria-label="대화 닫기" onClick={onClose}>
+        <button className="icon-button" aria-label="Close conversation" onClick={onClose}>
           <X size={19} />
         </button>
       </div>
@@ -61,30 +61,33 @@ export function AssistantPanel({
           <div className="assistant-intro">
             <span className="eyebrow">A LITTLE CONTEXT GOES A LONG WAY</span>
             <h3>
-              내 책상을,
+              Understand your desk,
               <br />
-              함께 이해해요.
+              together.
             </h3>
             <p>
-              사진에는 배치를 맡기고,
+              Start with a photo,
               <br />
-              연결은 직접 알려주세요.
+              then tell us about your connections.
             </p>
             <button
               className="example-prompt"
-              onClick={() => onSend('오른쪽 모니터를 Dock에 HDMI로 연결했어')}
+              onClick={() => onSend('I connected the right monitor to the dock with HDMI')}
             >
-              오른쪽 모니터를 Dock에 HDMI로 연결했어
+              I connected the right monitor to the dock with HDMI
               <ArrowRight size={17} />
             </button>
-            <button className="example-prompt" onClick={() => onSend('오른쪽 모니터가 안 나와')}>
-              오른쪽 모니터가 안 나와
+            <button
+              className="example-prompt"
+              onClick={() => onSend('The right monitor is not displaying')}
+            >
+              The right monitor is not displaying
               <ArrowRight size={17} />
             </button>
             <p className="micro-note">
-              AI 제안은 확인 후에만 반영합니다.
+              AI suggestions are applied only after your confirmation.
               <br />
-              기기 조작이나 시스템 변경은 수행하지 않습니다.
+              DeskTwin does not control devices or change system settings.
             </p>
           </div>
         )}
@@ -92,10 +95,10 @@ export function AssistantPanel({
           <div key={m.id} className={`chat-message ${m.role}`}>
             <div className="message-author">
               {m.role === 'user'
-                ? '나'
+                ? 'You'
                 : m.mode === 'meta'
                   ? 'DeskTwin · Meta'
-                  : 'DeskTwin · 로컬 데모'}
+                  : 'DeskTwin · local demo'}
             </div>
             <p>{m.content}</p>
             {m.proposals.map((p, i) => {
@@ -107,15 +110,15 @@ export function AssistantPanel({
                   {decisions[key] ? (
                     <span className="applied-note">
                       <Check size={14} />
-                      {decisions[key] === 'applied' ? '확인 후 반영됨' : '반영하지 않음'}
+                      {decisions[key] === 'applied' ? 'Applied after confirmation' : 'Dismissed'}
                     </span>
                   ) : (
                     <div className="proposal-actions">
                       <button className="button primary" onClick={() => onApply(p, key)}>
-                        확인하고 반영
+                        Confirm and apply
                       </button>
                       <button className="text-button" onClick={() => onDismiss(key)}>
-                        취소
+                        Cancel
                       </button>
                     </div>
                   )}
@@ -127,15 +130,15 @@ export function AssistantPanel({
         {pending && (
           <div className="assistant-pending" role="status">
             <span className="loading-dot" />
-            구성을 살펴보고 있어요.
+            Reviewing your setup.
           </div>
         )}
         <div ref={end} />
       </div>
       <div className="panel-footnote">
         {mode === 'demo'
-          ? '로컬 데모는 외부 API로 데이터를 전송하지 않습니다.'
-          : '전송한 대화와 기기 구성을 Meta 모델이 처리합니다.'}
+          ? 'The local demo does not send data to an external API.'
+          : 'Your submitted conversation and device setup are processed by a Meta model.'}
       </div>
     </aside>
   );

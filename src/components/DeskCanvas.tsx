@@ -55,11 +55,11 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
       {error ? (
         <div className="scene-error" role="status">
           <WarningCircle size={36} />
-          <h2>3D 화면을 열 수 없습니다</h2>
+          <h2>Unable to open the 3D view</h2>
           <p>
-            WebGL 2를 지원하는 브라우저에서 하드웨어 가속을 켜 주세요.
+            Enable hardware acceleration in a browser that supports WebGL 2.
             <br />
-            기기 목록과 연결 편집은 계속 사용할 수 있습니다.
+            You can still use the device list and edit connections.
           </p>
         </div>
       ) : (
@@ -72,7 +72,7 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
               className={`device-marker ${d.status === 'reported-issue' ? 'has-issue' : ''}`}
               style={{ left: marker.x, top: marker.y }}
               onClick={() => props.onSelect(d.id)}
-              aria-label={`${d.name} 선택`}
+              aria-label={`Select ${d.name}`}
             >
               <Monitor size={20} />
               <span>

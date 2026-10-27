@@ -39,7 +39,7 @@ export function DeviceInspector({
   }, [d.name, d.model, d.status, d.statusNote]);
   const links = workspace.connections.filter((c) => c.from === d.id || c.to === d.id);
   return (
-    <aside className="floating-panel inspector" aria-label="선택한 기기">
+    <aside className="floating-panel inspector" aria-label="Selected device">
       <div className="panel-heading">
         <div className="device-heading">
           <span className="device-glyph">
@@ -50,14 +50,14 @@ export function DeviceInspector({
             <h2>{d.name}</h2>
           </div>
         </div>
-        <button className="icon-button" onClick={onClose} aria-label="기기 상세 닫기">
+        <button className="icon-button" onClick={onClose} aria-label="Close device details">
           <X size={19} />
         </button>
       </div>
       <div className="panel-scroll">
         <div className="evidence-row">
           <span className={`source-badge ${d.source}`}>{sourceLabels[d.source]}</span>
-          <span className="muted">실시간 감지 아님</span>
+          <span className="muted">Not detected in real time</span>
         </div>
         <form
           onSubmit={(e) => {
@@ -66,31 +66,30 @@ export function DeviceInspector({
               type: 'update-device',
               id: d.id,
               patch: {
-                name,
+                ...(name !== d.name ? { name } : {}),
                 model,
                 source: name !== d.name || model !== d.model ? 'user-reported' : d.source,
                 status,
-                statusNote:
-                  status === 'unknown' ? '' : note || '사용자가 직접 상태를 입력했습니다.',
+                statusNote: status === 'unknown' ? '' : note || 'The user reported this status.',
               },
             });
           }}
         >
           <label>
-            기기 이름
+            Device name
             <input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} required />
           </label>
           <label>
-            모델명 <span className="muted">선택 사항</span>
+            Model <span className="muted">optional</span>
             <input
               value={model}
               maxLength={100}
-              placeholder="정확한 모델을 알고 있나요?"
+              placeholder="Do you know the exact model?"
               onChange={(e) => setModel(e.target.value)}
             />
           </label>
           <label>
-            작동 상태 <span className="muted">사용자 확인</span>
+            Operating status <span className="muted">user-reported</span>
             <select value={status} onChange={(e) => setStatus(e.target.value as Device['status'])}>
               {Object.entries(statusLabels).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -101,30 +100,30 @@ export function DeviceInspector({
           </label>
           {status !== 'unknown' && (
             <label>
-              확인한 내용
+              What did you check?
               <textarea
                 value={note}
                 maxLength={300}
-                placeholder="예: 직접 연결한 뒤 화면이 나왔어요."
+                placeholder="e.g. The screen worked after connecting it directly."
                 onChange={(e) => setNote(e.target.value)}
               />
             </label>
           )}
           <button className="button secondary full" type="submit">
             <Check size={17} />
-            기기 정보 저장
+            Save device details
           </button>
         </form>
         {mode === 'edit' && (
           <section className="panel-section">
             <h3>
               <PencilSimple size={16} />
-              배치 편집
+              Edit placement
             </h3>
-            <p className="muted">장면에서 드래그하거나 아래 값을 조절하세요.</p>
+            <p className="muted">Drag in the scene or adjust the values below.</p>
             {(['x', 'z', 'rotation'] as const).map((axis) => (
               <label className="range-label" key={axis}>
-                {axis === 'rotation' ? '회전' : axis === 'x' ? '좌우' : '앞뒤'}
+                {axis === 'rotation' ? 'Rotation' : axis === 'x' ? 'Left / right' : 'Front / back'}
                 <output>
                   {d.placement[axis]}
                   {axis === 'rotation' ? '°' : ''}
@@ -133,10 +132,10 @@ export function DeviceInspector({
                   type="range"
                   aria-label={
                     axis === 'rotation'
-                      ? '기기 회전'
+                      ? 'Device rotation'
                       : axis === 'x'
-                        ? '기기 좌우 위치'
-                        : '기기 앞뒤 위치'
+                        ? 'Device left / right position'
+                        : 'Device front / back position'
                   }
                   min={axis === 'rotation' ? -180 : axis === 'x' ? -3.2 : -1.3}
                   max={axis === 'rotation' ? 180 : axis === 'x' ? 3.2 : 1.3}
@@ -157,15 +156,15 @@ export function DeviceInspector({
         <section className="panel-section">
           <div className="section-heading">
             <h3>
-              연결 구성 <span className="count">{links.length}</span>
+              Connections <span className="count">{links.length}</span>
             </h3>
             <button className="text-button" onClick={onConnect}>
               <Link size={15} />
-              추가
+              Add
             </button>
           </div>
           {links.length === 0 ? (
-            <p className="empty-copy">아직 기록된 연결이 없습니다.</p>
+            <p className="empty-copy">No connections recorded yet.</p>
           ) : (
             links.map((c) => {
               const other = workspace.devices.find(
@@ -182,7 +181,7 @@ export function DeviceInspector({
                   </div>
                   <button
                     className="icon-button small"
-                    aria-label={`${other.name} 연결 삭제`}
+                    aria-label={`Remove connection to ${other.name}`}
                     onClick={() => onCommand({ type: 'remove-connection', id: c.id })}
                   >
                     <X size={15} />
@@ -191,7 +190,7 @@ export function DeviceInspector({
               );
             })
           )}
-          <p className="micro-note">연결 기록은 케이블의 현재 동작을 증명하지 않습니다.</p>
+          <p className="micro-note">A recorded connection does not confirm the cable is working.</p>
         </section>
         {d.kind === 'monitor' && (
           <DiagnosticPanel
@@ -209,7 +208,7 @@ export function DeviceInspector({
         )}
         {deleting ? (
           <div className="delete-confirm">
-            <p>기기와 관련 연결을 삭제할까요?</p>
+            <p>Delete this device and its associated connections?</p>
             <button
               className="button danger"
               onClick={() => {
@@ -217,16 +216,16 @@ export function DeviceInspector({
                 onClose();
               }}
             >
-              삭제 확인
+              Confirm deletion
             </button>
             <button className="text-button" onClick={() => setDeleting(false)}>
-              취소
+              Cancel
             </button>
           </div>
         ) : (
           <button className="text-button danger-text" onClick={() => setDeleting(true)}>
             <Trash size={15} />
-            기기 삭제
+            Delete device
           </button>
         )}
       </div>

@@ -7,19 +7,19 @@ export interface DiagnosticState {
 }
 export const diagnosticSteps = [
   {
-    title: '전원과 입력 소스 확인',
-    text: '모니터 전원과 입력 소스(HDMI 또는 DisplayPort)가 실제 연결과 일치하는지 확인해 주세요. 화면이 나오는지 직접 확인합니다.',
-    note: '전원이나 입력이 원인이라고 확정한 것은 아닙니다.',
+    title: 'Check power and input source',
+    text: 'Check that the monitor is powered on and its input source (HDMI or DisplayPort) matches the cable in use. Check the screen yourself.',
+    note: 'This does not establish that power or input is the cause.',
   },
   {
-    title: '현재 케이블 연결 확인',
-    text: '노트북과 모니터 사이의 케이블이 단단히 연결되어 있는지 확인해 주세요. Dock에 저장장치가 있다면 사용 중인 파일을 닫고 안전하게 분리한 뒤 케이블을 다시 연결하세요.',
-    note: '저장장치를 쓰는 중에 Dock을 갑자기 분리하지 마세요.',
+    title: 'Check the current cable connection',
+    text: 'Check that the cable between your laptop and monitor is firmly connected. If a storage device is attached to the dock, close any files in use and safely eject it before reconnecting cables.',
+    note: 'Do not abruptly disconnect the dock while using a storage device.',
   },
   {
-    title: '가능하면 Dock 우회 테스트',
-    text: '기기 설명서에서 지원을 확인한 케이블·포트가 있다면 노트북과 모니터를 직접 연결해 보세요. 호환 여부가 불확실하거나 케이블이 없으면 건너뛰세요.',
-    note: '직접 연결 성공만으로 Dock 고장을 단정할 수 없습니다.',
+    title: 'Test a direct connection if possible',
+    text: 'If your device manuals confirm support for the cable and ports, try connecting the laptop and monitor directly. Skip this step if compatibility is uncertain or you do not have the cable.',
+    note: 'A successful direct connection alone does not prove the dock is faulty.',
   },
 ] as const;
 export function startDiagnosis(deviceId: string): DiagnosticState {
@@ -34,6 +34,6 @@ export function answerDiagnosis(state: DiagnosticState, answer: DiagnosticAnswer
 }
 export function diagnosisNote(state: DiagnosticState): string {
   if (state.result === 'resolved')
-    return `사용자 테스트: ${diagnosticSteps[state.step].title} 후 화면이 나온다고 보고함. 원인은 확정하지 않음.`;
-  return '사용자 안내 테스트를 마쳤으나 해결 여부나 원인을 확정하지 못함.';
+    return `User test: Display reported working after ${diagnosticSteps[state.step].title.toLowerCase()}. Cause not determined.`;
+  return 'The guided user test is complete, but the outcome and cause are undetermined.';
 }

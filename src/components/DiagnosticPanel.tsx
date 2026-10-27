@@ -20,7 +20,7 @@ export function DiagnosticPanel({
   if (!state)
     return (
       <button className="button secondary full" onClick={() => setState(startDiagnosis(device.id))}>
-        모니터 문제 단계별 확인
+        Troubleshoot monitor step by step
       </button>
     );
   const step = diagnosticSteps[state.step];
@@ -29,7 +29,7 @@ export function DiagnosticPanel({
   }
   return (
     <section className="diagnostic-card">
-      <span className="eyebrow">USER-GUIDED CHECK · 자동 감지 아님</span>
+      <span className="eyebrow">USER-GUIDED CHECK · NOT AUTOMATIC DETECTION</span>
       {state.result === 'active' ? (
         <>
           <div className="diagnostic-progress">
@@ -41,28 +41,30 @@ export function DiagnosticPanel({
           <div className="diagnostic-actions">
             <button className="button primary" onClick={() => answer('fixed')}>
               <Check size={15} />
-              화면이 나와요
+              The screen works
             </button>
             <button className="button secondary" onClick={() => answer('not-fixed')}>
-              여전히 안 나와요
+              Still no display
               <ArrowRight size={14} />
             </button>
             <button className="text-button" onClick={() => answer('skip')}>
-              지금은 확인할 수 없어요
+              I can't check right now
             </button>
           </div>
         </>
       ) : (
         <>
           <h3>
-            {state.result === 'resolved' ? '사용자가 동작을 확인했어요' : '추가 확인이 필요해요'}
+            {state.result === 'resolved'
+              ? 'You confirmed the screen works'
+              : 'Further checks needed'}
           </h3>
           <p>{diagnosisNote(state)}</p>
           {state.result === 'resolved' &&
             (saved ? (
               <span className="applied-note">
                 <Check size={14} />
-                사용자 테스트 결과로 저장됨
+                Saved as a user-reported test result
               </span>
             ) : (
               <button
@@ -73,12 +75,12 @@ export function DiagnosticPanel({
                     deviceId: device.id,
                     status: 'reported-working',
                     note: diagnosisNote(state),
-                    reason: '단계별 안내 후 사용자가 직접 결과를 확인했습니다.',
+                    reason: 'The user checked the result after following the guided steps.',
                   });
                   setSaved(true);
                 }}
               >
-                확인 결과를 사용자 보고로 저장
+                Save result as user-reported
               </button>
             ))}
           <button
@@ -89,7 +91,7 @@ export function DiagnosticPanel({
             }}
           >
             <ArrowCounterClockwise size={15} />
-            다시 확인하기
+            Check again
           </button>
         </>
       )}

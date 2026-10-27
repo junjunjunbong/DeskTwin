@@ -55,9 +55,9 @@ try {
   assert.equal(response.status(), 200);
   assert.ok(response.headers()['content-security-policy'].includes("frame-ancestors 'none'"));
   await page.getByTestId('desk-canvas').waitFor();
-  await page.getByRole('button', { name: '기기 목록', exact: true }).click();
+  await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
-  await page.getByRole('button', { name: '기기 상세 닫기' }).click();
+  await page.getByRole('button', { name: 'Close device details' }).click();
   await page.screenshot({ path: 'docs/screenshots/hero-production.png' });
   const result = await page.evaluate(async () => {
     const res = await fetch('/api/chat', {

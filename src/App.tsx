@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Cube,
   House,
@@ -8,7 +8,6 @@ import {
   Image as ImageIcon,
   ClockCounterClockwise,
   GearSix,
-  GithubLogo,
   Plus,
   Minus,
   ArrowsOut,
@@ -33,6 +32,7 @@ import { useAssistant } from './domain/useAssistant';
 import {
   createDemoWorkspace,
   kindLabels,
+  localizeLegacyDemoForDisplay,
   parseWorkspace,
   sourceLabels,
   type WorkspaceCommand,
@@ -49,7 +49,7 @@ const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel = 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | null;
 export default function App() {
   const store = useWorkspace();
-  const { workspace } = store;
+  const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
   const assistant = useAssistant(workspace);
   const [mode, setMode] = useState<DeskMode>('desk');
   const [selected, setSelected] = useState<string | null>(null);
@@ -69,7 +69,7 @@ export default function App() {
     try {
       run();
     } catch (e) {
-      setToast(e instanceof Error ? e.message.split('\n')[0] : '요청을 처리하지 못했습니다.');
+      setToast(e instanceof Error ? e.message.split('\n')[0] : 'Could not process the request.');
     }
   };
   function command(c: WorkspaceCommand) {
@@ -146,20 +146,11 @@ export default function App() {
         <div className="header-actions">
           <span className="local-pill">
             <Check size={13} />
-            {store.error ? '저장 확인 필요' : '브라우저 저장'}
+            {store.error ? 'Check storage' : 'Browser storage'}
           </span>
-          <a
-            className="github-link"
-            href="https://github.com/junjunjunbong/DeskTwin"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <GithubLogo size={19} />
-            <span>GitHub</span>
-          </a>
           <button
             className="icon-button"
-            aria-label="설정 열기"
+            aria-label="Open settings"
             onClick={() => openPanel('settings')}
           >
             <GearSix size={21} />
@@ -167,12 +158,12 @@ export default function App() {
         </div>
       </header>
       <div className="workspace-body">
-        <nav className="nav-rail" aria-label="주 탐색">
+        <nav className="nav-rail" aria-label="Main navigation">
           <div className="nav-top">
             <button
               className={`nav-button ${mode === 'desk' && !panel && !selected ? 'active' : ''}`}
-              aria-label="내 책상"
-              title="내 책상"
+              aria-label="My desk"
+              title="My desk"
               onClick={() => {
                 setMode('desk');
                 setPanel(null);
@@ -183,16 +174,16 @@ export default function App() {
             </button>
             <button
               className={`nav-button ${panel === 'devices' ? 'active' : ''}`}
-              aria-label="기기 목록"
-              title="기기 목록"
+              aria-label="Device list"
+              title="Device list"
               onClick={() => openPanel('devices')}
             >
               <Desktop size={22} />
             </button>
             <button
               className={`nav-button ${mode === 'connections' ? 'active' : ''}`}
-              aria-label="연결 보기"
-              title="연결 보기"
+              aria-label="View connections"
+              title="View connections"
               onClick={() => {
                 setMode('connections');
                 setPanel(null);
@@ -202,8 +193,8 @@ export default function App() {
             </button>
             <button
               className={`nav-button ${mode === 'edit' ? 'active' : ''}`}
-              aria-label="배치 편집"
-              title="배치 편집"
+              aria-label="Edit placement"
+              title="Edit placement"
               onClick={() => {
                 setMode('edit');
                 setPanel(null);
@@ -214,16 +205,16 @@ export default function App() {
             <div className="rail-divider" />
             <button
               className={`nav-button ${panel === 'photo' ? 'active' : ''}`}
-              aria-label="책상 사진"
-              title="책상 사진"
+              aria-label="Desk photo"
+              title="Desk photo"
               onClick={() => openPanel('photo')}
             >
               <ImageIcon size={22} />
             </button>
             <button
               className={`nav-button ${panel === 'history' ? 'active' : ''}`}
-              aria-label="변경 기록"
-              title="변경 기록"
+              aria-label="Change history"
+              title="Change history"
               onClick={() => openPanel('history')}
             >
               <ClockCounterClockwise size={22} />
@@ -232,8 +223,8 @@ export default function App() {
           <div className="nav-bottom">
             <button
               className="nav-button"
-              aria-label="기기 추가"
-              title="기기 추가"
+              aria-label="Add device"
+              title="Add device"
               disabled={workspace.devices.length >= 40}
               onClick={() => setDialog('device')}
             >
@@ -241,20 +232,20 @@ export default function App() {
             </button>
             <button
               className={`nav-button ${panel === 'assistant' ? 'active' : ''}`}
-              aria-label="AI 대화"
-              title="AI 대화"
+              aria-label="AI chat"
+              title="AI chat"
               onClick={() => openPanel('assistant')}
             >
               <ChatCircleDots size={23} />
             </button>
           </div>
         </nav>
-        <main className="scene-area" aria-label="나의 작업 공간">
+        <main className="scene-area" aria-label="My workspace">
           <Suspense
             fallback={
               <div className="scene-loading">
                 <Cube size={36} />
-                <p>작업실을 구성하고 있어요.</p>
+                <p>Setting up your workspace...</p>
               </div>
             }
           >
@@ -280,15 +271,15 @@ export default function App() {
             <h1>{workspace.name}</h1>
             <span className="scene-caption">
               <span className="neutral-dot" />
-              예시 기반 3D 장면 · 실시간 감지 아님
+              Example 3D scene · No live device detection
             </span>
           </div>
-          <div className="view-switch" aria-label="보기 모드">
+          <div className="view-switch" aria-label="View mode">
             {(
               [
-                ['desk', '내 책상'],
-                ['connections', '연결'],
-                ['edit', '배치 편집'],
+                ['desk', 'My desk'],
+                ['connections', 'Connections'],
+                ['edit', 'Edit placement'],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -308,28 +299,28 @@ export default function App() {
             <div className="scene-counter">
               <Desktop size={19} />
               <strong>{workspace.devices.length}</strong>
-              <span>기기</span>
+              <span>devices</span>
             </div>
             <button
               className="icon-button"
-              title="확대"
-              aria-label="확대"
+              title="Zoom in"
+              aria-label="Zoom in"
               onClick={() => scene.current?.zoom(0.15)}
             >
               <Plus size={19} />
             </button>
             <button
               className="icon-button"
-              title="축소"
-              aria-label="축소"
+              title="Zoom out"
+              aria-label="Zoom out"
               onClick={() => scene.current?.zoom(-0.15)}
             >
               <Minus size={19} />
             </button>
             <button
               className="icon-button"
-              title="시점 초기화"
-              aria-label="시점 초기화"
+              title="Reset view"
+              aria-label="Reset view"
               onClick={() => scene.current?.reset()}
             >
               <ArrowsOut size={19} />
@@ -337,8 +328,8 @@ export default function App() {
             <div className="toolbar-divider" />
             <button
               className="icon-button"
-              title="조명 전환"
-              aria-label="조명 전환"
+              title="Change lighting"
+              aria-label="Change lighting"
               onClick={() =>
                 command({
                   type: 'appearance',
@@ -355,13 +346,13 @@ export default function App() {
             <span>
               <Hand size={15} />
               {mode === 'edit'
-                ? '기기를 드래그해 배치를 바꿔보세요'
-                : '드래그로 둘러보기 · 스크롤로 확대'}
+                ? 'Drag devices to rearrange them'
+                : 'Drag to look around · Scroll to zoom'}
             </span>
             <div>
               <button
                 className="icon-button small"
-                aria-label="실행 취소"
+                aria-label="Undo"
                 disabled={!store.canUndo}
                 onClick={store.undo}
               >
@@ -369,7 +360,7 @@ export default function App() {
               </button>
               <button
                 className="icon-button small"
-                aria-label="다시 실행"
+                aria-label="Redo"
                 disabled={!store.canRedo}
                 onClick={store.redo}
               >
@@ -381,11 +372,11 @@ export default function App() {
             <div className="connection-legend">
               <span>
                 <i className="legend-line solid" />
-                사용자 입력
+                User-reported
               </span>
               <span>
                 <i className="legend-line dashed" />
-                예시 / 추정
+                Example / inferred
               </span>
               <button
                 className="text-button"
@@ -393,7 +384,7 @@ export default function App() {
                 onClick={() => setDialog('connection')}
               >
                 <Link size={16} />
-                연결 추가
+                Add connection
               </button>
             </div>
           )}
@@ -406,7 +397,7 @@ export default function App() {
               }}
             >
               <WarningCircle size={17} />
-              {issues}개 기기 · 사용자가 보고한 문제
+              {issues} {issues === 1 ? 'device' : 'devices'} · User-reported issues
             </button>
           )}
           {device && (
@@ -421,17 +412,17 @@ export default function App() {
             />
           )}
           {panel === 'devices' && (
-            <aside className="floating-panel device-library" aria-label="기기 목록 패널">
+            <aside className="floating-panel device-library" aria-label="Device list panel">
               <div className="panel-heading">
                 <div>
                   <span className="eyebrow">YOUR COLLECTION</span>
                   <h2>
-                    내 책상 위의 기기 <span className="count">{workspace.devices.length}</span>
+                    Devices on my desk <span className="count">{workspace.devices.length}</span>
                   </h2>
                 </div>
                 <button
                   className="icon-button"
-                  aria-label="기기 목록 닫기"
+                  aria-label="Close device list"
                   onClick={() => setPanel(null)}
                 >
                   <X size={19} />
@@ -440,8 +431,8 @@ export default function App() {
               <div className="panel-scroll">
                 <input
                   className="search-input"
-                  aria-label="기기 검색"
-                  placeholder="기기 검색..."
+                  aria-label="Search devices"
+                  placeholder="Search devices..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -466,7 +457,7 @@ export default function App() {
                     </button>
                   ))}
                 {workspace.devices.length === 0 && (
-                  <p className="empty-copy">첫 번째 기기를 추가해 보세요.</p>
+                  <p className="empty-copy">Add your first device.</p>
                 )}
                 <button
                   className="button secondary full"
@@ -474,10 +465,12 @@ export default function App() {
                   disabled={workspace.devices.length >= 40}
                 >
                   <Plus size={18} />
-                  기기 직접 추가
+                  Add a device manually
                 </button>
               </div>
-              <div className="panel-footnote">회색 점: 상태 미확인 · 주황 점: 사용자 보고 문제</div>
+              <div className="panel-footnote">
+                Gray: status unknown · Orange: user-reported issue
+              </div>
             </aside>
           )}
           {panel === 'assistant' && (
@@ -494,21 +487,21 @@ export default function App() {
                 safe(() => {
                   store.proposal(p);
                   assistant.decide(key, 'applied');
-                  setToast('사용자 확인 후 구성에 반영했습니다.');
+                  setToast('Applied to your workspace after confirmation.');
                 })
               }
             />
           )}
           {panel === 'history' && (
-            <aside className="floating-panel" aria-label="변경 기록 패널">
+            <aside className="floating-panel" aria-label="Change history panel">
               <div className="panel-heading">
                 <div>
                   <span className="eyebrow">A LITTLE MEMORY</span>
-                  <h2>변경 기록</h2>
+                  <h2>Change history</h2>
                 </div>
                 <button
                   className="icon-button"
-                  aria-label="기록 닫기"
+                  aria-label="Close history"
                   onClick={() => setPanel(null)}
                 >
                   <X size={19} />
@@ -522,7 +515,7 @@ export default function App() {
                       <div>
                         <strong>{event.summary}</strong>
                         <small>
-                          {new Date(event.at).toLocaleString('ko-KR')} ·{' '}
+                          {new Date(event.at).toLocaleString('en-US')} ·{' '}
                           {sourceLabels[event.source]}
                         </small>
                       </div>
@@ -531,8 +524,8 @@ export default function App() {
                 ) : (
                   <div className="empty-state">
                     <ClockCounterClockwise size={36} />
-                    <h3>아직 변경 기록이 없어요</h3>
-                    <p>기기와 연결을 수정하면 여기에 기록됩니다.</p>
+                    <h3>No changes yet</h3>
+                    <p>Changes to devices and connections will appear here.</p>
                   </div>
                 )}
               </div>
@@ -550,16 +543,16 @@ export default function App() {
               onRefresh={assistant.refreshHealth}
               onClearDemo={() =>
                 safe(() => {
-                  const devices = workspace.devices.filter((d) => d.source !== 'demo');
+                  const devices = store.workspace.devices.filter((d) => d.source !== 'demo');
                   const ids = new Set(devices.map((d) => d.id));
                   store.replace({
-                    ...workspace,
+                    ...store.workspace,
                     devices,
-                    connections: workspace.connections.filter(
+                    connections: store.workspace.connections.filter(
                       (c) => ids.has(c.from) && ids.has(c.to),
                     ),
                   });
-                  setToast('예시 기기를 비웠습니다. 실행 취소로 되돌릴 수 있습니다.');
+                  setToast('Example devices removed. You can undo this change.');
                 })
               }
             />
@@ -573,16 +566,16 @@ export default function App() {
           </span>
           <input
             ref={inputRef}
-            aria-label="DeskTwin에게 메시지"
+            aria-label="Message DeskTwin"
             maxLength={2000}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="내 책상에 대해 알려주세요. 예: 오른쪽 모니터를 Dock에 HDMI로 연결했어"
+            placeholder="Tell me about your desk. For example: I connected the right monitor to the dock with HDMI."
           />
           <button
             className="send-button"
             type="submit"
-            aria-label="메시지 보내기"
+            aria-label="Send message"
             disabled={!prompt.trim() || assistant.pending}
           >
             <ArrowUp size={22} weight="bold" />
@@ -592,17 +585,19 @@ export default function App() {
           <span className="privacy-note">
             <span className="neutral-dot" />
             {assistant.mode === 'demo'
-              ? '로컬 데모 · 외부 전송 없음'
-              : 'Meta 모델 · 대화와 기기 구성 전송'}
+              ? 'Local demo · No external data sent'
+              : 'Meta model · Sends conversation and device setup'}
           </span>
           <div className="quick-prompts">
             <button className="provider-toggle" onClick={() => setDialog('cloud')}>
-              {assistant.mode === 'meta' ? 'Meta 연결 설정' : 'Meta API 연결'}
+              {assistant.mode === 'meta' ? 'Meta connection settings' : 'Connect Meta API'}
             </button>
-            <button onClick={() => send('오른쪽 모니터를 Dock에 HDMI로 연결했어')}>
-              연결 구성 알려주기
+            <button onClick={() => send('I connected the right monitor to the dock with HDMI')}>
+              Describe a connection
             </button>
-            <button onClick={() => send('오른쪽 모니터가 안 나와')}>모니터 문제 해결</button>
+            <button onClick={() => send('The right monitor is not displaying')}>
+              Troubleshoot a monitor
+            </button>
           </div>
         </div>
       </footer>
@@ -618,19 +613,20 @@ export default function App() {
         />
       )}
       {panel === 'settings' && (
-        <Modal title="작업실 설정" onClose={() => setPanel(null)}>
+        <Modal title="Workspace settings" onClose={() => setPanel(null)}>
           <label>
-            작업실 이름
+            Workspace name
             <input
               defaultValue={workspace.name}
               maxLength={60}
               onBlur={(e) => {
-                if (e.target.value.trim()) command({ type: 'rename', name: e.target.value.trim() });
+                const name = e.target.value.trim();
+                if (name && name !== workspace.name) command({ type: 'rename', name });
               }}
             />
           </label>
           <label>
-            조명
+            Lighting
             <select
               value={workspace.appearance.lighting}
               onChange={(e) =>
@@ -640,9 +636,9 @@ export default function App() {
                 })
               }
             >
-              <option value="day">맑은 낮</option>
-              <option value="sunset">따뜻한 오후</option>
-              <option value="night">조용한 밤</option>
+              <option value="day">Daylight</option>
+              <option value="sunset">Warm afternoon</option>
+              <option value="night">Quiet night</option>
             </select>
           </label>
           <label className="checkbox-label">
@@ -651,7 +647,7 @@ export default function App() {
               checked={workspace.appearance.labels}
               onChange={(e) => command({ type: 'appearance', patch: { labels: e.target.checked } })}
             />
-            모든 기기 이름 표시
+            Show device names
           </label>
           <label className="checkbox-label">
             <input
@@ -659,30 +655,31 @@ export default function App() {
               checked={workspace.appearance.decor}
               onChange={(e) => command({ type: 'appearance', patch: { decor: e.target.checked } })}
             />
-            식물·의자·소품 표시
+            Show plants, chair, and decor
           </label>
           <div className="two-columns">
             <button
               className="button secondary"
               onClick={() =>
-                downloadFile('desktwin-workspace.json', JSON.stringify(workspace, null, 2))
+                downloadFile('desktwin-workspace.json', JSON.stringify(store.workspace, null, 2))
               }
             >
               <DownloadSimple size={18} />
-              JSON 내보내기
+              Export JSON
             </button>
             <button className="button secondary" onClick={() => importRef.current?.click()}>
               <UploadSimple size={18} />
-              JSON 불러오기
+              Import JSON
             </button>
           </div>
           <p className="micro-note">
-            기기와 연결 구성은 브라우저에 저장됩니다. 사진, 대화, API 키는 JSON에 포함하지 않습니다.
+            Devices and connections are stored in your browser. Photos, conversations, and API keys
+            are not included in the JSON export.
           </p>
           <hr />
           {resetConfirm ? (
             <div className="delete-confirm">
-              <p>현재 구성을 예시로 되돌릴까요? 실행 취소할 수 있습니다.</p>
+              <p>Reset your workspace to the example? You can undo this change.</p>
               <button
                 className="button danger"
                 onClick={() => {
@@ -691,16 +688,16 @@ export default function App() {
                   setPanel(null);
                 }}
               >
-                예시로 초기화 확인
+                Confirm reset to example
               </button>
               <button className="text-button" onClick={() => setResetConfirm(false)}>
-                취소
+                Cancel
               </button>
             </div>
           ) : (
             <button className="text-button danger-text" onClick={() => setResetConfirm(true)}>
               <ArrowCounterClockwise size={16} />
-              예시 구성으로 초기화
+              Reset to example
             </button>
           )}
         </Modal>
@@ -715,42 +712,43 @@ export default function App() {
           e.target.value = '';
           if (!f) return;
           try {
-            if (f.size > 256000) throw new Error('JSON 파일은 256 KB 이하여야 합니다.');
+            if (f.size > 256000) throw new Error('The JSON file must be 256 KB or smaller.');
             const next = parseWorkspace(JSON.parse(await f.text()));
             store.replace(next);
             setSelected(null);
-            setToast('구성을 불러왔습니다. 실행 취소로 이전 상태로 돌아갈 수 있습니다.');
+            setToast('Workspace imported. Undo to restore the previous state.');
           } catch {
-            setToast('올바른 DeskTwin v1 JSON 파일이 아닙니다. 기존 구성은 유지했습니다.');
+            setToast('Invalid DeskTwin v1 JSON file. Your existing workspace was preserved.');
           }
         }}
       />
       {dialog === 'cloud' && (
-        <Modal title="Meta AI 연결" onClose={() => setDialog(null)}>
+        <Modal title="Meta AI connection" onClose={() => setDialog(null)}>
           <div className="integration-note">
             <strong>
               {assistant.available
-                ? `서버 설정 확인: ${assistant.model}`
+                ? `Server configured: ${assistant.model}`
                 : assistant.healthState === 'checking'
-                  ? '서버 설정을 확인하고 있습니다.'
-                  : 'Meta API 키가 설정되지 않았습니다.'}
+                  ? 'Checking server configuration...'
+                  : 'No Meta API key is configured.'}
             </strong>
             <p>
               {assistant.available
-                ? '키가 설정되어 있습니다. 실제 모델 응답 성공 여부는 아직 이 화면에서 검증하지 않았습니다.'
-                : '프로젝트의 .env에 MODEL_API_KEY를 설정하고 API 서버를 재시작하세요. API 키는 브라우저에 입력하거나 Git에 올리지 마세요.'}
+                ? 'A key is configured. A successful model response has not yet been verified here.'
+                : 'Set MODEL_API_KEY in the project’s .env file and restart the API server. Do not enter your key in the browser or commit it to Git.'}
             </p>
             <button className="text-button" onClick={assistant.refreshHealth}>
-              서버 설정 다시 확인
+              Check server settings again
             </button>
           </div>
           <p className="muted">
-            활성화하면 이후 전송하는 메시지, 최근 대화 12개, 기기·연결 구성을 Meta API로 보냅니다.
-            사진은 별도 분석 동의 없이 보내지 않습니다. API 사용료가 발생할 수 있습니다.
+            Once enabled, messages you send, your last 12 conversation messages, and your device and
+            connection setup are sent to the Meta API. Photos are only sent with separate consent.
+            API usage may incur charges.
           </p>
           <p className="micro-note">
-            로컬 데모는 제한된 규칙 기반 예시입니다. 실제 LLM은 아닙니다. Meta 응답도 검증된
-            하드웨어 상태가 아니며, 변경은 별도로 확인해야 적용됩니다.
+            The local demo uses limited rules and is not an LLM. Meta responses do not verify
+            hardware status; changes still require your confirmation.
           </p>
           {assistant.mode === 'meta' ? (
             <button
@@ -761,7 +759,7 @@ export default function App() {
                 setDialog(null);
               }}
             >
-              Meta 끄고 로컬 데모로 전환
+              Turn off Meta and use the local demo
             </button>
           ) : (
             <button
@@ -770,10 +768,10 @@ export default function App() {
               onClick={() => {
                 assistant.enableMeta();
                 setDialog(null);
-                setToast('Meta 연결을 활성화했습니다. 다음 메시지부터 외부 API로 전송합니다.');
+                setToast('Meta enabled. Future messages will be sent to the external API.');
               }}
             >
-              전송 내용을 확인했고 Meta 연결 켜기
+              I understand what will be sent · Enable Meta
             </button>
           )}
         </Modal>
@@ -783,7 +781,11 @@ export default function App() {
         <div className="toast" role="status">
           <WarningCircle size={18} />
           <span>{toast || store.error}</span>
-          <button className="icon-button small" aria-label="알림 닫기" onClick={() => setToast('')}>
+          <button
+            className="icon-button small"
+            aria-label="Dismiss notification"
+            onClick={() => setToast('')}
+          >
             <X size={16} />
           </button>
         </div>

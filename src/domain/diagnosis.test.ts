@@ -13,8 +13,8 @@ describe('user-guided checks', () => {
   it('resolves only following an explicit successful user test', () => {
     const s = answerDiagnosis(startDiagnosis('monitor-right'), 'fixed');
     expect(s.result).toBe('resolved');
-    expect(diagnosisNote(s)).toContain('사용자 테스트');
-    expect(diagnosisNote(s)).toContain('원인은 확정하지 않음');
+    expect(diagnosisNote(s)).toContain('User test');
+    expect(diagnosisNote(s)).toContain('Cause not determined');
   });
   it('does not turn skipped checks into a successful diagnosis', () => {
     let s = startDiagnosis('monitor-right');
@@ -39,6 +39,57 @@ describe('honest offline assistant', () => {
     expect(
       demoReply('맥북과 왼쪽 모니터와 오른쪽 모니터를 Dock에 연결했어', createDemoWorkspace())
         .proposals,
+    ).toHaveLength(0);
+  });
+  it('understands the English connection example without treating it as verified', () => {
+    const r = demoReply(
+      'I connected the right monitor to the dock with HDMI',
+      createDemoWorkspace(),
+    );
+    expect(r.message).toContain('confirm');
+    expect(r.proposals).toEqual([
+      expect.objectContaining({
+        type: 'connect',
+        from: 'monitor-right',
+        to: 'dock',
+        connector: 'HDMI',
+      }),
+    ]);
+  });
+  it('understands the English monitor issue example as a user-reported issue', () => {
+    const r = demoReply('The right monitor is not displaying', createDemoWorkspace());
+    expect(r.proposals).toEqual([
+      expect.objectContaining({
+        type: 'set-status',
+        deviceId: 'monitor-right',
+        status: 'reported-issue',
+      }),
+    ]);
+  });
+  it('continues to understand Korean connection and issue reports', () => {
+    expect(
+      demoReply('오른쪽 모니터를 Dock에 HDMI로 연결했어', createDemoWorkspace()).proposals,
+    ).toEqual([expect.objectContaining({ type: 'connect', connector: 'HDMI' })]);
+    expect(demoReply('오른쪽 모니터가 안 나와', createDemoWorkspace()).proposals).toEqual([
+      expect.objectContaining({ type: 'set-status', status: 'reported-issue' }),
+    ]);
+  });
+  it('recognizes a successful direct-connection test as a user report', () => {
+    const r = demoReply(
+      'The right monitor is working now with a direct connection',
+      createDemoWorkspace(),
+    );
+    expect(r.proposals).toEqual([
+      expect.objectContaining({
+        type: 'set-status',
+        deviceId: 'monitor-right',
+        status: 'reported-working',
+      }),
+    ]);
+  });
+  it('does not turn English connection questions into facts', () => {
+    expect(
+      demoReply('How do I connect the right monitor to the dock', createDemoWorkspace()).proposals,
     ).toHaveLength(0);
   });
   it('does not confuse Thunderbolt with verified USB-C capabilities', () => {

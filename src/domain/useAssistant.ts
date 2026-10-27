@@ -67,9 +67,11 @@ export function useAssistant(workspace: Workspace) {
         });
         const raw = await response.json();
         if (!response.ok)
-          throw new Error(typeof raw.error === 'string' ? raw.error : 'Meta 요청에 실패했습니다.');
+          throw new Error(typeof raw.error === 'string' ? raw.error : 'The Meta request failed.');
         if (raw.mode !== 'meta')
-          throw new Error('서버의 Meta 설정이 변경되었습니다. 연결 설정을 다시 확인해 주세요.');
+          throw new Error(
+            'The server’s Meta configuration changed. Check the connection settings again.',
+          );
         reply = { ...AssistantResponseSchema.parse(raw), mode: 'meta' as const };
       } else reply = demoReply(message, workspace);
       setMessages((items) => [
@@ -85,16 +87,16 @@ export function useAssistant(workspace: Workspace) {
     } catch (error) {
       const message =
         error instanceof Error && error.name === 'TimeoutError'
-          ? '응답 시간이 초과되었습니다.'
+          ? 'The response timed out.'
           : error instanceof Error
             ? error.message
-            : '요청을 처리하지 못했습니다.';
+            : 'The request could not be completed.';
       setMessages((items) => [
         ...items,
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `${message}\n변경 사항을 반영하지 않았습니다. 다시 시도하거나 로컬 데모로 전환할 수 있습니다.`,
+          content: `${message}\nNo changes were applied. Try again or switch to the local demo.`,
           proposals: [],
           mode,
         },

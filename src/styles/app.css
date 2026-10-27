@@ -200,12 +200,6 @@ hr {
   align-items: center;
   gap: 5px;
 }
-.github-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -1295,8 +1289,7 @@ hr {
     border-radius: 9px;
   }
   .header-divider,
-  .local-pill,
-  .github-link span {
+  .local-pill {
     display: none;
   }
   .header-actions {

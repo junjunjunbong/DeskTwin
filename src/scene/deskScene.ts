@@ -23,7 +23,10 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.08;
-  renderer.domElement.setAttribute('aria-label', '기기를 선택하고 회전할 수 있는 3D 책상');
+  renderer.domElement.setAttribute(
+    'aria-label',
+    '3D desk with selectable devices and a rotatable view',
+  );
   renderer.domElement.dataset.testid = 'desk-canvas';
   host.appendChild(renderer.domElement);
   const scene = new THREE.Scene();

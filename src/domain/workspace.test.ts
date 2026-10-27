@@ -1,11 +1,79 @@
 import { describe, expect, it } from 'vitest';
-import { applyCommand, applyProposal, createDemoWorkspace, parseWorkspace } from './workspace';
+import {
+  applyCommand,
+  applyProposal,
+  createDemoWorkspace,
+  localizeLegacyDemoForDisplay,
+  parseWorkspace,
+} from './workspace';
 
 describe('evidence-aware workspace', () => {
   it('does not pretend example devices are detected or working', () => {
     const w = createDemoWorkspace();
     expect(w.devices).toHaveLength(8);
     expect(w.devices.every((d) => d.source === 'demo' && d.status === 'unknown')).toBe(true);
+  });
+  it('localizes unchanged legacy demo defaults for display without mutating stored data', () => {
+    const saved = createDemoWorkspace();
+    saved.name = '나의 작은 작업실';
+    const names: Record<string, string> = {
+      'monitor-left': '왼쪽 모니터',
+      'monitor-right': '오른쪽 모니터',
+      ssd: '외장 SSD',
+      router: '공유기',
+      keyboard: '키보드',
+      mouse: '마우스',
+    };
+    for (const device of saved.devices) {
+      if (names[device.id]) device.name = names[device.id];
+    }
+    for (const connection of saved.connections) {
+      connection.note = '체험용 예시입니다. 실제 연결이 아닙니다.';
+    }
+    const original = structuredClone(saved);
+    const displayed = localizeLegacyDemoForDisplay(saved);
+    expect(displayed.name).toBe('My workspace');
+    expect(displayed.devices.map((device) => device.name)).toEqual([
+      'MacBook',
+      'Left monitor',
+      'Right monitor',
+      'USB-C Dock',
+      'External SSD',
+      'Router',
+      'Keyboard',
+      'Mouse',
+    ]);
+    expect(
+      displayed.connections.every(
+        (connection) => connection.note === 'Example only. This is not a confirmed connection.',
+      ),
+    ).toBe(true);
+    expect(saved).toEqual(original);
+    displayed.devices[0].name = 'Changed only in the display copy';
+    expect(saved).toEqual(original);
+  });
+  it('preserves user data and custom values while localizing old defaults', () => {
+    const saved = createDemoWorkspace();
+    saved.name = 'My own workspace';
+    saved.devices[1].name = 'My custom display';
+    saved.devices[1].status = 'reported-issue';
+    saved.devices[1].statusNote = '사용자 메모';
+    saved.devices[2].name = '왼쪽 모니터'; // Original name for the other device ID.
+    saved.devices[4].name = '외장 SSD';
+    saved.devices[4].source = 'user-reported';
+    saved.connections[0].note = '사용자가 작성한 연결 메모';
+    saved.connections[1].note = '체험용 예시입니다. 실제 연결이 아닙니다.';
+    saved.connections[1].source = 'user-reported';
+    saved.history.push({
+      id: 'event-1',
+      at: new Date().toISOString(),
+      summary: '사용자 기록',
+      source: 'user-reported',
+    });
+    const original = structuredClone(saved);
+    const displayed = localizeLegacyDemoForDisplay(saved);
+    expect(displayed).toEqual(original);
+    expect(saved).toEqual(original);
   });
   it('rejects duplicate identities', () => {
     const w = createDemoWorkspace();

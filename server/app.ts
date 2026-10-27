@@ -56,48 +56,48 @@ function json(res: ServerResponse, status: number, value: unknown) {
 }
 async function readJSON(req: IncomingMessage): Promise<unknown> {
   if (!req.headers['content-type']?.toLowerCase().startsWith('application/json'))
-    throw new ApiError(415, 'application/json 요청만 지원합니다.');
+    throw new ApiError(415, 'Only application/json requests are supported.');
   const limit = 2_100_000;
   if (Number(req.headers['content-length'] || 0) > limit) {
     req.resume();
-    throw new ApiError(413, '요청이 너무 큽니다. 사진 크기를 줄여 주세요.');
+    throw new ApiError(413, 'The request is too large. Reduce the image size.');
   }
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of req) {
     bytes += chunk.length;
-    if (bytes > limit) throw new ApiError(413, '요청이 너무 큽니다.');
+    if (bytes > limit) throw new ApiError(413, 'The request is too large.');
     chunks.push(Buffer.from(chunk));
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
-    throw new ApiError(400, '유효한 JSON 요청이 아닙니다.');
+    throw new ApiError(400, 'The request is not valid JSON.');
   }
 }
 async function serveStatic(req: IncomingMessage, res: ServerResponse, root: string) {
   if (!['GET', 'HEAD'].includes(req.method || '')) {
-    json(res, 405, { error: '지원하지 않는 요청 방식입니다.' });
+    json(res, 405, { error: 'Unsupported request method.' });
     return;
   }
   const pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname);
   const file = resolve(root, `.${pathname === '/' ? '/index.html' : pathname}`);
   const realRoot = await realpath(root);
   if (!(file === realRoot || file.startsWith(realRoot + sep)))
-    throw new ApiError(403, '허용되지 않은 경로입니다.');
+    throw new ApiError(403, 'This path is not allowed.');
   let path = file;
   try {
     const info = await stat(path);
     if (!info.isFile()) throw new Error('Not a file');
   } catch {
     if (extname(pathname)) {
-      json(res, 404, { error: '파일이 없습니다.' });
+      json(res, 404, { error: 'File not found.' });
       return;
     }
     path = resolve(realRoot, 'index.html');
   }
   const realFile = await realpath(path);
-  if (!realFile.startsWith(realRoot + sep)) throw new ApiError(403, '허용되지 않은 파일입니다.');
+  if (!realFile.startsWith(realRoot + sep)) throw new ApiError(403, 'This file is not allowed.');
   const types: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -127,7 +127,7 @@ export function createApp(config: ServerConfig) {
   const server = createServer(async (req, res) => {
     try {
       if (!isAllowedRequest(req)) {
-        json(res, 403, { error: '로컬 동일 출처 요청만 허용합니다.' });
+        json(res, 403, { error: 'Only local same-origin requests are allowed.' });
         return;
       }
       const path = new URL(req.url || '/', 'http://localhost').pathname;
@@ -141,15 +141,15 @@ export function createApp(config: ServerConfig) {
       }
       if (!path.startsWith('/api/')) {
         if (config.productionRoot) await serveStatic(req, res, config.productionRoot);
-        else json(res, 404, { error: '개발 UI는 5173 포트를 사용합니다.' });
+        else json(res, 404, { error: 'The development UI uses port 5173.' });
         return;
       }
       if (!['/api/chat', '/api/photo'].includes(path)) {
-        json(res, 404, { error: '지원하지 않는 API입니다.' });
+        json(res, 404, { error: 'This API endpoint is not supported.' });
         return;
       }
       if (req.method !== 'POST') {
-        json(res, 405, { error: 'POST 요청만 지원합니다.' });
+        json(res, 405, { error: 'Only POST requests are supported.' });
         return;
       }
       if (Date.now() - windowStart >= 60_000) {
@@ -157,9 +157,15 @@ export function createApp(config: ServerConfig) {
         requests = 0;
       }
       if (++requests > (config.requestsPerMinute ?? 20))
-        throw new ApiError(429, '로컬 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.');
+        throw new ApiError(
+          429,
+          'The local request limit has been reached. Please try again shortly.',
+        );
       if (active >= 2)
-        throw new ApiError(429, '이미 요청을 처리 중입니다. 진행 중인 요청을 먼저 완료해 주세요.');
+        throw new ApiError(
+          429,
+          'Requests are already in progress. Please wait for them to finish.',
+        );
       const body = await readJSON(req);
       if (path === '/api/chat') {
         const data = ChatRequest.parse(body);
@@ -167,7 +173,8 @@ export function createApp(config: ServerConfig) {
           json(res, 200, demoReply(data.message, data.workspace));
           return;
         }
-        if (!data.consent) throw new ApiError(400, 'Meta 전송에 대한 사용자 동의가 필요합니다.');
+        if (!data.consent)
+          throw new ApiError(400, 'Your consent is required before sending data to Meta.');
         active++;
         try {
           json(
@@ -186,7 +193,7 @@ export function createApp(config: ServerConfig) {
         if (!config.apiKey)
           throw new ApiError(
             503,
-            '사진 AI 분석에는 Meta API 키가 필요합니다. 직접 기기를 추가할 수 있습니다.',
+            'Photo analysis requires a Meta API key. You can add devices manually.',
           );
         active++;
         try {
@@ -194,7 +201,7 @@ export function createApp(config: ServerConfig) {
             res,
             200,
             await callMeta(config, data.workspace, {
-              message: '사진에서 확인되는 기기와 배치만 분석해 주세요.',
+              message: 'Analyze only the devices and arrangement visible in the photo.',
               image: data.image,
             }),
           );
@@ -206,10 +213,10 @@ export function createApp(config: ServerConfig) {
       if (res.headersSent || res.destroyed) return;
       if (error instanceof ApiError) json(res, error.status, { error: error.message });
       else if (error instanceof z.ZodError)
-        json(res, 400, { error: '입력 형식이나 기기 구성이 올바르지 않습니다.' });
+        json(res, 400, { error: 'The input format or workspace configuration is invalid.' });
       else
         json(res, 500, {
-          error: '요청 처리 중 오류가 발생했습니다. 구성은 자동으로 변경하지 않았습니다.',
+          error: 'An error occurred while processing the request. Your workspace was not changed.',
         });
       // Do not log request bodies, images, keys, upstream bodies or device details.
     }
