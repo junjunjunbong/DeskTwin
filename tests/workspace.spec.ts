@@ -138,7 +138,7 @@ test('mobile layout fits the viewport and opens a usable device dialog', async (
   await page.getByRole('button', { name: 'Add device', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
-  await page.screenshot({ path: 'docs/screenshots/hero-mobile.png' });
+  await page.screenshot({ path: 'test-results/hero-mobile.png' });
 });
 test('guided troubleshooting records only an explicit user test', async ({ page }) => {
   await page.goto('/');
@@ -241,6 +241,21 @@ test('Meta is off until explicitly enabled and provider errors preserve state', 
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
 });
 test('position changes and deletes can be undone', async ({ page }) => {
+  const initial = createDemoWorkspace();
+  initial.objects = [];
+  initial.devices.forEach((device, i) => {
+    device.placement = { x: -3 + (i % 4) * 2, y: 0.1 + Math.floor(i / 4) * 3, z: 0, rotation: 0 };
+  });
+  initial.devices.find((device) => device.id === 'dock')!.placement = {
+    x: -1,
+    y: 1.8,
+    z: 2.8,
+    rotation: 0,
+  };
+  await page.addInitScript(({ storageKey, value }) => localStorage.setItem(storageKey, value), {
+    storageKey: key,
+    value: JSON.stringify(initial),
+  });
   await page.goto('/');
   await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
   await page.getByRole('button', { name: 'Device list', exact: true }).click();

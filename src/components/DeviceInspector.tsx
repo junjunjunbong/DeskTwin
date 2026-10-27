@@ -3,6 +3,8 @@ import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { TransformEditor } from './TransformEditor';
+import { ShapeEditor } from './ShapeEditor';
+import { PlacementControls } from './PlacementControls';
 import {
   kindLabels,
   sourceLabels,
@@ -15,7 +17,7 @@ interface Props {
   device: Device;
   workspace: Workspace;
   mode: string;
-  onCommand: (command: WorkspaceCommand) => void;
+  onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
   onClose: () => void;
   onConnect: () => void;
 }
@@ -128,6 +130,25 @@ export function DeviceInspector({
               prefix="Device"
               onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
             />
+            <PlacementControls
+              item={d}
+              workspace={workspace}
+              onCommand={onCommand}
+              prefix="Device"
+            />
+            <ShapeEditor
+              item={d}
+              onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
+              onPartChange={(index, patch) =>
+                onCommand({
+                  type: 'update-part',
+                  id: d.id,
+                  index,
+                  expectedLength: d.parts?.length ?? 0,
+                  patch,
+                })
+              }
+            />
           </section>
         )}
         <section className="panel-section">
@@ -175,7 +196,7 @@ export function DeviceInspector({
             device={d}
             onPropose={(p) => {
               if (p.type === 'set-status')
-                onCommand({
+                return onCommand({
                   type: 'update-device',
                   id: d.id,
                   patch: { status: p.status, statusNote: p.note },
@@ -188,9 +209,8 @@ export function DeviceInspector({
             <p>Delete this device and its associated connections?</p>
             <button
               className="button danger"
-              onClick={() => {
-                onCommand({ type: 'remove-device', id: d.id });
-                onClose();
+              onClick={async () => {
+                if ((await onCommand({ type: 'remove-device', id: d.id })) !== false) onClose();
               }}
             >
               Confirm deletion

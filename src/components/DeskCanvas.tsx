@@ -1,14 +1,15 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Cube, Monitor, WarningCircle } from '@phosphor-icons/react';
 import { createDeskScene, type DeskScene, type DeskMode, type Marker } from '../scene/deskScene';
-import { sourceLabels, type Workspace } from '../domain/workspace';
+import { sourceLabels, type Placement, type Workspace } from '../domain/workspace';
 export type CanvasHandle = Pick<DeskScene, 'reset' | 'zoom' | 'capture'>;
 interface Props {
   workspace: Workspace;
   selected: string | null;
   mode: DeskMode;
   onSelect: (id: string | null) => void;
-  onMove: (id: string, x: number, z: number) => void;
+  onMove: (id: string, placement: Placement, path: Placement[]) => void;
+  onFeedback?: (message: string) => void;
 }
 const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null);
@@ -17,6 +18,7 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
   latest.current = props;
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [error, setError] = useState(false);
+  const [feedback, setFeedback] = useState('');
   useImperativeHandle(
     ref,
     () => ({
@@ -31,7 +33,11 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
     try {
       const scene = createDeskScene(host.current, {
         onSelect: (id) => latest.current.onSelect(id),
-        onMove: (id, x, z) => latest.current.onMove(id, x, z),
+        onMove: (id, placement, path) => latest.current.onMove(id, placement, path),
+        onFeedback: (message) => {
+          setFeedback(message);
+          latest.current.onFeedback?.(message);
+        },
         onMarkers: setMarkers,
       });
       engine.current = scene;
@@ -52,6 +58,11 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
   return (
     <div className="desk-canvas-wrap">
       <div ref={host} className="desk-canvas-host" />
+      {feedback && (
+        <div className="spatial-feedback" role="status" aria-live="polite">
+          {feedback}
+        </div>
+      )}
       {error ? (
         <div className="scene-error" role="status">
           <WarningCircle size={36} />

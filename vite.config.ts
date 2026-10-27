@@ -4,9 +4,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    port: Number(process.env.DESKTWIN_WEB_PORT ?? 5173),
     strictPort: true,
-    proxy: { '/api': 'http://127.0.0.1:4318' },
+    proxy: { '/api': `http://127.0.0.1:${process.env.PORT ?? 4318}` },
   },
   build: { chunkSizeWarningLimit: 700 },
   test: { include: ['src/**/*.test.ts', 'server/**/*.test.ts'], environment: 'node' },

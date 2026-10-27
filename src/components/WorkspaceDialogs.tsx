@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Plus, Link, ArrowRight } from '@phosphor-icons/react';
 import { Modal } from './ui';
 import {
@@ -15,30 +15,53 @@ export function AddDeviceDialog({
   onCommand,
 }: {
   onClose: () => void;
-  onCommand: (command: WorkspaceCommand) => void;
+  onCommand: (command: WorkspaceCommand) => boolean | Promise<boolean>;
 }) {
   const [kind, setKind] = useState<DeviceKind>('monitor');
   const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
   return (
-    <Modal title="Add device" onClose={onClose}>
+    <Modal
+      title="Add device"
+      onClose={() => {
+        if (!pending.current) onClose();
+      }}
+    >
       <p className="muted">You can build your setup without a photo.</p>
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          onCommand({
-            type: 'add-device',
-            device: {
-              id: crypto.randomUUID(),
-              name: name.trim() || kindLabels[kind],
-              kind,
-              model: '',
-              source: 'user-reported',
-              status: 'unknown',
-              statusNote: '',
-              placement: { x: 0, z: 0.35, rotation: 0 },
-            },
-          });
-          onClose();
+          if (pending.current) return;
+          pending.current = true;
+          setSaving(true);
+          setError('');
+          try {
+            const saved = await onCommand({
+              type: 'add-device',
+              device: {
+                id: crypto.randomUUID(),
+                name: name.trim() || kindLabels[kind],
+                kind,
+                model: '',
+                source: 'user-reported',
+                status: 'unknown',
+                statusNote: '',
+                placement: { x: 0, z: 0.35, rotation: 0 },
+              },
+            });
+            if (saved) onClose();
+            else
+              setError(
+                'The device was not saved. Check the storage or placement notice and try again.',
+              );
+          } catch {
+            setError('The device could not be saved. Your entries have been kept.');
+          } finally {
+            pending.current = false;
+            setSaving(false);
+          }
         }}
       >
         <label>
@@ -63,8 +86,13 @@ export function AddDeviceDialog({
         <p className="micro-note">
           Added devices start with an unconfirmed status. You can move them in placement editing.
         </p>
-        <button className="button primary full" type="submit">
-          <Plus size={18} /> Add to my desk
+        {error && (
+          <p role="alert" className="form-error">
+            {error}
+          </p>
+        )}
+        <button className="button primary full" type="submit" disabled={saving}>
+          <Plus size={18} /> {saving ? 'Saving device...' : 'Add to my desk'}
         </button>
       </form>
     </Modal>
@@ -79,37 +107,61 @@ export function ConnectionDialog({
   workspace: Workspace;
   selected: string | null;
   onClose: () => void;
-  onCommand: (command: WorkspaceCommand) => void;
+  onCommand: (command: WorkspaceCommand) => boolean | Promise<boolean>;
 }) {
-  const [from, setFrom] = useState(selected || workspace.devices[0]?.id || '');
+  const [from, setFrom] = useState(
+    workspace.devices.some((device) => device.id === selected)
+      ? selected!
+      : workspace.devices[0]?.id || '',
+  );
   const [to, setTo] = useState(workspace.devices.find((d) => d.id !== from)?.id || '');
   const [connector, setConnector] = useState<Connection['connector']>('USB-C');
   const [fromPort, setFromPort] = useState('');
   const [toPort, setToPort] = useState('');
-  const valid = from && to && from !== to;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
+  const valid =
+    from !== to && [from, to].every((id) => workspace.devices.some((device) => device.id === id));
   return (
-    <Modal title="Record a connection" onClose={onClose}>
+    <Modal
+      title="Record a connection"
+      onClose={() => {
+        if (!pending.current) onClose();
+      }}
+    >
       <p className="muted">
         Record which devices are connected. This does not confirm whether the connection works.
       </p>
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (!valid) return;
-          onCommand({
-            type: 'connect',
-            connection: {
-              id: crypto.randomUUID(),
-              from,
-              to,
-              connector,
-              fromPort,
-              toPort,
-              source: 'user-reported',
-              note: 'The user entered this connection.',
-            },
-          });
-          onClose();
+          if (!valid || pending.current) return;
+          pending.current = true;
+          setSaving(true);
+          setError('');
+          try {
+            const saved = await onCommand({
+              type: 'connect',
+              connection: {
+                id: crypto.randomUUID(),
+                from,
+                to,
+                connector,
+                fromPort,
+                toPort,
+                source: 'user-reported',
+                note: 'The user entered this connection.',
+              },
+            });
+            if (saved) onClose();
+            else setError('The connection was not saved. Check the storage notice and try again.');
+          } catch {
+            setError('The connection could not be saved. Your entries have been kept.');
+          } finally {
+            pending.current = false;
+            setSaving(false);
+          }
         }}
       >
         <div className="connection-form-row">
@@ -171,9 +223,14 @@ export function ConnectionDialog({
             Select two different devices.
           </p>
         )}
-        <button className="button primary full" disabled={!valid} type="submit">
+        {error && (
+          <p role="alert" className="form-error">
+            {error}
+          </p>
+        )}
+        <button className="button primary full" disabled={!valid || saving} type="submit">
           <Link size={18} />
-          Save as user-reported
+          {saving ? 'Saving connection...' : 'Save as user-reported'}
         </button>
       </form>
     </Modal>

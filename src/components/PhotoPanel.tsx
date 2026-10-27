@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, X, Sparkle, Plus, Check } from '@phosphor-icons/react';
 import { type Workspace } from '../domain/workspace';
-import { SceneProposalSchema, buildSceneDraft } from '../domain/sceneProposal';
+import {
+  SceneProposalSchema,
+  buildScenePreview,
+  type SceneDeviceObservation,
+} from '../domain/sceneProposal';
 import { ScenePreview } from './ScenePreview';
 
 export async function preparePhoto(file: File): Promise<string> {
@@ -35,8 +39,9 @@ interface Props {
   available: boolean;
   onClose: () => void;
   onAdd: () => void;
-  onApply: (draft: Workspace, base: Workspace) => void;
-  onClearDemo: () => void;
+  onApply: (draft: Workspace, base: Workspace) => void | Promise<void>;
+  storageConflict?: boolean;
+  onClearDemo: () => unknown | Promise<unknown>;
   onRefresh: () => void;
 }
 export function PhotoPanel({
@@ -49,6 +54,7 @@ export function PhotoPanel({
   onApply,
   onClearDemo,
   onRefresh,
+  storageConflict = false,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const request = useRef<AbortController | null>(null);
@@ -61,6 +67,7 @@ export function PhotoPanel({
   const [result, setResult] = useState<{
     base: Workspace;
     draft: Workspace;
+    observations: SceneDeviceObservation[];
     message: string;
   } | null>(null);
   const [applied, setApplied] = useState(false);
@@ -106,7 +113,7 @@ export function PhotoPanel({
       const parsed = SceneProposalSchema.safeParse(proposal);
       if (!parsed.success)
         throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
-      setResult({ base, draft: buildSceneDraft(base, parsed.data), message: parsed.data.message });
+      setResult({ base, ...buildScenePreview(base, parsed.data), message: parsed.data.message });
     } catch (e) {
       if (token !== version.current) return;
       setError(
@@ -265,10 +272,9 @@ export function PhotoPanel({
               <button
                 className="text-button"
                 disabled={pending}
-                onClick={() => {
+                onClick={async () => {
                   if (clearConfirm) {
-                    onClearDemo();
-                    setClearConfirm(false);
+                    if ((await onClearDemo()) !== false) setClearConfirm(false);
                   } else setClearConfirm(true);
                 }}
               >
@@ -303,12 +309,14 @@ export function PhotoPanel({
         <ScenePreview
           base={result.base}
           initialDraft={result.draft}
+          initialObservations={result.observations}
           current={workspace}
+          storageConflict={storageConflict}
           message={result.message}
           photo={photo}
           onDiscard={() => setResult(null)}
-          onApply={(draft, base) => {
-            onApply(draft, base);
+          onApply={async (draft, base) => {
+            await onApply(draft, base);
             setResult(null);
             setApplied(true);
           }}

@@ -50,6 +50,7 @@ import {
   SceneObjectList,
 } from './components/SceneObjectPanel';
 import { applySceneDraft } from './domain/sceneProposal';
+import { CommitTextInput } from './components/CommitInput';
 import './styles/app.css';
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel = 'objects' | 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | null;
@@ -72,15 +73,16 @@ export default function App() {
   const device = workspace.devices.find((d) => d.id === selected);
   const sceneObject = workspace.objects.find((o) => o.id === selected);
   const issues = workspace.devices.filter((d) => d.status === 'reported-issue').length;
-  const safe = (run: () => void) => {
+  const safe = async (run: () => unknown | Promise<unknown>): Promise<boolean> => {
     try {
-      run();
+      return (await run()) !== false;
     } catch (e) {
       setToast(e instanceof Error ? e.message.split('\n')[0] : 'Could not process the request.');
+      return false;
     }
   };
   function command(c: WorkspaceCommand) {
-    safe(() => store.command(c));
+    return safe(() => store.command(c));
   }
   function select(id: string | null) {
     setSelected(id);
@@ -159,7 +161,7 @@ export default function App() {
         <div className="header-actions">
           <span className="local-pill">
             <Check size={13} />
-            {store.error ? 'Check storage' : 'Browser storage'}
+            {store.error ? 'Check notice' : 'Browser storage'}
           </span>
           <button
             className="icon-button"
@@ -276,27 +278,8 @@ export default function App() {
               selected={selected}
               mode={mode}
               onSelect={select}
-              onMove={(id, x, z) => {
-                const d = workspace.devices.find((d) => d.id === id);
-                const o = workspace.objects.find((o) => o.id === id);
-                if (d)
-                  command({
-                    type: 'update-device',
-                    id,
-                    patch: {
-                      placement: { ...d.placement, x, z },
-                      visual: { ...d.visual, source: 'user-reported' },
-                    },
-                  });
-                if (o)
-                  command({
-                    type: 'update-object',
-                    id,
-                    patch: {
-                      placement: { ...o.placement, x, z },
-                      visual: { ...o.visual, source: 'user-reported' },
-                    },
-                  });
+              onMove={(id, placement, dragPath) => {
+                void command({ type: 'move-object', id, placement, dragPath });
               }}
             />
           </Suspense>
@@ -449,6 +432,7 @@ export default function App() {
             <SceneObjectInspector
               key={sceneObject.id}
               object={sceneObject}
+              workspace={workspace}
               onCommand={command}
               onClose={() => setSelected(null)}
             />
@@ -534,8 +518,8 @@ export default function App() {
               onSend={send}
               onDismiss={(key) => assistant.decide(key, 'dismissed')}
               onApply={(p, key) =>
-                safe(() => {
-                  store.proposal(p);
+                safe(async () => {
+                  if (!(await store.proposal(p))) return false;
                   assistant.decide(key, 'applied');
                   setToast('Applied to your workspace after confirmation.');
                 })
@@ -589,12 +573,16 @@ export default function App() {
               available={assistant.available}
               onClose={() => setPanel(null)}
               onAdd={() => setDialog('device')}
-              onApply={(draft, base) =>
-                store.replace(applySceneDraft(store.workspace, base, draft))
-              }
+              onApply={async (draft, base) => {
+                if (!(await store.replace(applySceneDraft(store.workspace, base, draft), base)))
+                  throw new Error(
+                    'The scene was not saved. Resolve the storage notice and try again.',
+                  );
+              }}
+              storageConflict={store.conflict}
               onRefresh={assistant.refreshHealth}
               onClearDemo={() =>
-                safe(() => {
+                safe(async () => {
                   const reportedEndpoints = new Set(
                     store.workspace.connections
                       .filter((c) => c.source !== 'demo')
@@ -609,13 +597,14 @@ export default function App() {
                       reportedEndpoints.has(d.id),
                   );
                   const ids = new Set(devices.map((d) => d.id));
-                  store.replace({
+                  const saved = await store.replace({
                     ...store.workspace,
                     devices,
                     connections: store.workspace.connections.filter(
                       (c) => ids.has(c.from) && ids.has(c.to),
                     ),
                   });
+                  if (!saved) return false;
                   setToast(
                     'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
                   );
@@ -685,13 +674,10 @@ export default function App() {
         <Modal title="Workspace settings" onClose={() => setPanel(null)}>
           <label>
             Workspace name
-            <input
-              defaultValue={workspace.name}
+            <CommitTextInput
+              value={workspace.name}
               maxLength={60}
-              onBlur={(e) => {
-                const name = e.target.value.trim();
-                if (name && name !== workspace.name) command({ type: 'rename', name });
-              }}
+              onCommit={(name) => command({ type: 'rename', name })}
             />
           </label>
           <label>
@@ -751,8 +737,8 @@ export default function App() {
               <p>Reset your workspace to the example? You can undo this change.</p>
               <button
                 className="button danger"
-                onClick={() => {
-                  store.replace(createDemoWorkspace());
+                onClick={async () => {
+                  if (!(await store.replace(createDemoWorkspace()))) return;
                   setResetConfirm(false);
                   setPanel(null);
                 }}
@@ -781,9 +767,9 @@ export default function App() {
           e.target.value = '';
           if (!f) return;
           try {
-            if (f.size > 2_000_000) throw new Error('The JSON file must be 2 MB or smaller.');
+            if (f.size > 12_000_000) throw new Error('The JSON file must be 12 MB or smaller.');
             const next = parseWorkspace(JSON.parse(await f.text()));
-            store.replace(next);
+            if (!(await store.replace(next))) return;
             setSelected(null);
             setToast('Workspace imported. Undo to restore the previous state.');
           } catch {
@@ -844,6 +830,40 @@ export default function App() {
             </button>
           )}
         </Modal>
+      )}
+
+      {store.conflict && (
+        <section className="storage-conflict" role="alert" aria-label="Storage conflict">
+          <strong>This workspace changed in another tab.</strong>
+          <p>
+            Your view is preserved. Export it if needed, then load the latest saved workspace before
+            making more changes.
+          </p>
+          <div className="placement-actions">
+            <button
+              className="button secondary"
+              onClick={() =>
+                downloadFile('desktwin-local-copy.json', JSON.stringify(store.workspace, null, 2))
+              }
+            >
+              Export this tab's copy
+            </button>
+            <button
+              className="button primary"
+              disabled={store.saving}
+              onClick={async () => {
+                if (await store.reloadLatest()) {
+                  setSelected(null);
+                  setToast(
+                    'Loaded the latest saved workspace. Undo history was reset for this tab.',
+                  );
+                }
+              }}
+            >
+              Load latest saved workspace
+            </button>
+          </div>
+        </section>
       )}
 
       {(toast || store.error) && (

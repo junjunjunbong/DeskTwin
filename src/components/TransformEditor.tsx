@@ -1,7 +1,17 @@
-import type { Placement, Visual, BoxPart } from '../domain/workspace';
+import { useState } from 'react';
+import type {
+  Placement,
+  Visual,
+  BoxPart,
+  PlacementPatch,
+  VisualUpdate,
+  BoxPartPatch,
+} from '../domain/workspace';
 import { sourceLabels } from '../domain/workspace';
+import { CommitNumberInput } from './CommitInput';
+import { RangeInput } from './RangeInput';
 
-export type VisualPatch = { placement?: Placement; visual?: Visual };
+export type VisualPatch = { placement?: PlacementPatch; visual?: VisualUpdate };
 
 export function TransformEditor({
   placement,
@@ -11,10 +21,10 @@ export function TransformEditor({
 }: {
   placement: Placement;
   visual: Visual;
-  onChange: (patch: VisualPatch) => void;
+  onChange: (patch: VisualPatch) => unknown;
   prefix?: string;
 }) {
-  const edited = { ...visual, source: 'user-reported' as const };
+  const edited = { source: 'user-reported' as const };
   const positions = [
     { axis: 'x', label: 'Left / right', min: -4.3, max: 4.3 },
     { axis: 'y', label: 'Height', min: 0, max: 5.5 },
@@ -30,22 +40,24 @@ export function TransformEditor({
         <label className="range-label" key={axis}>
           {label}
           <output>
-            {placement[axis]}
+            {Number(placement[axis].toFixed(4))}
             {axis === 'rotation' ? '°' : ''}
           </output>
-          <input
-            type="range"
+          <RangeInput
             aria-label={`${prefix} ${axis === 'rotation' ? 'rotation' : `${label.toLowerCase()} position`}`}
             min={min}
             max={max}
             step={axis === 'rotation' ? 1 : 0.01}
+            // Match the browser's native step normalization without rounding the
+            // saved geometry. Otherwise React's async controlled-value restore
+            // can make the final change event look like a second, stale edit.
             value={placement[axis]}
-            onChange={(e) =>
-              onChange({
-                placement: { ...placement, [axis]: Number(e.target.value) },
+            onCommit={(value) => {
+              return onChange({
+                placement: { [axis]: value },
                 visual: edited,
-              })
-            }
+              });
+            }}
           />
         </label>
       ))}
@@ -53,18 +65,13 @@ export function TransformEditor({
         {(['x', 'y', 'z'] as const).map((axis, i) => (
           <label key={axis}>
             {['Width', 'Height', 'Depth'][i]} scale
-            <input
-              type="number"
+            <CommitNumberInput
               aria-label={`${prefix} ${['width', 'height', 'depth'][i]} scale`}
               min={0.1}
               max={3}
               step={0.05}
               value={visual.scale[axis]}
-              onChange={(e) => {
-                const value = e.target.valueAsNumber;
-                if (Number.isFinite(value) && value >= 0.1 && value <= 3)
-                  onChange({ visual: { ...edited, scale: { ...visual.scale, [axis]: value } } });
-              }}
+              onCommit={(value) => onChange({ visual: { ...edited, scale: { [axis]: value } } })}
             />
           </label>
         ))}
@@ -75,7 +82,7 @@ export function TransformEditor({
           <input
             type="color"
             aria-label={`${prefix} color`}
-            value={visual.color ?? '#8b9ba4'}
+            value={(visual.color ?? '#8b9ba4').toLowerCase()}
             onChange={(e) => onChange({ visual: { ...edited, color: e.target.value } })}
           />
         </label>
@@ -97,80 +104,112 @@ export function TransformEditor({
 export function PartsEditor({
   parts,
   onChange,
+  onPartChange,
 }: {
   parts: BoxPart[];
-  onChange: (parts: BoxPart[]) => void;
+  onChange: (parts: BoxPart[]) => unknown;
+  onPartChange: (index: number, patch: BoxPartPatch) => unknown;
 }) {
-  function change(index: number, part: BoxPart) {
-    onChange(parts.map((p, i) => (i === index ? part : p)));
+  const [selection, setSelection] = useState(0);
+  const index = Math.min(selection, Math.max(0, parts.length - 1));
+  const part = parts[index];
+  function change(patch: BoxPartPatch) {
+    return onPartChange(index, patch);
   }
   return (
-    <details className="parts-editor">
-      <summary>Box composition ({parts.length || 'default box'})</summary>
-      <p className="micro-note">Build an approximate object from up to 16 boxes.</p>
-      {parts.map((part, index) => (
+    <details className="parts-editor" open>
+      <summary>Box composition ({parts.length} parts)</summary>
+      <p className="micro-note">
+        Edit local box position, size, rotation and color. Up to 128 parts; parts within the same
+        object may overlap.
+      </p>
+      <label>
+        Part to edit
+        <select
+          aria-label="Shape part"
+          value={index}
+          onChange={(event) => setSelection(Number(event.target.value))}
+        >
+          {parts.map((_, i) => (
+            <option key={i} value={i}>
+              Box {i + 1}
+            </option>
+          ))}
+        </select>
+      </label>
+      {part && (
         <fieldset key={index}>
           <legend>Box {index + 1}</legend>
-          {(['size', 'position'] as const).map((group) => (
+          {(['size', 'position', 'rotation'] as const).map((group) => (
             <div className="three-columns" key={group}>
               {(['x', 'y', 'z'] as const).map((axis) => (
                 <label key={axis}>
                   {group} {axis}
-                  <input
-                    type="number"
-                    step={0.05}
-                    value={part[group][axis]}
+                  {group === 'rotation' ? ' (°)' : ''}
+                  <CommitNumberInput
+                    step={group === 'rotation' ? 1 : 0.01}
+                    value={part[group]?.[axis] ?? 0}
                     aria-label={`Box ${index + 1} ${group} ${axis}`}
-                    min={group === 'size' ? 0.02 : -3}
-                    max={group === 'size' ? 6 : 3}
-                    onChange={(e) => {
-                      const n = e.target.valueAsNumber;
-                      if (
-                        Number.isFinite(n) &&
-                        n >= (group === 'size' ? 0.02 : -3) &&
-                        n <= (group === 'size' ? 6 : 3)
-                      )
-                        change(index, { ...part, [group]: { ...part[group], [axis]: n } });
-                    }}
+                    min={group === 'size' ? 0.005 : group === 'rotation' ? -180 : -6}
+                    max={group === 'size' ? 10 : group === 'rotation' ? 180 : 6}
+                    onCommit={(n) => change({ [group]: { [axis]: n } })}
                   />
                 </label>
               ))}
             </div>
           ))}
           <div className="object-color-row">
-            <input
-              type="color"
-              aria-label={`Box ${index + 1} color`}
-              value={part.color}
-              onChange={(e) => change(index, { ...part, color: e.target.value })}
-            />
+            <label>
+              Part color
+              <input
+                type="color"
+                aria-label={`Box ${index + 1} color`}
+                value={part.color.toLowerCase()}
+                onChange={(event) => change({ color: event.target.value })}
+              />
+            </label>
             <button
               type="button"
               className="text-button danger-text"
+              disabled={parts.length <= 1}
               onClick={() => onChange(parts.filter((_, i) => i !== index))}
             >
               Remove box {index + 1}
             </button>
           </div>
         </fieldset>
-      ))}
-      <button
-        type="button"
-        className="button secondary full"
-        disabled={parts.length >= 16}
-        onClick={() =>
-          onChange([
-            ...parts,
-            {
-              position: { x: 0, y: 0.3, z: 0 },
-              size: { x: 0.6, y: 0.6, z: 0.6 },
-              color: '#8b9ba4',
-            },
-          ])
-        }
-      >
-        Add box
-      </button>
+      )}
+      <div className="placement-actions">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={parts.length >= 128}
+          onClick={async () => {
+            const changed = await onChange([
+              ...parts,
+              {
+                position: { x: 0, y: 0.3, z: 0 },
+                size: { x: 0.6, y: 0.6, z: 0.6 },
+                color: '#8b9ba4',
+              },
+            ]);
+            if (changed !== false) setSelection(parts.length);
+          }}
+        >
+          Add box
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={!part || parts.length >= 128}
+          onClick={async () => {
+            const changed = await onChange([...parts, structuredClone(part)]);
+            if (changed !== false) setSelection(parts.length);
+          }}
+        >
+          Duplicate box
+        </button>
+      </div>
     </details>
   );
 }

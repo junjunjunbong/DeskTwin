@@ -45,6 +45,7 @@ export function Modal({
     ref.current?.querySelector<HTMLElement>('input, select, button')?.focus();
     function keyboard(e: KeyboardEvent) {
       if (e.key === 'Escape') {
+        if ((e.target as HTMLElement).closest('[data-commit-input]')) return;
         e.stopImmediatePropagation();
         closeRef.current();
       }

@@ -1,4 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
+const webPort = process.env.DESKTWIN_TEST_PORT ?? '5173';
+const apiPort = process.env.DESKTWIN_TEST_API_PORT ?? '4318';
+const baseURL = `http://127.0.0.1:${webPort}`;
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.ts',
@@ -8,7 +11,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     reducedMotion: 'reduce',
@@ -28,8 +31,10 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
+    url: baseURL,
+    // Own the test server: never reuse a user's dev server with an unknown API key.
+    reuseExistingServer: false,
+    env: { MODEL_API_KEY: '', DESKTWIN_WEB_PORT: webPort, PORT: apiPort },
     timeout: 30000,
   },
 });
