@@ -24,3 +24,15 @@ local-data/
 .DS_Store
 .idea/
 .vscode/
+
+# DeskTwin application
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store
