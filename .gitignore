@@ -1,0 +1,26 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies, builds, and caches
+node_modules/
+.next/
+dist/
+build/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Personal desk photos and local runtime data
+uploads/
+local-data/
+
+# System and editor files
+.DS_Store
+.idea/
+.vscode/
