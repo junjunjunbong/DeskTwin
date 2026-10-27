@@ -1,96 +1,125 @@
-# Photo scene editor
+# Scene editing: placement, attachments and voxel shapes
 
-DeskTwin turns a desk photo and the user's setup description into an editable voxel scene proposal. The proposal is a visual estimate. It does not reconstruct an exact mesh, measure physical dimensions, identify hidden wiring, or establish whether hardware works.
+DeskTwin keeps the existing procedural voxel style. Devices, furniture and props share the same validated scene model, geometry catalog and collision rules. Photos supply an editable visual proposal; they do not measure real dimensions, identify hidden wiring or verify hardware operation.
 
-## User flow
+## Display recorded connections
 
-1. Open **Desk photo** and choose a PNG, JPEG, or WebP image. Selection and local image processing do not send a request to Meta.
-2. Add any known device or connection details in **Device and connection notes**. Existing saved device, connection, and scene object records also provide context. Free-text connection notes guide identification; they do not create connection records. Use **Record a connection** to save topology explicitly.
-3. Check the separate photo consent checkbox and choose **Create scene preview with Meta**. The key remains on the local server.
-4. Review the proposed scene in **Review your desk scene**. Select objects in the 3D view or the object list. Adjust position, height, yaw rotation, width/height/depth scale, and color. Change furniture templates or edit a generic object's box composition when needed. New candidates can be removed from the preview.
-5. Choose **Confirm and apply scene** to save the reviewed configuration, or **Discard preview** to leave the saved configuration unchanged.
-6. Use the scene object list and device list to select and edit objects later. Browser persistence, JSON export/import, Undo, and Redo include the scene data.
+The header's **Show connections ON/OFF** switch works in every main scene mode, including **Edit placement**. Opening **Connections** turns it on; switching to **My desk** or **Edit placement** preserves the current toggle state. This is a view setting held in memory. It does not write connection records, create Undo steps, or change exported JSON.
 
-The preview displays retained user records alongside the proposed objects. Unused, disposable example devices and decor are replaced on approval. A sample device with a user-reported connection, a reported operating status, or an edited visual is retained so its evidence is not lost.
+ON displays every recorded relationship, including Bluetooth and Unknown connector records. Selecting a device emphasizes its incident lines and connected counterpart devices; other relationships remain visible with reduced emphasis. Selecting a desk, prop or empty space leaves all device relationships visible. OFF hides the lines while keeping recorded data, device details and counterpart emphasis available.
 
-## UI preview from a mocked response
+The device inspector shows the counterpart name, connector, each endpoint's entered port, source and note. Port labels follow the selected device even when it is the `to` endpoint of the stored edge. Missing port text is shown as **Not recorded**. Selecting the counterpart name opens that device.
 
-These are actual browser screenshots with synthetic input and a mocked scene proposal. They show the editing flow, not a successful live Meta analysis.
+Dashed arcs represent recorded relationships between visual object anchors. They are not measured cable paths or physical port positions. They do not indicate electrical connectivity, negotiated capabilities or successful hardware operation. Photo inference and example data keep their source labels. Dragging a device, or a desk carrying attached devices, updates these arcs during the unsaved gesture. The lines do not intercept object picking.
 
-![Editable desktop scene preview](screenshots/scene-preview-desktop.png)
+## Move and place objects
 
-![Scrollable preview at a 390 × 844 viewport](screenshots/scene-preview-mobile.png)
+Open **Edit placement** and select an object from the scene or **Scene objects**. Dragging uses the actual rendered box parts for collision checks. It stops at the last safe position instead of passing through another object. The empty space between desk legs remains usable. A fast pointer jump is swept along its path, including thin obstacles.
 
-## Procedural templates and editable substitutes
+Position sliders, yaw rotation, axis scale and part edits also check the proposed shape. A blocked numeric edit keeps the prior saved value and shows a reason. Numeric text remains editable while typing `0.`, a minus sign, or a decimal; Enter or leaving the field commits it. Escape restores the saved value. Names preserve spaces while typing and trim only when committed.
 
-The renderer reuses code-built voxel geometry. It does not need a separate downloaded asset for every observed object.
+Resizing an object already resting on the floor or a desk preserves its actual bottom and any small existing support gap, as long as the saved position bounds permit that adjustment. This matters for templates whose origin differs from the bottom of their geometry. Template changes and part size/rotation edits also retain resting contact when the edit does not explicitly change the relevant position. Explicit height or part-position edits remain deliberate placement changes and are collision-checked as entered. This correction does not make floating objects fall or move an unattached object with a separate support.
 
-| Category            | Supported templates                                                            |
+Under **Surface and attachment**, choose **Floor** or a desk, then **Place on surface**. Placement uses the actual bottom of the object's geometry and the rotated/scaled desk top. If the object is outside the chosen desk footprint, the explicit surface action tries the desk center; if that location is occupied or the object is too large, it asks the user to move or resize it. It does not hide a collision. Ordinary dragging snaps to a nearby surface at approximately the current height; changing from floor to tabletop is an explicit surface action, not an automatic jump through the desk.
+
+The solver preserves overlaps already present in older saves, so reading a save does not silently rearrange it. A user can move an overlapping object outward, but cannot deepen the existing overlap or create a new collision. Hidden decor still belongs to the saved scene and remains solid; enable **Show furniture and decor** to see it when arranging objects.
+
+Fresh example workspaces adjust the chair, desk mat, desk lamp and wall picture to remove their prior overlaps. Existing saves and generated v1 migration furniture retain their original placements.
+
+## Attach objects to a desk
+
+Select a monitor or prop, choose a desk under **Place on**, and select **Attach to desk**. Attachment places it on that desk and records a scene relationship. It does not create a cable connection or change operating status.
+
+- Moving or rotating the desk moves its attached objects in the live drag and the saved result.
+- Scaling the desk updates the children's offsets and support height. Their own dimensions stay unchanged.
+- Moving an attached object separately changes its offset while retaining the attachment. It must remain over its desk; detach it to move elsewhere.
+- **Detach from desk** preserves its current world position.
+- Deleting the desk detaches its children and preserves them; Undo restores the complete relationship.
+- If a desk or any carried object would hit another object, the whole movement stops together.
+
+Attachments have one level: devices and non-desk props may attach to desks; desks cannot attach to other objects. The saved representation keeps world coordinates and `attachment.parentId`, making an export directly inspectable.
+
+## Edit the shape
+
+Every existing device or furniture template can be a starting point. Choose **Customize template shape** to copy its exact voxel boxes into editable data. Choose a box in **Part to edit**, then change its local position, dimensions, rotation around x/y/z, or color. **Add box**, **Duplicate box**, and **Remove box** build more complex silhouettes. At least one custom box must remain. **Restore template shape** is undoable.
+
+An object can contain up to 128 boxes. Overlap between parts of the same object is intentional and allowed; collision checks compare the resulting shape against other scene objects. Editing a part color clears the overall tint so the individual color is visible. Full-object rotation remains yaw; individual boxes support pitch, yaw and roll.
+
+| Category            | Templates                                                                      |
 | ------------------- | ------------------------------------------------------------------------------ |
 | Devices             | Laptop, monitor, dock, external SSD, router, keyboard, mouse, desktop          |
-| Furniture and decor | Desk, chair, plant, lamp, books, mug, mat, shelf, picture, organizer, figurine |
-| Unsupported objects | `generic`: an editable box, or a composition of up to 16 axis-aligned boxes    |
+| Furniture and props | Desk, chair, plant, lamp, books, mug, mat, shelf, picture, organizer, figurine |
+| Unsupported objects | Generic voxel substitute, editable with the same box controls                  |
 
-A generic box part has only local position, size, and color. The schema does not accept scripts, shaders, functions, expressions, asset URLs, or arbitrary model-generated geometry code. Unsupported shapes should be approximated and described as approximate in the object's note.
+`src/domain/geometry.ts` supplies the same geometry to rendering, template conversion and collision checks. No per-object downloaded asset is required. Template screen illustrations and lamp lights remain decorative. In custom mode the saved boxes replace the template; decorative screen artwork and lamp lighting are not additional editable parts or indicators of device activity.
 
-Named templates preserve a recognizable voxel silhouette. Scale changes their proportions; it does not generate a new detailed mesh. The room shell, floor, and window remain illustrative, fixed geometry. Screen artwork is decorative. Drawn cable curves represent saved connection records and are not recovered physical cable routes.
+Only bounded data is accepted. Scripts, asset URLs, shaders, expressions and executable model-generated geometry are not allowed.
 
-## Data and evidence
+## Actual editor views
 
-The canonical data lives in `src/domain/workspace.ts`. Workspace v2 retains the existing `devices`, `connections`, `history`, and `appearance` fields, and adds `objects` for non-device scene objects.
+The current connection views below were captured in Chromium during the automated browser tests. They use example devices and a synthetic user-reported connection record. They do not show live hardware detection or photo recognition.
 
-Both devices and scene objects have:
+![Connection toggle, counterpart emphasis and both recorded ports](screenshots/connections-overview-desktop.png)
 
-- `placement`: absolute scene position (`x`, `y`, `z`) and yaw rotation in degrees.
-- `visual.scale`: separate dimensionless width, height, and depth multipliers.
-- `visual.color`: an optional primary tint. `null` uses template colors.
-- `visual.source` and `visual.note`: the origin of the visual properties and their explanation.
+![Reachable connection toggle while editing at a mobile viewport](screenshots/connections-inspector-mobile.png)
 
-Devices keep separate identity `source`, operating `status`, and `statusNote` fields. Editing a photo-inferred device's size or color changes the visual source to user-reported; it does not turn the identity or operating status into an independently verified fact. The original visual note remains available after manual adjustments.
+The following recovered spatial-editor checkpoint images show an attached monitor and its editable box composition before the independent connection switch was added. The placement and shape controls remain available in the current editor.
 
-The photo response contract in `src/domain/sceneProposal.ts` contains visual properties only. It cannot propose connection records or operating status. A new photo device receives `source: photo-inferred`, `status: unknown`, and an empty status note in application code. A suggestion that matches an existing non-demo device updates its placement and visual properties while preserving its identity, status, and connection endpoints.
+![Desk attachment and custom voxel shape controls](screenshots/spatial-editor-desktop.png)
 
-## Preview and confirmation boundaries
+![Part editing at a 390 by 844 viewport](screenshots/spatial-editor-mobile.png)
 
-`buildSceneDraft()` constructs a separate workspace snapshot. Creating, adjusting, or discarding this snapshot does not write localStorage or alter the saved Undo stack. The draft makes decor visible so a previously hidden-decor preference cannot conceal the objects being reviewed.
+## Photo workflow and duplicate prevention
 
-`applySceneDraft()` compares the current saved workspace with the original preview base. If another edit, import, or Undo changed the saved workspace, applying the old preview is rejected. The user must discard it and analyze again. The function also rejects a draft that changes existing device reports or saved connection records.
+1. Choose a photo in **Desk photo**. Selection and local resizing do not transmit it.
+2. Add known device/connection notes and check the separate Meta transmission consent.
+3. Choose **Create scene preview with Meta**. The server key stays out of the browser.
+4. Review the unsaved scene. Candidate positions are fitted to available floor/desk surfaces in a bounded, deterministic pass; retained user records are preserved. The proposal is still approximate.
+5. For a photographed device, review **Device record**. Explicit existing IDs, stable prior photo IDs and unique matching names suggest reuse of an existing record. When a same-type retained record exists but there is no unambiguous match, **Confirm and apply scene** is disabled until a record choice is made. Choose an existing compatible device or explicitly choose **Keep as a separate new device**. **Review device record** jumps to an unresolved candidate.
+6. Edit placement, attachment, shape and color before **Confirm and apply scene**, or **Discard preview**.
 
-Approval produces one saved snapshot and one change-history event. Temporary preview edits do not flood saved history. One Undo restores the complete previous workspace, and Redo restores the approved scene.
+A repeated proposal reuses compatible existing photo records and uniquely matching props instead of blindly appending them. Matching is a visual suggestion, not verified identity. Different names, changed candidate IDs or ambiguous identical devices can still require manual matching. Example devices with user-recorded connections, status, visual edits or attachments are retained and can be matched. An existing record retains its name, model, identity source, reports and cable endpoints. Rebinding a preview restores the prior record and moves only the visual association. A new photo device always has unknown operating status.
 
-## Existing saves and JSON compatibility
+The model may use a template or supply up to 32 bounded boxes for any device or prop, not just generic objects. Those boxes describe a complete approximate replacement shape, and the same editor remains available before and after approval. Described connections provide context but are not automatically persisted as cables.
 
-`parseWorkspace()` accepts existing v1 JSON and migrates it to v2 in memory. It preserves device IDs, names, models, reported status, connection records, history, and appearance preferences. Existing device positions gain the previous default height and scale. The former fixed furniture and decor become editable example objects.
+## Transactions and saved data
 
-The localStorage key remains `desktwin.workspace.v1` so existing installations can find their saved workspace. The document stored under that key uses `schemaVersion: 2` after a new saved change. Loading and migrating alone do not overwrite the original saved document. New exports contain v2 data. The previous v1 application cannot read new v2 exports.
+`buildScenePreview()` creates an isolated snapshot. Editing, matching or discarding the preview does not write localStorage or consume saved Undo steps. Approval checks the preview base, preserves existing device reports and connections, validates new/worsened collisions, and writes one saved snapshot with one history event. One Undo restores the entire prior workspace.
 
-Migration and roundtrip coverage uses a literal v1 fixture in `tests/fixtures/workspace-v1.json`. Invalid imports fail before replacing the saved workspace. A successful import remains undoable.
+The storage layer compares the latest saved document under a cross-tab Web Lock immediately before every write. A stale tab keeps its visible copy and shows **Load latest saved workspace** and **Export this tab's copy**. It cannot overwrite newer data through an edit, Undo, import or photo approval. Prepared same-tab replacements also check their original base after queued edits. Failed saves do not close an approval dialog or display a successful result. See [Storage behavior](STORAGE.md).
 
-## Bounds and coordinate meaning
+Workspace `schemaVersion: 2` and the `desktwin.workspace.v1` storage key remain. Storage and JSON import/export use the plain workspace document without a revision envelope. New optional fields are `attachment`, `shapeMode`, device `parts`, and per-box `rotation`. Missing fields keep the old rendering behavior. v1 migration preserves device IDs, names, models, status, connections, history and appearance; it accepts legacy extra presentation fields and older drag coordinates, and resolves generated decor IDs without renaming user devices. Reading or migrating a document never saves it automatically.
 
-| Data                     | Limit                                       |
-| ------------------------ | ------------------------------------------- |
-| Photo proposal           | 1-32 objects per response                   |
-| Saved devices            | 40                                          |
-| Saved non-device objects | 60                                          |
-| Generic composition      | 0-16 boxes; zero means the default box      |
-| Connections / history    | 100 each                                    |
-| Undo snapshots           | 20, in memory                               |
-| Position                 | x: -4.3 to 4.3; y: 0 to 5.5; z: -1.9 to 3.7 |
-| Yaw rotation             | -180 to 180 degrees                         |
-| Scale on each axis       | 0.1-3                                       |
-| Box local position       | -3 to 3 on each axis                        |
-| Box size                 | 0.02-6 on each axis                         |
+Writes require Web Locks on a supported HTTPS or localhost browser. When unavailable, the editor reports the limitation and does not perform an unprotected write; JSON export remains available. This coordinates current DeskTwin tabs on the same origin, not older application versions or unrelated scripts writing directly to the storage key.
 
-The default desk is about 7.4 scene units wide, 3.15 deep, and 2.5 high. A tabletop object's base normally starts at y = 2.51. These units are layout coordinates, not measured meters or centimeters.
+Current code reads old v1/v2 saves. Older application versions may reject new optional fields or custom shapes: forward export compatibility with an older app is not promised. Import accepts bounded JSON files up to 12 MB; browser storage quotas can still reject a large save, in which case the prior saved workspace is preserved.
 
-## Current limitations and validation boundary
+## Bounded data
 
-- Rotation is yaw only. Objects cannot be tilted with pitch or roll.
-- Objects are independent. Moving or resizing a desk does not automatically move objects resting on it. There is no collision detection, snapping, physical support constraint, or object parenting.
-- Exact object identity, relative scale, occluded surfaces, and camera interpretation depend on the model's estimate and the user's corrections.
-- Repeated photo analysis preserves non-demo props. There is currently no existing-object ID matching for furniture and decor, so another analysis can add duplicate props. Review or remove duplicates manually. Existing non-demo device references are supported, but a model that does not match a visible device can still propose a duplicate device.
-- A model response cannot exceed the remaining saved workspace capacity. Invalid or oversized proposals are rejected without changing the workspace.
-- The server adapter, schema checks, and user flow are tested with mocked provider responses. This implementation does not claim successful live Meta calls or measured photo reconstruction accuracy. See `VALIDATION.md` for the checks actually run.
+| Data                                     | Limit                                                 |
+| ---------------------------------------- | ----------------------------------------------------- |
+| Saved devices / non-device objects       | 40 / 60                                               |
+| User-edited custom shape                 | 1–128 boxes                                           |
+| Photo proposal                           | 1–32 objects; 0–32 boxes each; zero uses the template |
+| Object position                          | x −4.3…4.3; y 0…5.5; z −1.9…3.7                       |
+| Whole-object yaw / box rotation per axis | −180…180 degrees                                      |
+| Object scale per axis                    | 0.1…3                                                 |
+| Box local position / size per axis       | −6…6 / 0.005…10                                       |
+| Connections / saved history              | 100 each                                              |
+| Undo snapshots                           | 20 in memory                                          |
+| Validated drag path                      | 512 waypoints; release and continue if reached        |
+| Automatic free-placement search          | 4096 bounded candidates per object                    |
 
-Canceling analysis or closing the photo panel stops the browser from accepting that response. A request already sent to Meta may continue on the server/provider side and may incur charges. Cancellation cannot retract an already transmitted photo.
+Units are scene coordinates, not measured meters or centimeters. The default desk is about 7.4 units wide, 3.15 deep and 2.5 high.
+
+## Fixed elements and practical limits
+
+- The room shell, window and lighting design remain fixed scenery. Collision checks cover the floor and editable scene objects; fixed wall/window meshes are not independent collision or editing targets.
+- This is placement editing with collision prevention, not a gravity, balance, stacking or material simulation. Unattached objects do not fall or follow a resized/moved support automatically.
+- Desk support uses its largest flat box. A custom desk with unusual tiers may need manual height adjustment; it does not infer several independently selectable support surfaces.
+- Floor placement respects the nonnegative saved object origin. A legacy template whose lowest box starts slightly above its origin may retain a small gap, up to about 0.05 scene units.
+- Numeric rotation/scale uses conservative sweeps and may reject a very tight movement; move to clear space first. Existing overlaps are not automatically repaired on load.
+- Photos still need user correction for perspective, scale, occlusion and identity. The fitting search may reject a crowded proposal rather than overwrite retained objects or accept intersections.
+- Live Meta authentication, structured-output compatibility and visual inference quality are unverified. All automated photo tests use mocks. Canceling the browser request cannot retract a photo already sent or guarantee upstream cancellation.
+
+See [Validation](VALIDATION.md) for the actual test record.

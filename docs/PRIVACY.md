@@ -8,19 +8,22 @@ The local demo uses deterministic pattern matching, not a running language model
 
 ## Storage
 
-- Devices, reported connections, scene objects, transforms, visual evidence notes, appearance, and change history are stored in localStorage under `desktwin.workspace.v1`.
-- The document uses schema v2. Existing v1 documents migrate in memory; the old storage key is retained to find existing saves. A user action that saves a change writes the new document.
+- Devices, reported connections, scene objects, attachments, custom box parts, transforms, visual evidence notes, appearance, and change history are stored in localStorage under `desktwin.workspace.v1`.
+- The value is a plain Workspace v2 JSON document without a storage envelope. Existing v1/v2 documents remain readable; v1 documents migrate in memory and the old storage key is retained to find existing saves. A user action that saves a change writes the new document. Generated migration furniture IDs are renamed on collision, preserving existing device IDs and their connection endpoints.
 - Photos, chat messages, and photo description input are held in memory and are not separately persisted in the workspace or included as raw input in exported JSON. Model-derived object names and visual notes are included in an approved scene and can therefore be saved and exported.
 - Selecting a photo does not save it to the backend. The browser resizes and re-encodes the image before transmission, stripping image metadata.
 - An unapproved scene draft remains in component memory. Preview adjustments do not write localStorage. Applying the reviewed scene saves its structured data, without the photo bytes.
 - The API key exists only in the server environment or the local ignored `.env` file. Never use a `VITE_*` variable for a key.
 - Browser storage is not encrypted and is shared with scripts running on the same origin. Deleting site data removes the saved workspace; JSON export provides a user-controlled backup.
+- **Show connections** is transient view state. Toggling it, selecting a connected device, or reading ports/source notes does not modify saved relationships or send data. Hiding lines does not delete the records.
+
+Saving uses an exclusive Web Lock and compares the latest stored JSON inside that lock. A stale tab cannot use photo approval, JSON import or Undo/Redo to overwrite another current-version tab's saved document. Web Locks require a supported HTTPS or localhost browser; if unavailable, saving is blocked and JSON export remains available. This protection does not coordinate older application versions or unrelated scripts that write directly to the same key without the lock.
 
 ## External transfer
 
 Enabling Meta conversation permits sending the current message, up to 12 recent messages, and current device and connection records to the official Meta API. Device records include their saved visual properties and notes. Conversation does not automatically send a selected photo.
 
-Photo analysis requires its own consent checkbox and send button. It sends the resized image, optional user description, and current device, connection, and non-device object records. Change history and unrelated UI preferences are omitted from provider context. Selecting, locally previewing, or manually editing a photo or scene does not itself call Meta.
+Photo analysis requires its own consent checkbox and send button. It sends the resized image, optional user description, and current device, connection, and non-device object records. Change history and unrelated UI preferences are omitted from provider context. Custom box arrays are summarized as part counts and scene-coordinate dimensions before provider transmission to avoid sending thousands of redundant editing records. Selecting, locally previewing, or manually editing a photo or scene does not itself call Meta.
 
 A changed photo requires new consent. Canceling analysis, choosing another photo, or closing the panel prevents an obsolete response from becoming a preview. Browser cancellation does not necessarily cancel an upstream request that the local server already sent. Such a request may finish and may incur provider charges.
 
@@ -28,7 +31,7 @@ Meta's own data handling terms apply after transmission. DeskTwin cannot retract
 
 ## Local API protections
 
-The server binds to `127.0.0.1`. Hostnames are limited to loopback names. Cross-site requests and mismatched Origin/Host are rejected. The API accepts bounded JSON bodies and validates workspace graphs. It does not accept arbitrary remote image URLs.
+The server binds to `127.0.0.1`. Hostnames are limited to loopback names. Cross-site requests and mismatched Origin/Host are rejected. The API accepts JSON bodies up to 8 MB and validates workspace graphs, attachment references, custom shape bounds and scene proposals. It does not accept arbitrary remote image URLs.
 
 Provider requests use HTTPS, the official Meta host, disabled redirects, a timeout, and bounded response size. API keys stay in the server's authorization header. Production responses include a restrictive Content Security Policy and deny framing. The server does not log request bodies, images, device details, API keys, or arbitrary upstream error bodies.
 
@@ -36,13 +39,21 @@ These are local-MVP protections, not a complete security audit. The project has 
 
 ## Model output and evidence boundaries
 
-The model receives rules that treat image text, workspace fields, names, and user notes as untrusted data. The photo response has a separate strict schema. It can describe only allowed templates, bounded transforms, six-digit colors, and up to 16 bounded local boxes for a generic object. Extra fields such as code, connections, and operating status are rejected. No model-generated script, shader, shell command, URL, or expression is executed.
+The model receives rules that treat image text, workspace fields, names, and user notes as untrusted data. The photo response has a separate strict schema. It can describe only allowed templates, bounded transforms, six-digit colors, and up to 32 bounded local boxes for any allowed device or object. Extra fields such as code, connections, and operating status are rejected. No model-generated script, shader, shell command, URL, or expression is executed.
 
 Device identity source, visual source, reported topology, and reported operating status remain separate. A photo cannot establish that a hidden cable exists or a device works. New photo devices receive unknown status in application code. Existing user reports and connections are preserved deterministically during scene creation and checked again on approval.
 
-The user sees an editable preview before any saved configuration changes. A stale preview cannot overwrite a newer saved edit. Approval is one undoable workspace replacement. Discarding a preview leaves the saved workspace unchanged.
+The visible connection arcs illustrate saved relationships, including example and inferred records. Their endpoints use the rendered geometry for readability; they do not locate physical ports, trace cable routes or report electrical connectivity. A selected device highlights counterparts from the stored graph. This emphasis is not hardware verification. The inspector identifies both entered ports and the source of each record separately from the device's operating status.
+
+Photo record matching is a visual suggestion. If a candidate could duplicate a retained same-type device and no unambiguous match exists, the preview requires an explicit existing-record or separate-new-device choice before enabling approval. Original sample IDs that are endpoints of user-recorded connections are retained. Resolving a match does not turn image inference into verified identity or create a connection claim.
+
+The user sees an editable preview before any saved configuration changes. A stale preview cannot overwrite a newer saved edit. Cross-tab Web Locks and an in-lock comparison protect browser writes; a rejected save preserves the prior workspace and keeps the approval flow open. Approval is one undoable workspace replacement. Discarding a preview leaves the saved workspace unchanged.
 
 Schema validation does not prove factual correctness or eliminate prompt injection. A structurally valid arrangement, object name, or explanation can still be wrong. The adapter and user flow have mocked-provider tests; successful live Meta calls and measured visual accuracy are not established by those tests. No OS settings changes, disk formatting, or hardware actuation exists in this implementation.
+
+## Test isolation
+
+Browser E2E tests launch their own server with an explicitly empty `MODEL_API_KEY`. They do not reuse a running developer server. `DESKTWIN_TEST_PORT` and `DESKTWIN_TEST_API_PORT` allow the test process to run alongside another checkout without touching that checkout's server. The production smoke test also launches a separate blank-key server. Photo and conversation responses used for browser tests are fixtures or mocked failures. A passing test does not establish that a real Meta request, billing configuration or recognition result works.
 
 ## Reporting a security issue
 
