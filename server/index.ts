@@ -1,0 +1,29 @@
+import 'dotenv/config';
+import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { createApp } from './app';
+const port = Number(process.env.PORT ?? 4318);
+if (!Number.isInteger(port) || port < 1024 || port > 65535)
+  throw new Error('PORT must be an integer from 1024 to 65535.');
+const production = process.argv.includes('--production');
+const productionRoot = production ? resolve('dist') : undefined;
+if (productionRoot && !existsSync(resolve(productionRoot, 'index.html')))
+  throw new Error('Run npm run build before npm start.');
+const apiKey = process.env.MODEL_API_KEY?.trim() || '';
+const server = createApp({
+  apiKey,
+  model: process.env.META_MODEL?.trim() || 'muse-spark-1.3',
+  baseURL: process.env.META_BASE_URL?.trim() || 'https://api.meta.ai/v1',
+  productionRoot,
+});
+server.on('error', (error) => {
+  console.error(`DeskTwin server failed: ${error.message}`);
+  process.exitCode = 1;
+});
+server.listen(port, '127.0.0.1', () =>
+  console.log(
+    `DeskTwin ${production ? 'app' : 'API'}: http://127.0.0.1:${port} · ${apiKey ? 'Meta configured (user consent required)' : 'offline demo; no external API calls'}`,
+  ),
+);
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.on(signal, () => server.close(() => process.exit(0)));

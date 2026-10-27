@@ -1,0 +1,179 @@
+import { useState } from 'react';
+import { Plus, Link, ArrowRight } from '@phosphor-icons/react';
+import { Modal } from './ui';
+import {
+  ConnectorSchema,
+  DeviceKindSchema,
+  kindLabels,
+  type Connection,
+  type DeviceKind,
+  type Workspace,
+  type WorkspaceCommand,
+} from '../domain/workspace';
+export function AddDeviceDialog({
+  onClose,
+  onCommand,
+}: {
+  onClose: () => void;
+  onCommand: (command: WorkspaceCommand) => void;
+}) {
+  const [kind, setKind] = useState<DeviceKind>('monitor');
+  const [name, setName] = useState('');
+  return (
+    <Modal title="기기 추가" onClose={onClose}>
+      <p className="muted">사진이 없어도 직접 구성할 수 있습니다.</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onCommand({
+            type: 'add-device',
+            device: {
+              id: crypto.randomUUID(),
+              name: name.trim() || kindLabels[kind],
+              kind,
+              model: '',
+              source: 'user-reported',
+              status: 'unknown',
+              statusNote: '',
+              placement: { x: 0, z: 0.35, rotation: 0 },
+            },
+          });
+          onClose();
+        }}
+      >
+        <label>
+          종류
+          <select value={kind} onChange={(e) => setKind(e.target.value as DeviceKind)}>
+            {DeviceKindSchema.options.map((k) => (
+              <option key={k} value={k}>
+                {kindLabels[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          기기 이름
+          <input
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="예: 작업용 모니터"
+          />
+        </label>
+        <p className="micro-note">
+          추가한 기기는 상태 미확인으로 시작합니다. 배치 편집에서 위치를 옮길 수 있습니다.
+        </p>
+        <button className="button primary full" type="submit">
+          <Plus size={18} />내 책상에 추가
+        </button>
+      </form>
+    </Modal>
+  );
+}
+export function ConnectionDialog({
+  workspace,
+  selected,
+  onClose,
+  onCommand,
+}: {
+  workspace: Workspace;
+  selected: string | null;
+  onClose: () => void;
+  onCommand: (command: WorkspaceCommand) => void;
+}) {
+  const [from, setFrom] = useState(selected || workspace.devices[0]?.id || '');
+  const [to, setTo] = useState(workspace.devices.find((d) => d.id !== from)?.id || '');
+  const [connector, setConnector] = useState<Connection['connector']>('USB-C');
+  const [fromPort, setFromPort] = useState('');
+  const [toPort, setToPort] = useState('');
+  const valid = from && to && from !== to;
+  return (
+    <Modal title="연결 관계 알려주기" onClose={onClose}>
+      <p className="muted">무엇과 무엇을 연결했는지 기록합니다. 실제 작동 여부와는 별개입니다.</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid) return;
+          onCommand({
+            type: 'connect',
+            connection: {
+              id: crypto.randomUUID(),
+              from,
+              to,
+              connector,
+              fromPort,
+              toPort,
+              source: 'user-reported',
+              note: '사용자가 연결 구성을 직접 입력했습니다.',
+            },
+          });
+          onClose();
+        }}
+      >
+        <div className="connection-form-row">
+          <label>
+            첫 번째 기기
+            <select value={from} onChange={(e) => setFrom(e.target.value)}>
+              {workspace.devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <ArrowRight size={20} />
+          <label>
+            두 번째 기기
+            <select value={to} onChange={(e) => setTo(e.target.value)}>
+              {workspace.devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label>
+          연결 방식
+          <select
+            value={connector}
+            onChange={(e) => setConnector(e.target.value as Connection['connector'])}
+          >
+            {ConnectorSchema.options.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <div className="two-columns">
+          <label>
+            첫 기기의 포트 <span className="muted">선택</span>
+            <input
+              value={fromPort}
+              maxLength={40}
+              onChange={(e) => setFromPort(e.target.value)}
+              placeholder="예: 왼쪽 USB-C"
+            />
+          </label>
+          <label>
+            상대 기기의 포트 <span className="muted">선택</span>
+            <input
+              value={toPort}
+              maxLength={40}
+              onChange={(e) => setToPort(e.target.value)}
+              placeholder="예: HDMI 1"
+            />
+          </label>
+        </div>
+        {from === to && (
+          <p role="alert" className="form-error">
+            서로 다른 기기를 선택하세요.
+          </p>
+        )}
+        <button className="button primary full" disabled={!valid} type="submit">
+          <Link size={18} />
+          사용자 입력으로 저장
+        </button>
+      </form>
+    </Modal>
+  );
+}
