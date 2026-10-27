@@ -59,6 +59,7 @@ export default function App() {
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
   const assistant = useAssistant(workspace);
   const [mode, setMode] = useState<DeskMode>('desk');
+  const [showConnections, setShowConnections] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [dialog, setDialog] = useState<'object' | 'device' | 'connection' | 'cloud' | null>(null);
@@ -159,6 +160,18 @@ export default function App() {
         <div className="header-divider" />
         <span className="workspace-title">{workspace.name}</span>
         <div className="header-actions">
+          <button
+            className="connection-toggle"
+            role="switch"
+            aria-label="Show connections"
+            aria-checked={showConnections}
+            onClick={() => setShowConnections((visible) => !visible)}
+          >
+            <span>Show connections</span>
+            <span className="connection-toggle-state" aria-hidden="true">
+              {showConnections ? 'ON' : 'OFF'}
+            </span>
+          </button>
           <span className="local-pill">
             <Check size={13} />
             {store.error ? 'Check notice' : 'Browser storage'}
@@ -209,6 +222,7 @@ export default function App() {
               title="View connections"
               onClick={() => {
                 setMode('connections');
+                setShowConnections(true);
                 setPanel(null);
               }}
             >
@@ -277,6 +291,7 @@ export default function App() {
               workspace={workspace}
               selected={selected}
               mode={mode}
+              showConnections={showConnections}
               onSelect={select}
               onMove={(id, placement, dragPath) => {
                 void command({ type: 'move-object', id, placement, dragPath });
@@ -305,6 +320,7 @@ export default function App() {
                 aria-pressed={mode === value}
                 onClick={() => {
                   setMode(value);
+                  if (value === 'connections') setShowConnections(true);
                   setPanel(null);
                 }}
               >
@@ -385,24 +401,22 @@ export default function App() {
               </button>
             </div>
           </div>
-          {mode === 'connections' && (
-            <div className="connection-legend">
-              <span>
-                <i className="legend-line solid" />
-                User-reported
+          {showConnections && (
+            <div className="connection-legend" role="note" aria-label="Connection display guide">
+              <span className="connection-legend-copy">
+                Recorded relationships · Live status and cable routes are unverified
               </span>
-              <span>
-                <i className="legend-line dashed" />
-                Example / inferred
-              </span>
-              <button
-                className="text-button"
-                disabled={workspace.devices.length < 2}
-                onClick={() => setDialog('connection')}
-              >
-                <Link size={16} />
-                Add connection
-              </button>
+              <div className="connection-legend-key">
+                <span>Select a device for ports and sources.</span>
+                <button
+                  className="text-button"
+                  disabled={workspace.devices.length < 2}
+                  onClick={() => setDialog('connection')}
+                >
+                  <Link size={16} />
+                  Add connection
+                </button>
+              </div>
             </div>
           )}
           {issues > 0 && !selected && !panel && (
@@ -426,6 +440,7 @@ export default function App() {
               onCommand={command}
               onClose={() => setSelected(null)}
               onConnect={() => setDialog('connection')}
+              onSelect={select}
             />
           )}
           {sceneObject && (

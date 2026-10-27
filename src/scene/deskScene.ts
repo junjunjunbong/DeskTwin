@@ -9,14 +9,22 @@ import {
 } from '../domain/workspace';
 import { getGeometryParts } from '../domain/geometry';
 import { resolveSpatialEdit } from '../domain/spatial';
+import { getConnectionView, type ConnectionEmphasis } from '../domain/connectionView';
 
 export type DeskMode = 'desk' | 'connections' | 'edit';
 export type Marker = { id: string; x: number; y: number };
+export type ConnectionLine = {
+  id: string;
+  emphasis: ConnectionEmphasis;
+  from: [number, number, number];
+  to: [number, number, number];
+};
 export interface SceneCallbacks {
   onSelect: (id: string | null) => void;
   onMove: (id: string, placement: Placement, path: Placement[]) => void;
   onFeedback: (message: string) => void;
   onMarkers: (markers: Marker[]) => void;
+  onConnectionLines: (lines: ConnectionLine[]) => void;
 }
 
 /** Original procedural models: no photographed workspace or third-party 3D assets. */
@@ -67,6 +75,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   let selected: string | null = null;
   let hovered: string | null = null;
   let mode: DeskMode = 'desk';
+  let showConnections = false;
   let dirty = true;
   let disposed = false;
 
@@ -259,6 +268,10 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
     }
     const bounds = new THREE.Box3().setFromObject(g);
     g.userData.markerHeight = bounds.isEmpty() ? 0.7 : bounds.max.y + 0.15;
+    // Diagram anchors use the visual center, never an inferred hardware port.
+    g.userData.connectionAnchor = bounds.isEmpty()
+      ? new THREE.Vector3(0, 0.1, 0)
+      : bounds.getCenter(new THREE.Vector3());
     g.userData.deviceId = item.id;
     g.position.set(item.placement.x, item.placement.y, item.placement.z);
     g.rotation.y = THREE.MathUtils.degToRad(item.placement.rotation);
@@ -340,6 +353,39 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   scene.add(outline);
   (outline.material as THREE.LineBasicMaterial).transparent = true;
   (outline.material as THREE.LineBasicMaterial).opacity = 0.8;
+  const counterpartOutlines = new Map<string, THREE.BoxHelper>();
+  function updateHighlights() {
+    const group = selected ? deviceGroups.get(selected) : null;
+    outline.visible = !!group?.visible;
+    if (group?.visible) outline.setFromObject(group);
+    const counterpartIds = new Set(
+      workspace ? getConnectionView(workspace, selected, showConnections).counterpartIds : [],
+    );
+    for (const [id, helper] of counterpartOutlines) {
+      if (!counterpartIds.has(id) || !deviceGroups.get(id)?.visible) {
+        scene.remove(helper);
+        helper.geometry.dispose();
+        (helper.material as THREE.Material).dispose();
+        counterpartOutlines.delete(id);
+      }
+    }
+    for (const id of counterpartIds) {
+      const counterpart = deviceGroups.get(id);
+      if (!counterpart?.visible) continue;
+      let helper = counterpartOutlines.get(id);
+      if (!helper) {
+        helper = new THREE.BoxHelper(counterpart, '#0f938b');
+        const material = helper.material as THREE.LineBasicMaterial;
+        material.transparent = true;
+        material.opacity = 0.75;
+        material.depthTest = false;
+        helper.renderOrder = 9;
+        scene.add(helper);
+        counterpartOutlines.set(id, helper);
+      }
+      helper.setFromObject(counterpart);
+    }
+  }
   function rebuildCables() {
     for (const child of [...cables.children]) {
       const line = child as THREE.Line;
@@ -348,50 +394,82 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       else line.material.dispose();
     }
     cables.clear();
-    if (!workspace) return;
-    for (const c of workspace.connections) {
-      if (c.connector === 'Bluetooth' && mode !== 'connections') continue;
-      if (mode === 'connections' && selected && c.from !== selected && c.to !== selected) continue;
+    const rendered: ConnectionLine[] = [];
+    if (!workspace) {
+      cb.onConnectionLines(rendered);
+      return;
+    }
+    for (const { connection: c, emphasis } of getConnectionView(
+      workspace,
+      selected,
+      showConnections,
+    ).lines) {
       const a = deviceGroups.get(c.from),
         b = deviceGroups.get(c.to);
       if (!a || !b) continue;
-      // Routes illustrate user records. They are not recovered cable geometry.
-      const start = a.localToWorld(new THREE.Vector3(0, 0.09, -0.16));
-      const end = b.localToWorld(new THREE.Vector3(0, 0.09, -0.16));
-      const routeHeight = Math.min(start.y, end.y) + 0.02;
-      const curve = new THREE.CatmullRomCurve3([
+      // Dashed center-to-center arcs visualize records. They do not trace cables,
+      // locate physical ports, or indicate successful hardware operation.
+      const start = a.localToWorld((a.userData.connectionAnchor as THREE.Vector3).clone());
+      const end = b.localToWorld((b.userData.connectionAnchor as THREE.Vector3).clone());
+      const curve = new THREE.QuadraticBezierCurve3(
         start,
-        new THREE.Vector3(start.x, routeHeight, start.z - 0.26),
-        new THREE.Vector3((start.x + end.x) / 2, routeHeight, Math.min(start.z, end.z) - 0.33),
-        new THREE.Vector3(end.x, routeHeight, end.z - 0.26),
+        new THREE.Vector3(
+          (start.x + end.x) / 2,
+          Math.max(start.y, end.y) + 0.35,
+          (start.z + end.z) / 2,
+        ),
         end,
-      ]);
+      );
       const color =
-        mode === 'connections' ? (c.source === 'user-reported' ? '#3b83e9' : '#d4a65b') : '#555e61';
+        emphasis === 'muted'
+          ? '#7d8793'
+          : emphasis === 'highlighted'
+            ? '#1765d3'
+            : c.source === 'user-reported'
+              ? '#3b83e9'
+              : c.source === 'photo-inferred'
+                ? '#9471c4'
+                : '#ad7926';
       const material = new THREE.LineDashedMaterial({
         color,
-        dashSize: 0.08,
-        gapSize: c.source === 'user-reported' || mode === 'desk' ? 0 : 0.05,
+        dashSize: c.connector === 'Bluetooth' ? 0.035 : 0.09,
+        gapSize: 0.045,
         transparent: true,
-        opacity: mode === 'connections' ? 0.95 : 0.55,
-        depthTest: true,
+        opacity: emphasis === 'muted' ? 0.28 : emphasis === 'highlighted' ? 1 : 0.8,
+        depthTest: false,
+        depthWrite: false,
       });
       const line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(curve.getPoints(55)),
         material,
       );
       line.computeLineDistances();
+      line.renderOrder = emphasis === 'highlighted' ? 8 : 7;
       cables.add(line);
+      rendered.push({
+        id: c.id,
+        emphasis,
+        from: start.toArray(),
+        to: end.toArray(),
+      });
     }
+    cb.onConnectionLines(rendered);
   }
   function updateMarkers() {
     if (!workspace) return;
     const w = host.clientWidth,
       h = host.clientHeight;
+    const counterpartIds = new Set(
+      getConnectionView(workspace, selected, showConnections).counterpartIds,
+    );
     cb.onMarkers(
       [...workspace.devices, ...workspace.objects]
         .filter(
-          (item) => workspace!.appearance.labels || item.id === selected || item.id === hovered,
+          (item) =>
+            workspace!.appearance.labels ||
+            item.id === selected ||
+            item.id === hovered ||
+            counterpartIds.has(item.id),
         )
         .flatMap((item) => {
           const g = deviceGroups.get(item.id);
@@ -407,9 +485,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   }
   function select(id: string | null) {
     selected = id;
-    const group = id ? deviceGroups.get(id) : null;
-    outline.visible = !!group?.visible;
-    if (group?.visible) outline.setFromObject(group);
+    updateHighlights();
     rebuildCables();
     dirty = true;
   }
@@ -479,8 +555,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       group.rotation.y = THREE.MathUtils.degToRad(item.placement.rotation);
       group.scale.set(item.visual.scale.x, item.visual.scale.y, item.visual.scale.z);
     }
-    const group = selected ? deviceGroups.get(selected) : null;
-    if (group?.visible) outline.setFromObject(group);
+    updateHighlights();
     rebuildCables();
     dirty = true;
   }
@@ -635,6 +710,11 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       rebuildCables();
       dirty = true;
     },
+    setShowConnections(value: boolean) {
+      showConnections = value;
+      rebuildCables();
+      dirty = true;
+    },
     reset,
     zoom(delta: number) {
       camera.zoom = THREE.MathUtils.clamp(camera.zoom + delta, 0.65, 1.8);
@@ -663,6 +743,10 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       plane.dispose();
       outline.geometry.dispose();
       (outline.material as THREE.Material).dispose();
+      for (const helper of counterpartOutlines.values()) {
+        helper.geometry.dispose();
+        (helper.material as THREE.Material).dispose();
+      }
       materials.forEach((m) => m.dispose());
       ownedMaterials.forEach((m) => m.dispose());
       ownedTextures.forEach((t) => t.dispose());
