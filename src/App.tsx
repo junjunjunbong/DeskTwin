@@ -44,9 +44,15 @@ import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs
 import { DeviceIcon, Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
 import { PhotoPanel } from './components/PhotoPanel';
+import {
+  AddObjectDialog,
+  SceneObjectInspector,
+  SceneObjectList,
+} from './components/SceneObjectPanel';
+import { applySceneDraft } from './domain/sceneProposal';
 import './styles/app.css';
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
-type Panel = 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | null;
+type Panel = 'objects' | 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | null;
 export default function App() {
   const store = useWorkspace();
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
@@ -54,7 +60,7 @@ export default function App() {
   const [mode, setMode] = useState<DeskMode>('desk');
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
-  const [dialog, setDialog] = useState<'device' | 'connection' | 'cloud' | null>(null);
+  const [dialog, setDialog] = useState<'object' | 'device' | 'connection' | 'cloud' | null>(null);
   const [prompt, setPrompt] = useState('');
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -64,6 +70,7 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const device = workspace.devices.find((d) => d.id === selected);
+  const sceneObject = workspace.objects.find((o) => o.id === selected);
   const issues = workspace.devices.filter((d) => d.status === 'reported-issue').length;
   const safe = (run: () => void) => {
     try {
@@ -100,11 +107,17 @@ export default function App() {
     return () => clearTimeout(id);
   }, [toast]);
   useEffect(() => {
-    if (selected && !workspace.devices.some((d) => d.id === selected)) setSelected(null);
-  }, [selected, workspace.devices]);
+    if (
+      selected &&
+      !workspace.devices.some((d) => d.id === selected) &&
+      !workspace.objects.some((o) => o.id === selected)
+    )
+      setSelected(null);
+  }, [selected, workspace.devices, workspace.objects]);
   useEffect(() => {
     function keyboard(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
+      if (target.closest('[role="dialog"]')) return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)
         return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -179,6 +192,14 @@ export default function App() {
               onClick={() => openPanel('devices')}
             >
               <Desktop size={22} />
+            </button>
+            <button
+              className={`nav-button ${panel === 'objects' ? 'active' : ''}`}
+              aria-label="Scene objects"
+              title="Scene objects"
+              onClick={() => openPanel('objects')}
+            >
+              <Cube size={22} />
             </button>
             <button
               className={`nav-button ${mode === 'connections' ? 'active' : ''}`}
@@ -257,11 +278,24 @@ export default function App() {
               onSelect={select}
               onMove={(id, x, z) => {
                 const d = workspace.devices.find((d) => d.id === id);
+                const o = workspace.objects.find((o) => o.id === id);
                 if (d)
                   command({
                     type: 'update-device',
                     id,
-                    patch: { placement: { ...d.placement, x, z } },
+                    patch: {
+                      placement: { ...d.placement, x, z },
+                      visual: { ...d.visual, source: 'user-reported' },
+                    },
+                  });
+                if (o)
+                  command({
+                    type: 'update-object',
+                    id,
+                    patch: {
+                      placement: { ...o.placement, x, z },
+                      visual: { ...o.visual, source: 'user-reported' },
+                    },
                   });
               }}
             />
@@ -271,7 +305,7 @@ export default function App() {
             <h1>{workspace.name}</h1>
             <span className="scene-caption">
               <span className="neutral-dot" />
-              Example 3D scene · No live device detection
+              Editable voxel scene · No live device detection
             </span>
           </div>
           <div className="view-switch" aria-label="View mode">
@@ -346,7 +380,7 @@ export default function App() {
             <span>
               <Hand size={15} />
               {mode === 'edit'
-                ? 'Drag devices to rearrange them'
+                ? 'Drag objects to rearrange them'
                 : 'Drag to look around · Scroll to zoom'}
             </span>
             <div>
@@ -409,6 +443,22 @@ export default function App() {
               onCommand={command}
               onClose={() => setSelected(null)}
               onConnect={() => setDialog('connection')}
+            />
+          )}
+          {sceneObject && (
+            <SceneObjectInspector
+              key={sceneObject.id}
+              object={sceneObject}
+              onCommand={command}
+              onClose={() => setSelected(null)}
+            />
+          )}
+          {panel === 'objects' && (
+            <SceneObjectList
+              workspace={workspace}
+              onSelect={select}
+              onClose={() => setPanel(null)}
+              onAdd={() => setDialog('object')}
             />
           )}
           {panel === 'devices' && (
@@ -533,17 +583,31 @@ export default function App() {
           )}
           {panel === 'photo' && (
             <PhotoPanel
-              workspace={workspace}
+              workspace={store.workspace}
               photo={referencePhoto}
               onPhoto={setReferencePhoto}
               available={assistant.available}
               onClose={() => setPanel(null)}
               onAdd={() => setDialog('device')}
-              onApply={(p) => store.proposal(p, 'photo-inferred')}
+              onApply={(draft, base) =>
+                store.replace(applySceneDraft(store.workspace, base, draft))
+              }
               onRefresh={assistant.refreshHealth}
               onClearDemo={() =>
                 safe(() => {
-                  const devices = store.workspace.devices.filter((d) => d.source !== 'demo');
+                  const reportedEndpoints = new Set(
+                    store.workspace.connections
+                      .filter((c) => c.source !== 'demo')
+                      .flatMap((c) => [c.from, c.to]),
+                  );
+                  const devices = store.workspace.devices.filter(
+                    (d) =>
+                      d.source !== 'demo' ||
+                      d.status !== 'unknown' ||
+                      d.statusNote ||
+                      d.visual.source !== 'demo' ||
+                      reportedEndpoints.has(d.id),
+                  );
                   const ids = new Set(devices.map((d) => d.id));
                   store.replace({
                     ...store.workspace,
@@ -552,7 +616,9 @@ export default function App() {
                       (c) => ids.has(c.from) && ids.has(c.to),
                     ),
                   });
-                  setToast('Example devices removed. You can undo this change.');
+                  setToast(
+                    'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
+                  );
                 })
               }
             />
@@ -601,6 +667,9 @@ export default function App() {
           </div>
         </div>
       </footer>
+      {dialog === 'object' && (
+        <AddObjectDialog onClose={() => setDialog(null)} onCommand={command} />
+      )}
       {dialog === 'device' && (
         <AddDeviceDialog onClose={() => setDialog(null)} onCommand={command} />
       )}
@@ -647,7 +716,7 @@ export default function App() {
               checked={workspace.appearance.labels}
               onChange={(e) => command({ type: 'appearance', patch: { labels: e.target.checked } })}
             />
-            Show device names
+            Show object names
           </label>
           <label className="checkbox-label">
             <input
@@ -655,7 +724,7 @@ export default function App() {
               checked={workspace.appearance.decor}
               onChange={(e) => command({ type: 'appearance', patch: { decor: e.target.checked } })}
             />
-            Show plants, chair, and decor
+            Show furniture and decor
           </label>
           <div className="two-columns">
             <button
@@ -673,8 +742,8 @@ export default function App() {
             </button>
           </div>
           <p className="micro-note">
-            Devices and connections are stored in your browser. Photos, conversations, and API keys
-            are not included in the JSON export.
+            Scene objects, devices, and connections are stored in your browser. Photos,
+            conversations, and API keys are not included in the JSON export.
           </p>
           <hr />
           {resetConfirm ? (
@@ -712,13 +781,13 @@ export default function App() {
           e.target.value = '';
           if (!f) return;
           try {
-            if (f.size > 256000) throw new Error('The JSON file must be 256 KB or smaller.');
+            if (f.size > 2_000_000) throw new Error('The JSON file must be 2 MB or smaller.');
             const next = parseWorkspace(JSON.parse(await f.text()));
             store.replace(next);
             setSelected(null);
             setToast('Workspace imported. Undo to restore the previous state.');
           } catch {
-            setToast('Invalid DeskTwin v1 JSON file. Your existing workspace was preserved.');
+            setToast('Invalid DeskTwin v1/v2 JSON file. Your existing workspace was preserved.');
           }
         }}
       />

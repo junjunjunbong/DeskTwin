@@ -14,7 +14,7 @@ test('renders a real canvas without claiming detected hardware', async ({ page }
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
-  await expect(page.getByText('Example 3D scene · No live device detection')).toBeVisible();
+  await expect(page.getByText('Editable voxel scene · No live device detection')).toBeVisible();
   await expect(page.locator('header').getByRole('link', { name: /github/i })).toHaveCount(0);
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await expect(page.getByRole('button', { name: /MacBook Laptop/ })).toBeVisible();
@@ -124,7 +124,7 @@ test('rejects invalid import without replacing the workspace', async ({ page }) 
     buffer: Buffer.from('{"schemaVersion":999}'),
   });
   await expect(
-    page.getByText('Invalid DeskTwin v1 JSON file. Your existing workspace was preserved.'),
+    page.getByText('Invalid DeskTwin v1/v2 JSON file. Your existing workspace was preserved.'),
   ).toBeVisible();
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBe(before);
 });
@@ -158,7 +158,7 @@ test('guided troubleshooting records only an explicit user test', async ({ page 
   expect(monitor.status).toBe('reported-working');
   expect(monitor.statusNote).toContain('Cause not determined');
 });
-test('photo selection alone never sends an image; adding a proposal needs a second confirmation', async ({
+test('photo selection alone never sends an image; applying a scene needs a second confirmation', async ({
   page,
 }) => {
   await page.route('**/api/health', (route) =>
@@ -174,14 +174,17 @@ test('photo selection alone never sends an image; adding a proposal needs a seco
       json: {
         mode: 'meta',
         message: 'I found an object that looks like a monitor.',
-        proposals: [
+        objects: [
           {
-            type: 'add-device',
+            id: 'monitor-photo',
+            deviceId: null,
             kind: 'monitor',
             name: 'Monitor in photo',
-            x: 1,
-            z: -0.6,
-            reason: 'Visual inference from the photo',
+            placement: { x: 1, y: 2.51, z: -0.6, rotation: 0 },
+            scale: { x: 1, y: 1, z: 1 },
+            color: '#334455',
+            parts: [],
+            note: 'Visual inference from the photo',
           },
         ],
       },
@@ -202,17 +205,13 @@ test('photo selection alone never sends an image; adding a proposal needs a seco
   });
   await expect(page.getByAltText('Desk reference photo selected by the user')).toBeVisible();
   expect(calls).toBe(0);
-  await expect(
-    page.getByRole('button', { name: 'Analyze devices and placement with Meta' }),
-  ).toBeDisabled();
-  await page
-    .getByRole('checkbox', { name: /I agree to send this photo and my device setup/ })
-    .check();
-  await page.getByRole('button', { name: 'Analyze devices and placement with Meta' }).click();
-  await expect(page.getByRole('button', { name: 'Confirm and add' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeDisabled();
+  await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await expect(page.getByRole('button', { name: 'Confirm and apply scene' })).toBeVisible();
   expect(calls).toBe(1);
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
-  await page.getByRole('button', { name: 'Confirm and add' }).click();
+  await page.getByRole('button', { name: 'Confirm and apply scene' }).click();
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices.at(-1).source).toBe('photo-inferred');
   expect(stored.devices.at(-1).status).toBe('unknown');
@@ -273,7 +272,7 @@ test('exports inspectable workspace JSON without chat or photos', async ({ page 
   const chunks: Buffer[] = [];
   for await (const chunk of stream!) chunks.push(chunk);
   const data = JSON.parse(Buffer.concat(chunks).toString());
-  expect(data.schemaVersion).toBe(1);
+  expect(data.schemaVersion).toBe(2);
   expect(data.devices).toHaveLength(8);
   expect(data).not.toHaveProperty('messages');
   expect(data).not.toHaveProperty('photo');

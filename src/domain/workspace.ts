@@ -21,18 +21,98 @@ export const ConnectorSchema = z.enum([
   'Bluetooth',
   'Unknown',
 ]);
-const Id = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
-const PlacementSchema = z.object({
-  x: z.number().finite().min(-3.2).max(3.2),
-  z: z.number().finite().min(-1.3).max(1.3),
+export const IdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
+const Id = IdSchema;
+export const ColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+export const PlacementSchema = z.strictObject({
+  x: z.number().finite().min(-4.3).max(4.3),
+  y: z.number().finite().min(0).max(5.5),
+  z: z.number().finite().min(-1.9).max(3.7),
   rotation: z.number().finite().min(-180).max(180),
 });
-export const DeviceSchema = z.object({
+export type Placement = z.infer<typeof PlacementSchema>;
+export const ScaleSchema = z.strictObject({
+  x: z.number().finite().min(0.1).max(3),
+  y: z.number().finite().min(0.1).max(3),
+  z: z.number().finite().min(0.1).max(3),
+});
+export const VisualSchema = z.strictObject({
+  scale: ScaleSchema,
+  color: ColorSchema.nullable(),
+  source: SourceSchema,
+  note: z.string().max(300),
+});
+export type Visual = z.infer<typeof VisualSchema>;
+export function defaultVisual(source: z.infer<typeof SourceSchema> = 'user-reported'): Visual {
+  return { scale: { x: 1, y: 1, z: 1 }, color: null, source, note: '' };
+}
+export const BoxPartSchema = z.strictObject({
+  position: z.strictObject({
+    x: z.number().finite().min(-3).max(3),
+    y: z.number().finite().min(-3).max(3),
+    z: z.number().finite().min(-3).max(3),
+  }),
+  size: z.strictObject({
+    x: z.number().finite().min(0.02).max(6),
+    y: z.number().finite().min(0.02).max(6),
+    z: z.number().finite().min(0.02).max(6),
+  }),
+  color: ColorSchema,
+});
+export type BoxPart = z.infer<typeof BoxPartSchema>;
+export const ObjectKindSchema = z.enum([
+  'desk',
+  'chair',
+  'plant',
+  'lamp',
+  'books',
+  'mug',
+  'mat',
+  'shelf',
+  'picture',
+  'organizer',
+  'figurine',
+  'generic',
+]);
+export type ObjectKind = z.infer<typeof ObjectKindSchema>;
+export const SceneObjectSchema = z
+  .strictObject({
+    id: Id,
+    kind: ObjectKindSchema,
+    name: z.string().trim().min(1).max(60),
+    placement: PlacementSchema,
+    visual: VisualSchema,
+    parts: z.array(BoxPartSchema).max(16),
+  })
+  .superRefine((object, ctx) => {
+    if (object.kind !== 'generic' && object.parts.length)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Custom parts are only supported for generic objects.',
+      });
+  });
+export type SceneObject = z.infer<typeof SceneObjectSchema>;
+export const objectKindLabels: Record<ObjectKind, string> = {
+  desk: 'Desk',
+  chair: 'Chair',
+  plant: 'Plant',
+  lamp: 'Lamp',
+  books: 'Books',
+  mug: 'Mug',
+  mat: 'Mat',
+  shelf: 'Shelf',
+  picture: 'Picture',
+  organizer: 'Organizer',
+  figurine: 'Figurine',
+  generic: 'Generic object',
+};
+export const DeviceSchema = z.strictObject({
   id: Id,
   kind: DeviceKindSchema,
   name: z.string().trim().min(1).max(60),
   model: z.string().max(100),
-  placement: PlacementSchema,
+  placement: PlacementSchema.extend({ y: PlacementSchema.shape.y.default(2.51) }),
+  visual: VisualSchema.default(() => defaultVisual()),
   source: SourceSchema,
   status: StatusSchema,
   statusNote: z.string().max(300),
@@ -54,10 +134,11 @@ const EventSchema = z.object({
   source: SourceSchema,
 });
 export const WorkspaceSchema = z
-  .object({
-    schemaVersion: z.literal(1),
+  .strictObject({
+    schemaVersion: z.literal(2),
     name: z.string().trim().min(1).max(60),
     devices: z.array(DeviceSchema).max(40),
+    objects: z.array(SceneObjectSchema).max(60),
     connections: z.array(ConnectionSchema).max(100),
     history: z.array(EventSchema).max(100),
     appearance: z.object({
@@ -70,6 +151,9 @@ export const WorkspaceSchema = z
     const ids = workspace.devices.map((d) => d.id);
     if (new Set(ids).size !== ids.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate device IDs' });
+    const sceneIds = [...ids, ...workspace.objects.map((o) => o.id)];
+    if (new Set(sceneIds).size !== sceneIds.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate scene object IDs' });
     const connectionIds = workspace.connections.map((c) => c.id);
     if (new Set(connectionIds).size !== connectionIds.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate connection IDs' });
@@ -89,6 +173,9 @@ export type DeviceKind = Device['kind'];
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type Source = z.infer<typeof SourceSchema>;
+export function deviceVisual(device: Device): Visual {
+  return device.visual;
+}
 
 export const kindLabels: Record<DeviceKind, string> = {
   laptop: 'Laptop',
@@ -111,6 +198,99 @@ export const statusLabels: Record<Device['status'], string> = {
   'reported-issue': 'User reports an issue',
 };
 
+/** Safe, editable procedural templates. Dimensions are relative to each template. */
+export function createSceneObject(kind: ObjectKind): SceneObject {
+  const floor = kind === 'desk' || kind === 'chair';
+  const wall = kind === 'shelf' || kind === 'picture';
+  return SceneObjectSchema.parse({
+    id: crypto.randomUUID(),
+    kind,
+    name: objectKindLabels[kind],
+    placement: {
+      x: 0,
+      y: floor ? 0 : wall ? 4.5 : 2.51,
+      z: wall ? -1.9 : kind === 'chair' ? 2.65 : 0,
+      rotation: 0,
+    },
+    visual: defaultVisual(),
+    parts: [],
+  });
+}
+
+/** Former fixed furniture/decor becomes editable example data during v1 migration. */
+export function createDemoObjects(): SceneObject[] {
+  const object = (
+    id: string,
+    kind: ObjectKind,
+    name: string,
+    x: number,
+    y: number,
+    z: number,
+    size = 1,
+    rotation = 0,
+    scale?: Visual['scale'],
+  ): SceneObject => ({
+    id: `decor-${id}`,
+    kind,
+    name,
+    placement: { x, y, z, rotation },
+    visual: { ...defaultVisual('demo'), scale: scale ?? { x: size, y: size, z: size } },
+    parts: [],
+  });
+  return [
+    object('desk', 'desk', 'Desk', 0, 0, 0),
+    object('chair', 'chair', 'Desk chair', -0.55, 0, 2.65, 1, -7),
+    object('plant-left', 'plant', 'Left desk plant', -3.3, 2.5, -0.78, 0.87),
+    object('plant-right', 'plant', 'Right desk plant', 3.15, 2.5, 0.56, 0.65),
+    object('plant-floor-left', 'plant', 'Left floor plant', -4, 0.02, 2.8, 1.75),
+    object('plant-floor-right', 'plant', 'Right floor plant', 3.6, 0.02, 2.75, 1.55),
+    object('plant-window', 'plant', 'Window plant', -4.27, 2.45, -0.38, 0.7),
+    object('shelf-left', 'shelf', 'Left shelf', -2.65, 4.78, -1.9),
+    object('shelf-right', 'shelf', 'Right shelf', 2.45, 4.78, -1.9),
+    object('books-shelf', 'books', 'Shelf books', -3.22, 4.91, -1.9, 0.8),
+    object('figurine', 'figurine', 'Cat figurine', -2.4, 4.94, -1.89),
+    object('plant-shelf', 'plant', 'Shelf plant', 2.9, 4.93, -1.88, 0.6),
+    object('picture-landscape', 'picture', 'Landscape picture', -0.5, 4.55, -1.9),
+    object('picture-poster', 'picture', 'Ideas picture', 0.94, 4.5, -1.9, 1, 0, {
+      x: 0.77,
+      y: 1.32,
+      z: 1,
+    }),
+    object('picture-small', 'picture', 'Small picture', 2.15, 5.08, -1.9, 0.55),
+    object('books-desk', 'books', 'Desk books', 2.95, 2.5, 1.08),
+    object('organizer', 'organizer', 'Pen organizer', 2.2, 2.5, -0.08),
+    object('mug', 'mug', 'Desk mug', 2.05, 2.51, 1.1),
+    object('lamp', 'lamp', 'Desk lamp', 3.07, 2.5, -0.97),
+    {
+      ...object('pegboard', 'generic', 'Wall pegboard', 2.65, 3.23, -1.9),
+      parts: [
+        {
+          position: { x: 0, y: 0.64, z: 0 },
+          size: { x: 1.45, y: 1.28, z: 0.06 },
+          color: '#bca17e',
+        },
+        ...Array.from({ length: 15 }, (_, index) => ({
+          position: {
+            x: -0.46 + (index % 3) * 0.46,
+            y: 0.17 + Math.floor(index / 3) * 0.23,
+            z: 0.036,
+          },
+          size: { x: 0.025, y: 0.025, z: 0.02 },
+          color: '#8a775f',
+        })),
+      ],
+    },
+    object('desk-mat', 'mat', 'Desk mat', 0.3, 2.482, 0.94),
+    object('rug', 'mat', 'Floor rug', -0.55, 0.03, 2.6, 1, 0, { x: 1, y: 1, z: 2.35 }),
+    {
+      ...object('notebook', 'generic', 'Notebook', -1.55, 2.5, 1.08, 1, -11),
+      parts: [
+        { position: { x: 0, y: 0.03, z: 0 }, size: { x: 0.54, y: 0.06, z: 0.7 }, color: '#ede0bf' },
+      ],
+    },
+  ];
+}
+
 export function createDemoWorkspace(): Workspace {
   const device = (
     id: string,
@@ -124,7 +304,8 @@ export function createDemoWorkspace(): Workspace {
     kind,
     name,
     model: '',
-    placement: { x, z, rotation },
+    placement: { x, y: 2.51, z, rotation },
+    visual: defaultVisual('demo'),
     source: 'demo',
     status: 'unknown',
     statusNote: '',
@@ -140,7 +321,7 @@ export function createDemoWorkspace(): Workspace {
     note: 'Example only. This is not a confirmed connection.',
   });
   return WorkspaceSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'My workspace',
     devices: [
       device('laptop', 'laptop', 'MacBook', -2.1, 0.1, 10),
@@ -161,6 +342,7 @@ export function createDemoWorkspace(): Workspace {
       edge('laptop', 'keyboard', 'Bluetooth'),
       edge('laptop', 'mouse', 'Bluetooth'),
     ],
+    objects: createDemoObjects(),
     history: [],
     appearance: { lighting: 'sunset', labels: false, decor: true },
   });
@@ -198,8 +380,11 @@ export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
 }
 
 export type WorkspaceCommand =
-  | { type: 'add-device'; device: Device }
-  | { type: 'update-device'; id: string; patch: Partial<Omit<Device, 'id'>> }
+  | { type: 'add-device'; device: z.input<typeof DeviceSchema> }
+  | { type: 'update-device'; id: string; patch: Partial<Omit<z.input<typeof DeviceSchema>, 'id'>> }
+  | { type: 'add-object'; object: SceneObject }
+  | { type: 'update-object'; id: string; patch: Partial<Omit<SceneObject, 'id'>> }
+  | { type: 'remove-object'; id: string }
   | { type: 'remove-device'; id: string }
   | { type: 'connect'; connection: Connection }
   | { type: 'remove-connection'; id: string }
@@ -216,14 +401,53 @@ export function applyCommand(
   let summary = '';
   switch (command.type) {
     case 'add-device':
-      next.devices.push(DeviceSchema.parse(command.device));
+      next.devices.push(
+        DeviceSchema.parse({
+          ...command.device,
+          visual: command.device.visual ?? defaultVisual(command.device.source),
+        }),
+      );
       summary = `Added ${command.device.name}`;
       break;
     case 'update-device': {
       const index = next.devices.findIndex((d) => d.id === command.id);
       if (index < 0) throw new Error('Device not found. Check the latest workspace.');
-      next.devices[index] = DeviceSchema.parse({ ...next.devices[index], ...command.patch });
+      const previous = next.devices[index];
+      next.devices[index] = DeviceSchema.parse({
+        ...previous,
+        ...command.patch,
+        placement: command.patch.placement
+          ? { ...previous.placement, ...command.patch.placement }
+          : previous.placement,
+        visual:
+          command.patch.visual || command.patch.placement
+            ? { ...(command.patch.visual ?? previous.visual), source: 'user-reported' }
+            : previous.visual,
+      });
       summary = `Updated ${next.devices[index].name}`;
+      break;
+    }
+    case 'add-object':
+      next.objects.push(SceneObjectSchema.parse(command.object));
+      summary = `Added ${command.object.name}`;
+      break;
+    case 'update-object': {
+      const index = next.objects.findIndex((o) => o.id === command.id);
+      if (index < 0) throw new Error('Object not found. Check the latest workspace.');
+      const previous = next.objects[index];
+      next.objects[index] = SceneObjectSchema.parse({
+        ...previous,
+        ...command.patch,
+        visual: { ...(command.patch.visual ?? previous.visual), source: 'user-reported' },
+      });
+      summary = `Updated ${next.objects[index].name}`;
+      break;
+    }
+    case 'remove-object': {
+      const object = next.objects.find((o) => o.id === command.id);
+      if (!object) throw new Error('Object not found.');
+      next.objects = next.objects.filter((o) => o.id !== command.id);
+      summary = `Removed ${object.name}`;
       break;
     }
     case 'remove-device':
@@ -344,10 +568,49 @@ export function applyProposal(
       status: 'unknown',
       statusNote: '',
       source,
+      visual: defaultVisual(source),
     },
   });
 }
 
+const LegacyPlacementSchema = z.strictObject({
+  x: z.number().finite().min(-3.2).max(3.2),
+  z: z.number().finite().min(-1.3).max(1.3),
+  rotation: z.number().finite().min(-180).max(180),
+});
+const LegacyWorkspaceSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  name: z.string().trim().min(1).max(60),
+  devices: z
+    .array(DeviceSchema.omit({ visual: true }).extend({ placement: LegacyPlacementSchema }))
+    .max(40),
+  connections: z.array(ConnectionSchema).max(100),
+  history: z.array(EventSchema).max(100),
+  appearance: z.object({
+    lighting: z.enum(['day', 'sunset', 'night']),
+    labels: z.boolean(),
+    decor: z.boolean(),
+  }),
+});
+/** Reads v1 without writing storage. The caller controls the eventual save/undo step. */
 export function parseWorkspace(value: unknown): Workspace {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'schemaVersion' in value &&
+    value.schemaVersion === 1
+  ) {
+    const legacy = LegacyWorkspaceSchema.parse(value);
+    return WorkspaceSchema.parse({
+      ...legacy,
+      schemaVersion: 2,
+      devices: legacy.devices.map((device) => ({
+        ...device,
+        placement: { ...device.placement, y: 2.51 },
+        visual: defaultVisual(device.source),
+      })),
+      objects: createDemoObjects(),
+    });
+  }
   return WorkspaceSchema.parse(value);
 }

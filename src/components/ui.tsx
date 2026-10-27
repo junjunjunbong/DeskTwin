@@ -30,10 +30,12 @@ export function Modal({
   title,
   children,
   onClose,
+  className = '',
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -43,7 +45,7 @@ export function Modal({
     ref.current?.querySelector<HTMLElement>('input, select, button')?.focus();
     function keyboard(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         closeRef.current();
       }
       if (e.key === 'Tab') {
@@ -63,9 +65,9 @@ export function Modal({
         }
       }
     }
-    document.addEventListener('keydown', keyboard);
+    document.addEventListener('keydown', keyboard, true);
     return () => {
-      document.removeEventListener('keydown', keyboard);
+      document.removeEventListener('keydown', keyboard, true);
       previous?.focus();
     };
   }, []);
@@ -76,7 +78,13 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
+      <div
+        className={`modal ${className}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        ref={ref}
+      >
         <div className="panel-heading">
           <div>
             <span className="eyebrow">YOUR WORKSPACE</span>

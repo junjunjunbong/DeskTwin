@@ -44,7 +44,15 @@ try {
     await delay(100);
   }
   assert.ok(ready, 'Production server did not start');
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.DESKTWIN_CHROMIUM_EXECUTABLE
+      ? {
+          executablePath: process.env.DESKTWIN_CHROMIUM_EXECUTABLE,
+          args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+        }
+      : {}),
+  });
   const page = await browser.newPage({ viewport: { width: 1448, height: 1086 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -58,7 +66,7 @@ try {
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
   await page.getByRole('button', { name: 'Close device details' }).click();
-  await page.screenshot({ path: 'docs/screenshots/hero-production.png' });
+  await page.screenshot({ path: 'test-results/production.png' });
   const result = await page.evaluate(async () => {
     const res = await fetch('/api/chat', {
       method: 'POST',

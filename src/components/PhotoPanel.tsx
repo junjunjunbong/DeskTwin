@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, X, Sparkle, Plus, Check } from '@phosphor-icons/react';
-import { AssistantResponseSchema, type Proposal, type Workspace } from '../domain/workspace';
+import { type Workspace } from '../domain/workspace';
+import { SceneProposalSchema, buildSceneDraft } from '../domain/sceneProposal';
+import { ScenePreview } from './ScenePreview';
 
 export async function preparePhoto(file: File): Promise<string> {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024)
@@ -33,7 +35,7 @@ interface Props {
   available: boolean;
   onClose: () => void;
   onAdd: () => void;
-  onApply: (p: Proposal) => void;
+  onApply: (draft: Workspace, base: Workspace) => void;
   onClearDemo: () => void;
   onRefresh: () => void;
 }
@@ -49,226 +51,269 @@ export function PhotoPanel({
   onRefresh,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const request = useRef<AbortController | null>(null);
+  const version = useRef(0);
   const [consent, setConsent] = useState(false);
+  const [context, setContext] = useState('');
   const [pending, setPending] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ message: string; proposals: Proposal[] } | null>(null);
-  const [accepted, setAccepted] = useState<number[]>([]);
+  const [result, setResult] = useState<{
+    base: Workspace;
+    draft: Workspace;
+    message: string;
+  } | null>(null);
+  const [applied, setApplied] = useState(false);
   const [clearConfirm, setClearConfirm] = useState(false);
+  useEffect(
+    () => () => {
+      version.current++;
+      request.current?.abort();
+    },
+    [],
+  );
+  function cancel() {
+    version.current++;
+    request.current?.abort();
+    request.current = null;
+    setPending(false);
+    setResult(null);
+  }
   async function analyze() {
-    if (!photo || !consent || !available || pending) return;
+    if (!photo || !consent || !available || pending || request.current) return;
+    cancel();
+    const token = version.current;
+    const controller = new AbortController();
+    request.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 40000);
+    const base = structuredClone(workspace);
     setPending(true);
     setError('');
-    setResult(null);
-    setAccepted([]);
+    setApplied(false);
     try {
       const res = await fetch('/api/photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(40000),
-        body: JSON.stringify({ image: photo, consent: true, workspace }),
+        signal: controller.signal,
+        body: JSON.stringify({ image: photo, consent: true, workspace: base, context }),
       });
       const data = await res.json();
+      if (token !== version.current) return;
       if (!res.ok) throw new Error(data.error || 'Analysis failed.');
-      const parsed = AssistantResponseSchema.parse(data);
-      if (data.mode !== 'meta' || parsed.proposals.some((p) => p.type !== 'add-device'))
-        throw new Error('The photo analysis result cannot be applied safely.');
-      setResult(parsed);
+      if (data.mode !== 'meta')
+        throw new Error('The photo response was not a Meta scene proposal.');
+      const { mode: _mode, ...proposal } = data;
+      const parsed = SceneProposalSchema.safeParse(proposal);
+      if (!parsed.success)
+        throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
+      setResult({ base, draft: buildSceneDraft(base, parsed.data), message: parsed.data.message });
     } catch (e) {
+      if (token !== version.current) return;
       setError(
-        e instanceof Error && e.name === 'TimeoutError'
-          ? 'Photo analysis timed out.'
+        controller.signal.aborted
+          ? 'Photo analysis timed out. Your workspace was not changed.'
           : e instanceof Error
-            ? e.message
+            ? e.message.split('\n')[0]
             : 'Could not analyze the photo.',
       );
     } finally {
-      setPending(false);
+      clearTimeout(timeout);
+      if (token === version.current) {
+        setPending(false);
+        request.current = null;
+      }
     }
   }
   return (
-    <aside className="floating-panel photo-panel" aria-label="Desk photo panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">START WITH YOUR DESK</span>
-          <h2>My desk photo</h2>
-        </div>
-        <button className="icon-button" aria-label="Close photo panel" onClick={onClose}>
-          <X size={19} />
-        </button>
-      </div>
-      <div className="panel-scroll">
-        <p className="muted">
-          Find devices and their approximate positions in a photo. This does not reconstruct the
-          entire room in 3D or detect cables.
-        </p>
-        <button
-          className="photo-drop"
-          disabled={pending || preparing}
-          onClick={() => fileRef.current?.click()}
-        >
-          {photo ? (
-            <img src={photo} alt="Desk reference photo selected by the user" />
-          ) : (
-            <>
-              <ImageIcon size={38} />
-              <strong>{preparing ? 'Preparing photo...' : 'Choose a photo'}</strong>
-              <span>PNG, JPEG, WebP · up to 8 MB</span>
-            </>
-          )}
-        </button>
-        <input
-          hidden
-          ref={fileRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          aria-label="Desk photo file"
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (!f) return;
-            setPreparing(true);
-            setError('');
-            setConsent(false);
-            setResult(null);
-            setAccepted([]);
-            try {
-              onPhoto(await preparePhoto(f));
-            } catch (e) {
-              setError(e instanceof Error ? e.message : 'Could not read the photo.');
-            } finally {
-              setPreparing(false);
-            }
-          }}
-        />
-        <p className="micro-note">
-          Photos are resized to at most 1280 pixels and stripped of metadata. Selecting a photo does
-          not send it. It will be removed when you refresh the page.
-        </p>
-        {available ? (
-          <>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={consent}
-                disabled={pending}
-                onChange={(e) => setConsent(e.target.checked)}
-              />
-              I agree to send this photo and my device setup to the Meta API for analysis.
-            </label>
-            <button
-              className="button primary full"
-              disabled={!photo || !consent || pending || preparing}
-              onClick={() => void analyze()}
-            >
-              <Sparkle size={18} />
-              {pending
-                ? 'Meta is analyzing the photo...'
-                : 'Analyze devices and placement with Meta'}
-            </button>
-          </>
-        ) : (
-          <div className="integration-note">
-            <strong>AI photo analysis: Meta key not configured</strong>
-            <p>
-              Set <code>MODEL_API_KEY</code> in the server's <code>.env</code> file, then restart
-              the API server. Do not enter your key on this screen.
-            </p>
-            <button className="text-button" onClick={onRefresh}>
-              Check connection settings again
-            </button>
+    <>
+      <aside className="floating-panel photo-panel" aria-label="Desk photo panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">START WITH YOUR DESK</span>
+            <h2>My desk photo</h2>
           </div>
-        )}
-        {error && (
-          <p role="alert" className="form-error">
-            {error}
+          <button className="icon-button" aria-label="Close photo panel" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </div>
+        <div className="panel-scroll">
+          <p className="muted">
+            Turn visible devices, furniture, and decor into an editable voxel scene. Review every
+            proposal before it changes your workspace.
           </p>
-        )}
-        {result && (
-          <section className="panel-section">
-            <h3>Devices inferred from the photo</h3>
-            <p className="muted">{result.message}</p>
-            {result.proposals.map((p, i) =>
-              p.type === 'add-device' ? (
-                <div className="proposal-card" key={i}>
-                  <strong>{p.name}</strong>
-                  <p>{p.reason}</p>
-                  {accepted.includes(i) ? (
-                    <span className="applied-note">
-                      <Check size={14} />
-                      Added as photo-inferred
-                    </span>
-                  ) : (
-                    <button
-                      className="button secondary"
-                      disabled={workspace.devices.length >= 40}
-                      onClick={() => {
-                        try {
-                          onApply(p);
-                          setAccepted((old) => [...old, i]);
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : 'Could not add the device.');
-                        }
-                      }}
-                    >
-                      Confirm and add
-                    </button>
-                  )}
-                </div>
-              ) : null,
+          <button
+            className="photo-drop"
+            disabled={preparing}
+            onClick={() => fileRef.current?.click()}
+          >
+            {photo ? (
+              <img src={photo} alt="Desk reference photo selected by the user" />
+            ) : (
+              <>
+                <ImageIcon size={38} />
+                <strong>{preparing ? 'Preparing photo...' : 'Choose a photo'}</strong>
+                <span>PNG, JPEG, WebP · up to 8 MB</span>
+              </>
             )}
-            <p className="micro-note">
-              Added devices are saved as photo-inferred with an unconfirmed operating status. You
-              can adjust them in placement editing.
-            </p>
-          </section>
-        )}
-        <button
-          className="button secondary full"
-          onClick={onAdd}
-          disabled={pending || workspace.devices.length >= 40}
-        >
-          <Plus size={18} />
-          Add a device manually
-        </button>
-        {workspace.devices.some((d) => d.source === 'demo') && (
-          <div className="clear-demo-row">
-            <button
-              className="text-button"
+          </button>
+          <input
+            hidden
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            aria-label="Desk photo file"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              cancel();
+              const token = version.current;
+              setPreparing(true);
+              setError('');
+              setConsent(false);
+              setApplied(false);
+              onPhoto(null);
+              try {
+                const data = await preparePhoto(file);
+                if (token === version.current) onPhoto(data);
+              } catch (e) {
+                if (token === version.current)
+                  setError(e instanceof Error ? e.message : 'Could not read the photo.');
+              } finally {
+                if (token === version.current) setPreparing(false);
+              }
+            }}
+          />
+          <p className="micro-note">
+            Photos stay in memory, are resized to at most 1280 pixels, and are stripped of metadata.
+            Selecting a photo does not send it.
+          </p>
+          <label>
+            What do you know about this setup?
+            <textarea
+              aria-label="Device and connection notes"
+              value={context}
+              maxLength={2000}
               disabled={pending}
+              placeholder="e.g. The closed laptop is my work computer. I connected its USB-C port to the dock."
+              onChange={(e) => setContext(e.target.value)}
+            />
+          </label>
+          <p className="micro-note">
+            Your saved device and connection records are included. These notes guide the visual
+            proposal; save connections separately with Record a connection. A photo cannot confirm
+            hidden wiring or device activity.
+          </p>
+          {available ? (
+            <>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  disabled={pending}
+                  onChange={(e) => setConsent(e.target.checked)}
+                />
+                I agree to send this photo, my setup, and these notes to the Meta API for analysis.
+              </label>
+              <button
+                className="button primary full"
+                disabled={!photo || !consent || pending || preparing}
+                onClick={() => void analyze()}
+              >
+                <Sparkle size={18} />
+                {pending ? 'Meta is analyzing the photo...' : 'Create scene preview with Meta'}
+              </button>
+              {pending && (
+                <button className="text-button" onClick={cancel}>
+                  Cancel analysis
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="integration-note">
+              <strong>AI photo analysis: Meta key not configured</strong>
+              <p>
+                Configure the Meta key on the local server to enable photo analysis. You can edit
+                the scene manually.
+              </p>
+              <button className="text-button" onClick={onRefresh}>
+                Check connection settings again
+              </button>
+            </div>
+          )}
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
+          {applied && (
+            <p className="applied-note">
+              <Check size={16} />
+              Scene applied. You can edit any object or undo this change.
+            </p>
+          )}
+          <button
+            className="button secondary full"
+            onClick={onAdd}
+            disabled={pending || workspace.devices.length >= 40}
+          >
+            <Plus size={18} />
+            Add a device manually
+          </button>
+          {workspace.devices.some((d) => d.source === 'demo') && (
+            <div className="clear-demo-row">
+              <button
+                className="text-button"
+                disabled={pending}
+                onClick={() => {
+                  if (clearConfirm) {
+                    onClearDemo();
+                    setClearConfirm(false);
+                  } else setClearConfirm(true);
+                }}
+              >
+                {clearConfirm
+                  ? 'Confirm removal of sample devices'
+                  : 'Remove sample devices and start my setup'}
+              </button>
+              {clearConfirm && (
+                <button className="text-button" onClick={() => setClearConfirm(false)}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
+          {photo && (
+            <button
+              className="text-button danger-text"
               onClick={() => {
-                if (clearConfirm) {
-                  onClearDemo();
-                  setClearConfirm(false);
-                } else setClearConfirm(true);
+                cancel();
+                onPhoto(null);
+                setConsent(false);
+                setError('');
+                setApplied(false);
               }}
             >
-              {clearConfirm
-                ? 'Confirm removal of sample devices'
-                : 'Remove sample devices and start my setup'}
+              Remove photo
             </button>
-            {clearConfirm && (
-              <button className="text-button" onClick={() => setClearConfirm(false)}>
-                Cancel
-              </button>
-            )}
-          </div>
-        )}
-        {photo && (
-          <button
-            className="text-button danger-text"
-            disabled={pending}
-            onClick={() => {
-              onPhoto(null);
-              setResult(null);
-              setConsent(false);
-            }}
-          >
-            Remove photo
-          </button>
-        )}
-      </div>
-    </aside>
+          )}
+        </div>
+      </aside>
+      {result && photo && (
+        <ScenePreview
+          base={result.base}
+          initialDraft={result.draft}
+          current={workspace}
+          message={result.message}
+          photo={photo}
+          onDiscard={() => setResult(null)}
+          onApply={(draft, base) => {
+            onApply(draft, base);
+            setResult(null);
+            setApplied(true);
+          }}
+        />
+      )}
+    </>
   );
 }

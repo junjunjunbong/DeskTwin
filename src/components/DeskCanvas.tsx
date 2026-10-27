@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Monitor, WarningCircle } from '@phosphor-icons/react';
+import { Cube, Monitor, WarningCircle } from '@phosphor-icons/react';
 import { createDeskScene, type DeskScene, type DeskMode, type Marker } from '../scene/deskScene';
 import { sourceLabels, type Workspace } from '../domain/workspace';
 export type CanvasHandle = Pick<DeskScene, 'reset' | 'zoom' | 'capture'>;
@@ -59,27 +59,29 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
           <p>
             Enable hardware acceleration in a browser that supports WebGL 2.
             <br />
-            You can still use the device list and edit connections.
+            You can still use the device and scene object lists to edit your workspace.
           </p>
         </div>
       ) : (
         markers.map((marker) => {
           const d = props.workspace.devices.find((d) => d.id === marker.id);
-          if (!d) return null;
+          const object = props.workspace.objects.find((item) => item.id === marker.id);
+          const item = d ?? object;
+          if (!item) return null;
           return (
             <button
-              key={d.id}
-              className={`device-marker ${d.status === 'reported-issue' ? 'has-issue' : ''}`}
+              key={item.id}
+              className={`device-marker ${d?.status === 'reported-issue' ? 'has-issue' : ''}`}
               style={{ left: marker.x, top: marker.y }}
-              onClick={() => props.onSelect(d.id)}
-              aria-label={`Select ${d.name}`}
+              onClick={() => props.onSelect(item.id)}
+              aria-label={`Select ${item.name}`}
             >
-              <Monitor size={20} />
+              {d ? <Monitor size={20} /> : <Cube size={20} />}
               <span>
-                <strong>{d.name}</strong>
-                <small>{sourceLabels[d.source]}</small>
+                <strong>{item.name}</strong>
+                <small>Visual: {sourceLabels[item.visual.source]}</small>
               </span>
-              <i className={`status-dot ${d.status}`} />
+              {d && <i className={`status-dot ${d.status}`} />}
             </button>
           );
         })

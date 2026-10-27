@@ -4,7 +4,7 @@ import { resolve, extname, sep } from 'node:path';
 import { z } from 'zod';
 import { WorkspaceSchema } from '../src/domain/workspace';
 import { demoReply } from '../src/domain/demoAssistant';
-import { ApiError, callMeta, HistorySchema, type MetaConfig } from './meta';
+import { ApiError, callMeta, callMetaScene, HistorySchema, type MetaConfig } from './meta';
 
 const ChatRequest = z.object({
   message: z.string().trim().min(1).max(2000),
@@ -19,6 +19,7 @@ const PhotoRequest = z.object({
     .regex(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
   consent: z.literal(true),
   workspace: WorkspaceSchema,
+  context: z.string().trim().max(2000).optional(),
 });
 interface ServerConfig extends MetaConfig {
   productionRoot?: string;
@@ -200,9 +201,9 @@ export function createApp(config: ServerConfig) {
           json(
             res,
             200,
-            await callMeta(config, data.workspace, {
-              message: 'Analyze only the devices and arrangement visible in the photo.',
+            await callMetaScene(config, data.workspace, {
               image: data.image,
+              context: data.context,
             }),
           );
         } finally {

@@ -1,0 +1,489 @@
+import { test, expect, type Page, type Locator } from '@playwright/test';
+import { createDemoWorkspace, type Workspace } from '../src/domain/workspace';
+import type { SceneProposal, SceneProposalItem } from '../src/domain/sceneProposal';
+
+const storageKey = 'desktwin.workspace.v1';
+test.setTimeout(60_000);
+
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  (page as Page & { sceneErrors?: string[] }).sceneErrors = errors;
+  await page.route('**/api/health', (route) =>
+    route.fulfill({ json: { mode: 'meta', model: 'mock-only', photoAvailable: true } }),
+  );
+  // Every photo response below is a browser fixture. Never fall through to a paid provider.
+  await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
+});
+test.afterEach(async ({ page }) => {
+  expect((page as Page & { sceneErrors?: string[] }).sceneErrors).toEqual([]);
+});
+
+function proposal(): SceneProposal {
+  const item = (
+    id: string,
+    kind: SceneProposalItem['kind'],
+    name: string,
+    y = 2.51,
+  ): SceneProposalItem => ({
+    id,
+    deviceId: null,
+    kind,
+    name,
+    placement: { x: 0, y, z: 0, rotation: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+    color: '#829575',
+    parts: [],
+    note: 'Coarse visual estimate from the supplied photo.',
+  });
+  return {
+    message: 'Review this approximate scene before applying it.',
+    objects: [
+      item('desk', 'desk', 'Photo desk', 0),
+      item('chair', 'chair', 'Photo chair', 0.02),
+      item('plant', 'plant', 'Photo plant'),
+      item('monitor', 'monitor', 'Photo monitor'),
+      {
+        ...item('prop', 'generic', 'Photo prop'),
+        parts: [
+          { position: { x: 0, y: 0.25, z: 0 }, size: { x: 0.5, y: 0.5, z: 0.5 }, color: '#829575' },
+        ],
+      },
+    ],
+  };
+}
+
+async function saved(page: Page): Promise<Workspace | null> {
+  return page.evaluate((key) => {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  }, storageKey);
+}
+async function seed(page: Page, workspace: Workspace) {
+  await page.addInitScript(
+    ({ key, value }) => {
+      if (!sessionStorage.getItem('scene-test-seeded')) {
+        localStorage.setItem(key, value);
+        sessionStorage.setItem('scene-test-seeded', 'yes');
+      }
+    },
+    { key: storageKey, value: JSON.stringify(workspace) },
+  );
+}
+async function choosePhoto(page: Page, color = '#889977') {
+  const data = await page.evaluate((fill) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, 8, 8);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }, color);
+  await page.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-desk.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(data, 'base64'),
+  });
+  await expect(page.getByAltText('Desk reference photo selected by the user')).toBeVisible();
+}
+async function openPhoto(page: Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await choosePhoto(page);
+}
+async function analyze(page: Page) {
+  await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  const modal = page.getByRole('dialog', { name: 'Review your desk scene' });
+  await expect(modal).toBeVisible();
+  return modal;
+}
+async function changeColor(input: Locator, value: string) {
+  await input.evaluate((element, color) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(element, color);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+async function openObjects(page: Page) {
+  const panel = page.getByRole('complementary', { name: 'Scene objects panel' });
+  if (!(await panel.isVisible()))
+    await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
+  await expect(panel).toBeVisible();
+  return panel;
+}
+async function exportJSON(page: Page) {
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  const waiting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export JSON' }).click();
+  const download = await waiting;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString()) as Workspace;
+}
+
+test('photo consent and notes lead to an editable preview; discarding never writes storage', async ({
+  page,
+}) => {
+  let calls = 0;
+  const notes = 'The monitor connects to my dock with HDMI. I have not tested it.';
+  await page.route('**/api/photo', async (route) => {
+    calls++;
+    const request = route.request().postDataJSON();
+    expect(request.context).toBe(notes);
+    expect(request.consent).toBe(true);
+    expect(request.image).toMatch(/^data:image\/jpeg;base64,/);
+    await route.fulfill({ json: { mode: 'meta', ...proposal() } });
+  });
+  await openPhoto(page);
+  expect(calls).toBe(0);
+  await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeDisabled();
+  await page.getByLabel('Device and connection notes').fill(notes);
+  const modal = await analyze(page);
+  await expect(modal.getByTestId('desk-canvas')).toBeVisible();
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo desk · Desk' });
+  await modal.getByRole('slider', { name: 'Preview object left / right position' }).fill('0.45');
+  await modal.getByRole('slider', { name: 'Preview object rotation' }).fill('12');
+  await modal.getByLabel('Preview object width scale').fill('1.25');
+  await changeColor(modal.getByLabel('Preview object color', { exact: true }), '#997755');
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+  await expect(modal).not.toBeVisible();
+  expect(await saved(page)).toBeNull();
+  expect(calls).toBe(1);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+test('applying a scene is one undo step and preserves user-reported identity, links and status', async ({
+  page,
+}) => {
+  const base = createDemoWorkspace();
+  const monitor = base.devices.find((device) => device.id === 'monitor-left')!;
+  monitor.source = 'user-reported';
+  monitor.model = 'My display model';
+  monitor.status = 'reported-issue';
+  monitor.statusNote = 'I observed flickering.';
+  base.devices.find((device) => device.id === 'dock')!.source = 'user-reported';
+  base.connections[1].source = 'user-reported';
+  base.connections[1].note = 'I connected this cable myself.';
+  await seed(page, base);
+  const scene = proposal();
+  scene.objects.find((object) => object.kind === 'monitor')!.deviceId = monitor.id;
+  await page.route('**/api/photo', (route) => route.fulfill({ json: { mode: 'meta', ...scene } }));
+  await openPhoto(page);
+  const modal = await analyze(page);
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo desk · Desk' });
+  await modal.getByRole('slider', { name: 'Preview object left / right position' }).fill('0.6');
+  await modal.getByLabel('Preview object width scale').fill('1.2');
+  expect(await saved(page)).toEqual(base);
+  await modal.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  await expect(modal).not.toBeVisible();
+  const applied = (await saved(page))!;
+  expect(applied.objects.find((object) => object.name === 'Photo desk')?.placement.x).toBe(0.6);
+  expect(applied.objects.find((object) => object.name === 'Photo desk')?.visual.scale.x).toBe(1.2);
+  expect(applied.devices.find((device) => device.id === monitor.id)).toMatchObject({
+    name: monitor.name,
+    model: monitor.model,
+    source: 'user-reported',
+    status: 'reported-issue',
+    statusNote: monitor.statusNote,
+  });
+  expect(
+    applied.connections.find((connection) => connection.id === base.connections[1].id),
+  ).toEqual(base.connections[1]);
+  expect(applied.history).toHaveLength(base.history.length + 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  expect(await saved(page)).toEqual(base);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  expect(await saved(page)).toEqual(applied);
+  await page.reload();
+  expect(await saved(page)).toEqual(applied);
+  const list = await openObjects(page);
+  await expect(list.getByRole('button', { name: /Photo prop Generic object/ })).toBeVisible();
+});
+
+test('desk, chair, plants and generic box parts remain editable and survive JSON round trips', async ({
+  page,
+}) => {
+  await page.goto('/');
+  let list = await openObjects(page);
+  await list.getByRole('button', { name: /^Desk Desk / }).click();
+  await page.getByLabel('Object width scale').fill('1.15');
+  list = await openObjects(page);
+  await list.getByRole('button', { name: /^Desk chair Chair / }).click();
+  await page.getByRole('slider', { name: 'Object rotation', exact: true }).fill('25');
+  list = await openObjects(page);
+  await list.getByRole('button', { name: /^Left desk plant Plant / }).click();
+  await changeColor(page.getByLabel('Object color', { exact: true }), '#42845f');
+  list = await openObjects(page);
+  await list.getByRole('button', { name: 'Add an object' }).click();
+  const add = page.getByRole('dialog', { name: 'Add scene object' });
+  await add.getByLabel('New object template').selectOption('generic');
+  await add.getByLabel('New object name').fill('Editable prop');
+  await add.getByRole('button', { name: 'Add object to scene' }).click();
+  list = await openObjects(page);
+  await list.getByRole('button', { name: /Editable prop Generic object/ }).click();
+  const inspector = page.getByRole('complementary', { name: 'Selected scene object' });
+  await inspector.getByText('Box composition (default box)', { exact: true }).click();
+  await inspector.getByRole('button', { name: 'Add box' }).click();
+  await inspector.getByLabel('Box 1 size x').fill('0.85');
+  await inspector.getByLabel('Box 1 position y').fill('0.4');
+  await changeColor(inspector.getByLabel('Box 1 color'), '#d29b58');
+  await inspector.getByRole('slider', { name: 'Object height position', exact: true }).fill('2.8');
+  const expected = (await saved(page))!;
+  expect(expected.objects.find((object) => object.id === 'decor-desk')?.visual.scale.x).toBe(1.15);
+  expect(expected.objects.find((object) => object.id === 'decor-chair')?.placement.rotation).toBe(
+    25,
+  );
+  expect(expected.objects.find((object) => object.id === 'decor-plant-left')?.visual.color).toBe(
+    '#42845f',
+  );
+  expect(expected.objects.find((object) => object.name === 'Editable prop')).toMatchObject({
+    kind: 'generic',
+    placement: { y: 2.8 },
+    parts: [{ size: { x: 0.85 }, position: { y: 0.4 }, color: '#d29b58' }],
+  });
+  await page.reload();
+  expect(await saved(page)).toEqual(expected);
+  const exported = await exportJSON(page);
+  expect(exported).toEqual(expected);
+  expect(exported).not.toHaveProperty('photo');
+  await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles({
+    name: 'scene-roundtrip.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(exported)),
+  });
+  expect(await saved(page)).toEqual(expected);
+});
+
+test('a literal v1 JSON import migrates without losing user device or connection records', async ({
+  page,
+}) => {
+  // Deliberately independent of the current demo factory: this is the old serialized contract.
+  const legacy = {
+    schemaVersion: 1,
+    name: 'Legacy desk',
+    devices: [
+      {
+        id: 'old-laptop',
+        kind: 'laptop',
+        name: 'Personal laptop',
+        model: 'Saved model',
+        placement: { x: -1, z: 0, rotation: 8 },
+        source: 'user-reported',
+        status: 'reported-working',
+        statusNote: 'I tested it.',
+      },
+      {
+        id: 'old-monitor',
+        kind: 'monitor',
+        name: 'Personal monitor',
+        model: '',
+        placement: { x: 1, z: -0.5, rotation: 0 },
+        source: 'photo-inferred',
+        status: 'unknown',
+        statusNote: '',
+      },
+    ],
+    connections: [
+      {
+        id: 'old-link',
+        from: 'old-laptop',
+        to: 'old-monitor',
+        connector: 'HDMI',
+        fromPort: 'HDMI 1',
+        toPort: 'HDMI 2',
+        source: 'user-reported',
+        note: 'My cable record',
+      },
+    ],
+    history: [
+      {
+        id: 'old-event',
+        at: '2026-10-26T12:00:00.000Z',
+        summary: 'Saved before scene editing',
+        source: 'user-reported',
+      },
+    ],
+    appearance: { lighting: 'night', labels: true, decor: false },
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles({
+    name: 'legacy-v1.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(legacy)),
+  });
+  await expect(page.getByRole('heading', { name: 'Legacy desk', exact: true })).toBeVisible();
+  const migrated = (await saved(page))!;
+  expect(migrated.schemaVersion).toBe(2);
+  expect(migrated.devices).toHaveLength(2);
+  expect(migrated.devices[0]).toMatchObject({
+    ...legacy.devices[0],
+    placement: { ...legacy.devices[0].placement, y: 2.51 },
+  });
+  expect(migrated.connections).toEqual(legacy.connections);
+  expect(migrated.history).toEqual(legacy.history);
+  expect(migrated.appearance).toEqual(legacy.appearance);
+  expect(migrated.objects.some((object) => object.kind === 'desk')).toBe(true);
+  await page.reload();
+  expect(await saved(page)).toEqual(migrated);
+  await expect(page.getByRole('heading', { name: 'Legacy desk', exact: true })).toBeVisible();
+});
+
+test('provider failures and hostile scene fields preserve the saved workspace', async ({
+  page,
+}) => {
+  const base = createDemoWorkspace();
+  await seed(page, base);
+  let calls = 0;
+  await page.route('**/api/photo', (route) => {
+    calls++;
+    return calls === 1
+      ? route.fulfill({ status: 502, json: { error: 'Mock provider unavailable' } })
+      : route.fulfill({
+          json: {
+            mode: 'meta',
+            ...proposal(),
+            connections: [{ from: 'laptop', to: 'dock' }],
+            code: 'window.badSceneExecuted = true',
+          },
+        });
+  });
+  await openPhoto(page);
+  await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Mock provider unavailable');
+  expect(await saved(page)).toEqual(base);
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await expect(page.getByRole('alert')).toHaveText(
+    'The returned scene was invalid. Your saved workspace was not changed.',
+  );
+  await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).not.toBeVisible();
+  expect(await saved(page)).toEqual(base);
+  expect(await page.evaluate(() => 'badSceneExecuted' in window)).toBe(false);
+});
+
+test('canceling a delayed analysis prevents it from replacing a newer preview', async ({
+  page,
+}) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let completed!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  let calls = 0;
+  await page.route('**/api/photo', async (route) => {
+    calls++;
+    if (calls === 1) {
+      await gate;
+      try {
+        await route.fulfill({
+          json: { mode: 'meta', ...proposal(), message: 'Obsolete response must not appear' },
+        });
+      } catch {
+        /* The browser may already have canceled the request. */
+      } finally {
+        completed();
+      }
+    } else
+      await route.fulfill({
+        json: { mode: 'meta', ...proposal(), message: 'Current scene proposal' },
+      });
+  });
+  try {
+    await openPhoto(page);
+    await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+    await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+    await expect.poll(() => calls).toBe(1);
+    await page.getByRole('button', { name: 'Cancel analysis' }).click();
+    await page.getByLabel('Device and connection notes').fill('Use this newer description.');
+    const modal = await analyze(page);
+    await expect(modal.getByText('Current scene proposal')).toBeVisible();
+    release();
+    await delivered;
+    await expect(modal.getByText('Current scene proposal')).toBeVisible();
+    await expect(page.getByText('Obsolete response must not appear')).not.toBeVisible();
+    expect(await saved(page)).toBeNull();
+    await modal.getByRole('button', { name: 'Discard preview' }).click();
+  } finally {
+    release();
+  }
+});
+
+test('replacing a photo cancels the old analysis and requires fresh consent', async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let completed!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  let calls = 0;
+  await page.route('**/api/photo', async (route) => {
+    calls++;
+    await gate;
+    try {
+      await route.fulfill({ json: { mode: 'meta', ...proposal() } });
+    } catch {
+      /* The old request is intentionally aborted by replacing the photo. */
+    } finally {
+      completed();
+    }
+  });
+  try {
+    await openPhoto(page);
+    await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+    await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+    await expect.poll(() => calls).toBe(1);
+    await choosePhoto(page, '#887799');
+    await expect(
+      page.getByRole('checkbox', { name: /I agree to send this photo/ }),
+    ).not.toBeChecked();
+    await expect(
+      page.getByRole('button', { name: 'Create scene preview with Meta' }),
+    ).toBeDisabled();
+    release();
+    await delivered;
+    await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).not.toBeVisible();
+    expect(calls).toBe(1);
+    expect(await saved(page)).toBeNull();
+  } finally {
+    release();
+  }
+});
+
+test('scene object editing and creation are usable in a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const list = await openObjects(page);
+  await list.getByRole('button', { name: /^Desk chair Chair / }).click();
+  await expect(page.getByRole('complementary', { name: 'Selected scene object' })).toBeVisible();
+  await page.getByRole('slider', { name: 'Object rotation', exact: true }).fill('18');
+  expect(
+    (await saved(page))!.objects.find((object) => object.id === 'decor-chair')?.placement.rotation,
+  ).toBe(18);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await openObjects(page);
+  await page.getByRole('button', { name: 'Add an object' }).click();
+  const modal = page.getByRole('dialog', { name: 'Add scene object' });
+  await expect(modal).toBeVisible();
+  await modal.getByLabel('New object template').selectOption('mug');
+  await modal.getByLabel('New object name').fill('My mug');
+  await modal.getByRole('button', { name: 'Add object to scene' }).click();
+  expect((await saved(page))!.objects.some((object) => object.name === 'My mug')).toBe(true);
+});
