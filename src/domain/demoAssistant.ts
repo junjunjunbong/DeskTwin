@@ -21,7 +21,7 @@ export function demoReply(message: string, workspace: Workspace): AssistantRespo
   if (/연결|꽂|connect/.test(text)) {
     if (mentioned.length < 2 || /어떻게|추천|할까|할 수|should|can i|\?/.test(text)) return respond('연결한 두 기기와 케이블 종류를 알려주세요. 예: “MacBook을 Dock에 USB-C로 연결했어”. 모르는 포트 사양은 추측해서 채우지 않습니다.');
     if (mentioned.length > 2) return respond('여러 기기를 말씀하셨어요. 로컬 데모에서는 한 번에 두 기기의 연결만 기록합니다. 연결 관계를 하나씩 알려주세요.');
-    const type = /hdmi/.test(text) ? 'HDMI' : /displayport|\bdp\b/.test(text) ? 'DisplayPort' : /usb[ -]?c|썬더볼트|thunderbolt/.test(text) ? 'USB-C' : /ethernet|이더넷|랜선/.test(text) ? 'Ethernet' : /bluetooth|블루투스/.test(text) ? 'Bluetooth' : /usb[ -]?a/.test(text) ? 'USB-A' : 'Unknown';
+    const type = /hdmi/.test(text) ? 'HDMI' : /displayport|\bdp\b/.test(text) ? 'DisplayPort' : /usb[ -]?c/.test(text) ? 'USB-C' : /ethernet|이더넷|랜선/.test(text) ? 'Ethernet' : /bluetooth|블루투스/.test(text) ? 'Bluetooth' : /usb[ -]?a/.test(text) ? 'USB-A' : 'Unknown';
     return respond(`${mentioned[0].name} ↔ ${mentioned[1].name} 연결을 ${type === 'Unknown' ? '종류 미확인' : type}으로 기록할까요? 아래에서 확인해야 구성이 바뀝니다. 케이블의 성능이나 현재 작동 상태는 확인하지 않았습니다.`, [{ type: 'connect', from: mentioned[0].id, to: mentioned[1].id, connector: type, reason: '사용자가 대화로 알려준 연결 구성입니다.' }]);
   }
   if (/정상|해결|잘\s*나와|이제.*나와|작동해|working now/.test(text)) {

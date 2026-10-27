@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
+import { DiagnosticPanel } from './DiagnosticPanel';
 import { kindLabels, sourceLabels, statusLabels, type Device, type Workspace, type WorkspaceCommand } from '../domain/workspace';
 interface Props { device: Device; workspace: Workspace; mode: string; onCommand: (command: WorkspaceCommand) => void; onClose: () => void; onConnect: () => void }
 export function DeviceInspector({ device: d, workspace, mode, onCommand, onClose, onConnect }: Props) {
   const [name, setName] = useState(d.name); const [model, setModel] = useState(d.model);
   const [status, setStatus] = useState(d.status); const [note, setNote] = useState(d.statusNote); const [deleting, setDeleting] = useState(false);
+  useEffect(() => { setName(d.name); setModel(d.model); setStatus(d.status); setNote(d.statusNote); }, [d.name, d.model, d.status, d.statusNote]);
   const links = workspace.connections.filter(c => c.from === d.id || c.to === d.id);
   return <aside className="floating-panel inspector" aria-label="선택한 기기">
     <div className="panel-heading"><div className="device-heading"><span className="device-glyph"><DeviceIcon kind={d.kind} size={29}/></span><div><span className="eyebrow">{kindLabels[d.kind]}</span><h2>{d.name}</h2></div></div><button className="icon-button" onClick={onClose} aria-label="기기 상세 닫기"><X size={19}/></button></div>
@@ -26,6 +28,7 @@ export function DeviceInspector({ device: d, workspace, mode, onCommand, onClose
         })}
         <p className="micro-note">연결 기록은 케이블의 현재 동작을 증명하지 않습니다.</p>
       </section>
+      {d.kind === 'monitor' && <DiagnosticPanel key={d.id} device={d} onPropose={p => { if (p.type === 'set-status') onCommand({ type: 'update-device', id: d.id, patch: { status: p.status, statusNote: p.note } }); }}/>}
       {deleting ? <div className="delete-confirm"><p>기기와 관련 연결을 삭제할까요?</p><button className="button danger" onClick={() => { onCommand({ type: 'remove-device', id: d.id }); onClose(); }}>삭제 확인</button><button className="text-button" onClick={() => setDeleting(false)}>취소</button></div> : <button className="text-button danger-text" onClick={() => setDeleting(true)}><Trash size={15}/>기기 삭제</button>}
     </div>
   </aside>;
