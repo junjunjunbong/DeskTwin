@@ -155,7 +155,7 @@ describe('local API and Meta boundary', () => {
         })
       ).status,
     ).toBe(400);
-    expect((await post(url, '/api/chat', { big: 'x'.repeat(2_100_001) })).status).toBe(413);
+    expect((await post(url, '/api/chat', { big: 'x'.repeat(8_000_001) })).status).toBe(413);
   });
   it('constrains model responses and sends only bounded current context', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(upstream(validReply));

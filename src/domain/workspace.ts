@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { findFreePlacement, resolveSpatialEdit, snapToSurface } from './spatial';
 
 export const DeviceKindSchema = z.enum([
   'laptop',
@@ -31,6 +32,7 @@ export const PlacementSchema = z.strictObject({
   rotation: z.number().finite().min(-180).max(180),
 });
 export type Placement = z.infer<typeof PlacementSchema>;
+export type PlacementPatch = Partial<Placement>;
 export const ScaleSchema = z.strictObject({
   x: z.number().finite().min(0.1).max(3),
   y: z.number().finite().min(0.1).max(3),
@@ -43,23 +45,40 @@ export const VisualSchema = z.strictObject({
   note: z.string().max(300),
 });
 export type Visual = z.infer<typeof VisualSchema>;
+export type VisualUpdate = Partial<Omit<Visual, 'scale'>> & {
+  scale?: Partial<Visual['scale']>;
+};
 export function defaultVisual(source: z.infer<typeof SourceSchema> = 'user-reported'): Visual {
   return { scale: { x: 1, y: 1, z: 1 }, color: null, source, note: '' };
 }
+export const PartRotationSchema = z.strictObject({
+  x: z.number().finite().min(-180).max(180),
+  y: z.number().finite().min(-180).max(180),
+  z: z.number().finite().min(-180).max(180),
+});
+export const AttachmentSchema = z.strictObject({ parentId: IdSchema });
+export const ShapeModeSchema = z.enum(['template', 'custom']);
 export const BoxPartSchema = z.strictObject({
+  rotation: PartRotationSchema.optional(),
   position: z.strictObject({
-    x: z.number().finite().min(-3).max(3),
-    y: z.number().finite().min(-3).max(3),
-    z: z.number().finite().min(-3).max(3),
+    x: z.number().finite().min(-6).max(6),
+    y: z.number().finite().min(-6).max(6),
+    z: z.number().finite().min(-6).max(6),
   }),
   size: z.strictObject({
-    x: z.number().finite().min(0.02).max(6),
-    y: z.number().finite().min(0.02).max(6),
-    z: z.number().finite().min(0.02).max(6),
+    x: z.number().finite().min(0.005).max(10),
+    y: z.number().finite().min(0.005).max(10),
+    z: z.number().finite().min(0.005).max(10),
   }),
   color: ColorSchema,
 });
 export type BoxPart = z.infer<typeof BoxPartSchema>;
+export type BoxPartPatch = {
+  position?: Partial<BoxPart['position']>;
+  size?: Partial<BoxPart['size']>;
+  rotation?: Partial<NonNullable<BoxPart['rotation']>>;
+  color?: string;
+};
 export const ObjectKindSchema = z.enum([
   'desk',
   'chair',
@@ -82,16 +101,19 @@ export const SceneObjectSchema = z
     name: z.string().trim().min(1).max(60),
     placement: PlacementSchema,
     visual: VisualSchema,
-    parts: z.array(BoxPartSchema).max(16),
+    parts: z.array(BoxPartSchema).max(128),
+    shapeMode: ShapeModeSchema.optional(),
+    attachment: AttachmentSchema.nullable().optional(),
   })
-  .superRefine((object, ctx) => {
-    if (object.kind !== 'generic' && object.parts.length)
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Custom parts are only supported for generic objects.',
-      });
+  .superRefine((item, ctx) => {
+    if (item.shapeMode === 'custom' && !item.parts?.length)
+      ctx.addIssue({ code: 'custom', message: 'A custom shape needs at least one box.' });
   });
 export type SceneObject = z.infer<typeof SceneObjectSchema>;
+export type SceneObjectPatch = Partial<Omit<SceneObject, 'id' | 'placement' | 'visual'>> & {
+  placement?: PlacementPatch;
+  visual?: VisualUpdate;
+};
 export const objectKindLabels: Record<ObjectKind, string> = {
   desk: 'Desk',
   chair: 'Chair',
@@ -106,17 +128,31 @@ export const objectKindLabels: Record<ObjectKind, string> = {
   figurine: 'Figurine',
   generic: 'Generic object',
 };
-export const DeviceSchema = z.strictObject({
-  id: Id,
-  kind: DeviceKindSchema,
-  name: z.string().trim().min(1).max(60),
-  model: z.string().max(100),
-  placement: PlacementSchema.extend({ y: PlacementSchema.shape.y.default(2.51) }),
-  visual: VisualSchema.default(() => defaultVisual()),
-  source: SourceSchema,
-  status: StatusSchema,
-  statusNote: z.string().max(300),
-});
+export const DeviceSchema = z
+  .strictObject({
+    id: Id,
+    kind: DeviceKindSchema,
+    name: z.string().trim().min(1).max(60),
+    model: z.string().max(100),
+    placement: PlacementSchema.extend({ y: PlacementSchema.shape.y.default(2.51) }),
+    visual: VisualSchema.default(() => defaultVisual()),
+    source: SourceSchema,
+    status: StatusSchema,
+    statusNote: z.string().max(300),
+    parts: z.array(BoxPartSchema).max(128).optional(),
+    shapeMode: ShapeModeSchema.optional(),
+    attachment: AttachmentSchema.nullable().optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (item.shapeMode === 'custom' && !item.parts?.length)
+      ctx.addIssue({ code: 'custom', message: 'A custom shape needs at least one box.' });
+  });
+export type DevicePatch = Partial<
+  Omit<z.input<typeof DeviceSchema>, 'id' | 'placement' | 'visual'>
+> & {
+  placement?: PlacementPatch;
+  visual?: VisualUpdate;
+};
 export const ConnectionSchema = z.object({
   id: Id,
   from: Id,
@@ -154,6 +190,15 @@ export const WorkspaceSchema = z
     const sceneIds = [...ids, ...workspace.objects.map((o) => o.id)];
     if (new Set(sceneIds).size !== sceneIds.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate scene object IDs' });
+    for (const item of [...workspace.devices, ...workspace.objects]) {
+      if (!item.attachment) continue;
+      const parent = workspace.objects.find((object) => object.id === item.attachment?.parentId);
+      if (!parent || parent.kind !== 'desk' || parent.id === item.id || item.kind === 'desk')
+        ctx.addIssue({
+          code: 'custom',
+          message: 'An attachment must reference a different desk. Desks cannot be attached.',
+        });
+    }
     const connectionIds = workspace.connections.map((c) => c.id);
     if (new Set(connectionIds).size !== connectionIds.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate connection IDs' });
@@ -342,7 +387,17 @@ export function createDemoWorkspace(): Workspace {
       edge('laptop', 'keyboard', 'Bluetooth'),
       edge('laptop', 'mouse', 'Bluetooth'),
     ],
-    objects: createDemoObjects(),
+    objects: createDemoObjects().map((object) => {
+      // New examples start without the old decorative intersections. Existing
+      // saves and v1 migration keep their original coordinates unchanged.
+      const adjustments: Record<string, PlacementPatch> = {
+        'decor-chair': { y: 0.04 },
+        'decor-desk-mat': { y: 2.485 },
+        'decor-lamp': { x: 3.4 },
+        'decor-picture-poster': { x: 0.85 },
+      };
+      return { ...object, placement: { ...object.placement, ...adjustments[object.id] } };
+    }),
     history: [],
     appearance: { lighting: 'sunset', labels: false, decor: true },
   });
@@ -381,10 +436,21 @@ export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
 
 export type WorkspaceCommand =
   | { type: 'add-device'; device: z.input<typeof DeviceSchema> }
-  | { type: 'update-device'; id: string; patch: Partial<Omit<z.input<typeof DeviceSchema>, 'id'>> }
+  | { type: 'update-device'; id: string; patch: DevicePatch }
   | { type: 'add-object'; object: SceneObject }
-  | { type: 'update-object'; id: string; patch: Partial<Omit<SceneObject, 'id'>> }
+  | { type: 'update-object'; id: string; patch: SceneObjectPatch }
+  | { type: 'update-part'; id: string; index: number; expectedLength: number; patch: BoxPartPatch }
   | { type: 'remove-object'; id: string }
+  | { type: 'attach-object'; id: string; parentId: string | null }
+  | { type: 'snap-object'; id: string; surfaceId: string }
+  | {
+      type: 'move-object';
+      id: string;
+      x?: number;
+      z?: number;
+      placement?: Placement;
+      dragPath?: Placement[];
+    }
   | { type: 'remove-device'; id: string }
   | { type: 'connect'; connection: Connection }
   | { type: 'remove-connection'; id: string }
@@ -397,7 +463,7 @@ export function applyCommand(
   command: WorkspaceCommand,
   at = new Date().toISOString(),
 ): Workspace {
-  const next = structuredClone(current);
+  let next = structuredClone(current);
   let summary = '';
   switch (command.type) {
     case 'add-device':
@@ -420,8 +486,16 @@ export function applyCommand(
           ? { ...previous.placement, ...command.patch.placement }
           : previous.placement,
         visual:
-          command.patch.visual || command.patch.placement
-            ? { ...(command.patch.visual ?? previous.visual), source: 'user-reported' }
+          command.patch.visual ||
+          command.patch.placement ||
+          command.patch.parts ||
+          command.patch.shapeMode
+            ? {
+                ...previous.visual,
+                ...command.patch.visual,
+                scale: { ...previous.visual.scale, ...command.patch.visual?.scale },
+                source: 'user-reported',
+              }
             : previous.visual,
       });
       summary = `Updated ${next.devices[index].name}`;
@@ -435,18 +509,77 @@ export function applyCommand(
       const index = next.objects.findIndex((o) => o.id === command.id);
       if (index < 0) throw new Error('Object not found. Check the latest workspace.');
       const previous = next.objects[index];
+      if (
+        previous.kind === 'desk' &&
+        command.patch.kind &&
+        command.patch.kind !== 'desk' &&
+        [...next.devices, ...next.objects].some((item) => item.attachment?.parentId === previous.id)
+      )
+        throw new Error('Detach this desk’s attached objects before choosing another template.');
       next.objects[index] = SceneObjectSchema.parse({
         ...previous,
         ...command.patch,
-        visual: { ...(command.patch.visual ?? previous.visual), source: 'user-reported' },
+        placement: { ...previous.placement, ...command.patch.placement },
+        visual: {
+          ...previous.visual,
+          ...command.patch.visual,
+          scale: { ...previous.visual.scale, ...command.patch.visual?.scale },
+          source: 'user-reported',
+        },
       });
       summary = `Updated ${next.objects[index].name}`;
+      break;
+    }
+    case 'update-part': {
+      const item = [...next.devices, ...next.objects].find((entry) => entry.id === command.id);
+      if (!item) throw new Error('Object not found. Check the latest workspace.');
+      const parts = item.parts ?? [];
+      if (
+        !Number.isInteger(command.index) ||
+        command.index < 0 ||
+        command.index >= parts.length ||
+        command.expectedLength !== parts.length
+      )
+        throw new Error(
+          'The shape changed before this part edit could be saved. Select the part again and retry.',
+        );
+      const custom =
+        item.shapeMode === 'custom' ||
+        (item.kind === 'generic' && item.shapeMode !== 'template' && parts.length > 0);
+      if (!custom) throw new Error('Customize this template before editing its parts.');
+      const part = parts[command.index];
+      parts[command.index] = BoxPartSchema.parse({
+        ...part,
+        ...command.patch,
+        position: { ...part.position, ...command.patch.position },
+        size: { ...part.size, ...command.patch.size },
+        ...(command.patch.rotation
+          ? {
+              rotation: { x: 0, y: 0, z: 0, ...part.rotation, ...command.patch.rotation },
+            }
+          : {}),
+      });
+      item.parts = parts;
+      item.visual.source = 'user-reported';
+      if (command.patch.color !== undefined) item.visual.color = null;
+      if (command.patch.position || command.patch.size || command.patch.rotation) {
+        const result = resolveSpatialEdit(current, next, command.id, {
+          preserveSupport:
+            !command.patch.position && !!(command.patch.size || command.patch.rotation),
+        });
+        if (result.blocked)
+          throw new Error(result.reason || 'This part edit would intersect another object.');
+        next = result.workspace;
+      }
+      summary = `Edited box ${command.index + 1} of ${item.name}`;
       break;
     }
     case 'remove-object': {
       const object = next.objects.find((o) => o.id === command.id);
       if (!object) throw new Error('Object not found.');
       next.objects = next.objects.filter((o) => o.id !== command.id);
+      for (const item of [...next.devices, ...next.objects])
+        if (item.attachment?.parentId === command.id) item.attachment = null;
       summary = `Removed ${object.name}`;
       break;
     }
@@ -471,6 +604,74 @@ export function applyCommand(
       next.connections = next.connections.filter((c) => c.id !== command.id);
       summary = 'Removed connection';
       break;
+    case 'attach-object': {
+      const item = [...next.devices, ...next.objects].find((object) => object.id === command.id);
+      if (!item) throw new Error('Object not found.');
+      if (command.parentId) {
+        const parent = next.objects.find((object) => object.id === command.parentId);
+        if (!parent || parent.kind !== 'desk' || item.kind === 'desk' || parent.id === item.id)
+          throw new Error('Choose a desk to attach this object. Desks cannot be attached.');
+        next = snapToSurface(next, command.id, command.parentId);
+        const placed = [...next.devices, ...next.objects].find(
+          (object) => object.id === command.id,
+        )!;
+        placed.attachment = { parentId: command.parentId };
+        placed.visual.source = 'user-reported';
+      } else {
+        item.attachment = null;
+        item.visual.source = 'user-reported';
+      }
+      summary = command.parentId ? `Attached ${item.name} to desk` : `Detached ${item.name}`;
+      break;
+    }
+    case 'snap-object': {
+      next = snapToSurface(next, command.id, command.surfaceId);
+      const placed = [...next.devices, ...next.objects].find((object) => object.id === command.id)!;
+      placed.visual.source = 'user-reported';
+      summary = command.surfaceId === 'floor' ? 'Placed object on floor' : 'Placed object on desk';
+      break;
+    }
+    case 'move-object': {
+      const original = [...current.devices, ...current.objects].find(
+        (object) => object.id === command.id,
+      );
+      if (!original) throw new Error('Object not found.');
+      const endpoint = PlacementSchema.parse(
+        command.placement ?? {
+          ...original.placement,
+          x: command.x ?? original.placement.x,
+          z: command.z ?? original.placement.z,
+        },
+      );
+      const path = command.dragPath
+        ? z.array(PlacementSchema).min(1).max(512).parse(command.dragPath)
+        : [endpoint];
+      const last = path.at(-1)!;
+      if (
+        command.dragPath &&
+        ['x', 'y', 'z', 'rotation'].some(
+          (axis) =>
+            Math.abs(last[axis as keyof Placement] - endpoint[axis as keyof Placement]) > 0.0001,
+        )
+      )
+        throw new Error('The drag path does not match its final position. Try dragging again.');
+      for (const point of path) {
+        const candidate = structuredClone(next);
+        const item = [...candidate.devices, ...candidate.objects].find(
+          (object) => object.id === command.id,
+        )!;
+        item.placement = point;
+        item.visual.source = 'user-reported';
+        const result = resolveSpatialEdit(next, candidate, command.id, {
+          snap: command.dragPath ? undefined : 'auto',
+        });
+        if (command.dragPath && result.blocked)
+          throw new Error('The scene changed during the drag. ' + result.reason);
+        next = result.workspace;
+      }
+      summary = `Moved ${original.name}`;
+      break;
+    }
     case 'appearance':
       next.appearance = { ...next.appearance, ...command.patch };
       break;
@@ -479,6 +680,28 @@ export function applyCommand(
       summary = 'Renamed workspace';
       break;
   }
+  if (command.type === 'update-device' || command.type === 'update-object') {
+    const patch = command.patch;
+    if (patch.placement || patch.visual?.scale || patch.parts || patch.shapeMode || patch.kind) {
+      const result = resolveSpatialEdit(current, next, command.id, {
+        preserveSupport:
+          patch.placement?.y === undefined &&
+          !!(patch.visual?.scale || patch.shapeMode || patch.kind),
+      });
+      next = result.workspace;
+      if (result.blocked)
+        throw new Error(
+          result.reason ||
+            'This change would intersect another object. Move it to clear space first.',
+        );
+    }
+  }
+  if (command.type === 'add-object' || command.type === 'add-device') {
+    const id = command.type === 'add-object' ? command.object.id : command.device.id;
+    next = findFreePlacement(next, id);
+  }
+  if (JSON.stringify({ ...next, history: [] }) === JSON.stringify({ ...current, history: [] }))
+    return current;
   if (summary)
     next.history = [
       { id: crypto.randomUUID(), at, summary, source: 'user-reported' as const },
@@ -573,16 +796,21 @@ export function applyProposal(
   });
 }
 
-const LegacyPlacementSchema = z.strictObject({
-  x: z.number().finite().min(-3.2).max(3.2),
-  z: z.number().finite().min(-1.3).max(1.3),
+const LegacyPlacementSchema = z.object({
+  x: PlacementSchema.shape.x,
+  z: PlacementSchema.shape.z,
   rotation: z.number().finite().min(-180).max(180),
 });
-const LegacyWorkspaceSchema = z.strictObject({
+const LegacyWorkspaceSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().trim().min(1).max(60),
   devices: z
-    .array(DeviceSchema.omit({ visual: true }).extend({ placement: LegacyPlacementSchema }))
+    .array(
+      z
+        .object(DeviceSchema.shape)
+        .omit({ visual: true, parts: true, shapeMode: true, attachment: true })
+        .extend({ placement: LegacyPlacementSchema }),
+    )
     .max(40),
   connections: z.array(ConnectionSchema).max(100),
   history: z.array(EventSchema).max(100),
@@ -601,6 +829,14 @@ export function parseWorkspace(value: unknown): Workspace {
     value.schemaVersion === 1
   ) {
     const legacy = LegacyWorkspaceSchema.parse(value);
+    const occupied = new Set(legacy.devices.map((device) => device.id));
+    const objects = createDemoObjects().map((object) => {
+      let id = object.id;
+      let suffix = 1;
+      while (occupied.has(id)) id = `${object.id}-migrated-${suffix++}`;
+      occupied.add(id);
+      return { ...object, id };
+    });
     return WorkspaceSchema.parse({
       ...legacy,
       schemaVersion: 2,
@@ -609,7 +845,7 @@ export function parseWorkspace(value: unknown): Workspace {
         placement: { ...device.placement, y: 2.51 },
         visual: defaultVisual(device.source),
       })),
-      objects: createDemoObjects(),
+      objects,
     });
   }
   return WorkspaceSchema.parse(value);

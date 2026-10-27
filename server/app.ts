@@ -58,7 +58,8 @@ function json(res: ServerResponse, status: number, value: unknown) {
 async function readJSON(req: IncomingMessage): Promise<unknown> {
   if (!req.headers['content-type']?.toLowerCase().startsWith('application/json'))
     throw new ApiError(415, 'Only application/json requests are supported.');
-  const limit = 2_100_000;
+  // Bounded 128-part shapes can exceed the old 16-part workspace budget.
+  const limit = 8_000_000;
   if (Number(req.headers['content-length'] || 0) > limit) {
     req.resume();
     throw new ApiError(413, 'The request is too large. Reduce the image size.');
