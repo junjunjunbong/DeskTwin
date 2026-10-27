@@ -106,6 +106,8 @@ export type SceneDeviceObservation = {
   kind: Device['kind'];
   proposedName: string;
   matchedDeviceId: string | null;
+  /** The reviewer must distinguish a new device from retained records of the same kind. */
+  needsRecordChoice: boolean;
 };
 
 const normalizedName = (name: string) =>
@@ -201,6 +203,7 @@ export function buildScenePreview(
           kind: deviceKind.data,
           proposedName: object.name,
           matchedDeviceId: existing.id,
+          needsRecordChoice: false,
         });
         changedIds.push(existing.id);
       } else {
@@ -226,6 +229,7 @@ export function buildScenePreview(
           kind: deviceKind.data,
           proposedName: object.name,
           matchedDeviceId: null,
+          needsRecordChoice: eligible.some((device) => device.kind === deviceKind.data),
         });
         changedIds.push(id);
       }
@@ -266,9 +270,19 @@ export function rebindSceneDevice(
 ): { draft: Workspace; observations: SceneDeviceObservation[] } {
   const observation = observations.find((item) => item.proposalId === proposalId);
   if (!observation) throw new Error('Photo object not found.');
-  if (targetId === observation.matchedDeviceId) return { draft, observations };
   const current = draft.devices.find((item) => item.id === observation.sceneId);
   if (!current) throw new Error('Photo device not found.');
+  if (targetId === observation.matchedDeviceId)
+    return {
+      draft,
+      // Choosing "separate new device" is meaningful even when there was no
+      // suggested match. It resolves the ambiguity without replacing its ID or geometry.
+      observations: observation.needsRecordChoice
+        ? observations.map((item) =>
+            item.proposalId === proposalId ? { ...item, needsRecordChoice: false } : item,
+          )
+        : observations,
+    };
   if (
     targetId &&
     observations.some((item) => item.proposalId !== proposalId && item.matchedDeviceId === targetId)
@@ -325,7 +339,7 @@ export function rebindSceneDevice(
     ),
     observations: observations.map((item) =>
       item.proposalId === proposalId
-        ? { ...item, sceneId: replacement.id, matchedDeviceId: targetId }
+        ? { ...item, sceneId: replacement.id, matchedDeviceId: targetId, needsRecordChoice: false }
         : item,
     ),
   };

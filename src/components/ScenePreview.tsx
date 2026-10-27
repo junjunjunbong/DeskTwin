@@ -51,6 +51,7 @@ export function ScenePreview({
   const items = [...draft.objects, ...draft.devices];
   const item = items.find((entry) => entry.id === selected);
   const observation = observations.find((entry) => entry.sceneId === selected);
+  const unresolved = observations.filter((entry) => entry.needsRecordChoice);
   const stale = storageConflict || JSON.stringify(current) !== JSON.stringify(base);
   function command(c: WorkspaceCommand) {
     try {
@@ -129,8 +130,17 @@ export function ScenePreview({
                   Device record
                   <select
                     aria-label="Preview device record"
-                    value={observation.matchedDeviceId ?? ''}
+                    aria-invalid={observation.needsRecordChoice}
+                    aria-describedby={
+                      observation.needsRecordChoice ? 'scene-record-choice-help' : undefined
+                    }
+                    value={
+                      observation.needsRecordChoice
+                        ? ':choose-record'
+                        : (observation.matchedDeviceId ?? '')
+                    }
                     onChange={(event) => {
+                      if (event.target.value === ':choose-record') return;
                       try {
                         const result = rebindSceneDevice(
                           draft,
@@ -154,6 +164,11 @@ export function ScenePreview({
                       }
                     }}
                   >
+                    {observation.needsRecordChoice && (
+                      <option value=":choose-record" disabled>
+                        Choose an existing or separate new device
+                      </option>
+                    )}
                     <option value="">Keep as a separate new device</option>
                     {retainedDevices(base)
                       .filter((device) => device.kind === observation.kind)
@@ -179,8 +194,9 @@ export function ScenePreview({
                       ))}
                   </select>
                   <span className="micro-note">
-                    This is a suggested visual match. Confirm the record to avoid duplicates; names
-                    and reported status are preserved.
+                    {observation.needsRecordChoice
+                      ? 'An existing device has the same type. Choose its record or explicitly keep a separate new device to avoid duplicates.'
+                      : 'This is a suggested visual match. You can correct its record; existing names and reported status are preserved.'}
                   </span>
                 </label>
               )}
@@ -274,6 +290,23 @@ export function ScenePreview({
           Room shell and lighting are illustrative. Screen artwork and cable paths do not establish
           device activity or physical wiring.
         </p>
+        {unresolved.length > 0 && (
+          <div className="inference-note" role="status" id="scene-record-choice-help">
+            <p>
+              Choose a device record for {unresolved.length} photo{' '}
+              {unresolved.length === 1 ? 'object' : 'objects'} before applying. Select an existing
+              device or explicitly keep a separate new device. Your recorded connections stay
+              unchanged.
+            </p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setSelected(unresolved[0].sceneId)}
+            >
+              Review device record
+            </button>
+          </div>
+        )}
         {(error || stale) && (
           <p role="alert" className="form-error">
             {stale
@@ -288,9 +321,9 @@ export function ScenePreview({
           </button>
           <button
             className="button primary"
-            disabled={stale || applying}
+            disabled={stale || applying || unresolved.length > 0}
             onClick={async () => {
-              if (applying) return;
+              if (applying || stale || unresolved.length > 0) return;
               setApplying(true);
               try {
                 await onApply(draft, base);

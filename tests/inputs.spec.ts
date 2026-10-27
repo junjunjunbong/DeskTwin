@@ -90,8 +90,19 @@ test('names retain spaces while typing and decimal fields commit once without bl
   });
   await expect.poll(async () => (await saved(page)).objects[0].visual.scale.x).toBe(0.4);
   await expect(width).toHaveValue('0.4');
+
+  // Regression for typing 0.5 being normalized into 1.5 between keystrokes.
+  await width.fill('');
+  await width.pressSequentially('0.');
+  await expect(width).toHaveValue('0.');
+  expect((await saved(page)).objects[0].visual.scale.x).toBe(0.4);
+  await width.pressSequentially('5');
+  await expect(width).toHaveValue('0.5');
+  await width.press('Enter');
+  await expect.poll(async () => (await saved(page)).objects[0].visual.scale.x).toBe(0.5);
   await page.reload();
   const restored = await saved(page);
   expect(restored.objects[0].name).toBe('My desk object');
-  expect(restored.objects[0].visual.scale.x).toBe(0.4);
+  expect(restored.objects[0].visual.scale.x).toBe(0.5);
+  expect(restored.objects[0].visual.scale.x).not.toBe(1.5);
 });

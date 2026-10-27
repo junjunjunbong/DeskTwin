@@ -213,6 +213,78 @@ test('photo consent and notes lead to an editable preview; discarding never writ
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
+test('an unmatched photo device requires an explicit record choice and keeps user connections', async ({
+  page,
+}) => {
+  const base = createDemoWorkspace();
+  base.devices = base.devices.filter((device) => ['laptop', 'monitor-left'].includes(device.id));
+  base.objects = [];
+  base.connections = [
+    {
+      id: 'recorded-hdmi',
+      from: 'laptop',
+      to: 'monitor-left',
+      connector: 'HDMI',
+      fromPort: 'HDMI output',
+      toPort: 'HDMI 1',
+      source: 'user-reported',
+      note: 'Cable recorded by the user. Working status is unknown.',
+    },
+  ];
+  const fixture = proposal();
+  fixture.objects = fixture.objects.filter((item) => item.kind === 'monitor');
+  fixture.objects[0].name = 'Monitor in the photo';
+  await seed(page, base);
+  await page.route('**/api/photo', (route) =>
+    route.fulfill({ json: { mode: 'meta', ...fixture } }),
+  );
+  await openPhoto(page);
+  let modal = await analyze(page);
+  const apply = () => modal.getByRole('button', { name: 'Confirm and apply scene' });
+  await expect(apply()).toBeDisabled();
+  await expect(
+    modal.getByText(/Choose a device record for 1 photo object before applying/),
+  ).toBeVisible();
+  expect(await saved(page)).toEqual(base);
+  await modal.getByRole('button', { name: 'Review device record', exact: true }).click();
+  const record = () => modal.getByLabel('Preview device record');
+  await expect(record()).toHaveValue(':choose-record');
+  await expect(record()).toHaveAttribute('aria-invalid', 'true');
+
+  // Keeping a new device is an explicit, reversible review decision, not a default.
+  await record().selectOption('');
+  await expect(apply()).toBeEnabled();
+  await expect(record()).toHaveValue('');
+  expect(await saved(page)).toEqual(base);
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+  expect(await saved(page)).toEqual(base);
+
+  // A fresh preview still requires its own decision. Matching keeps the original record and cable.
+  modal = await analyze(page);
+  await expect(apply()).toBeDisabled();
+  await modal.getByRole('button', { name: 'Review device record', exact: true }).click();
+  await record().selectOption('monitor-left');
+  await expect(apply()).toBeEnabled();
+  await expect(record()).toHaveValue('monitor-left');
+  expect(await saved(page)).toEqual(base);
+  await apply().click();
+  await expect(modal).not.toBeVisible();
+  const applied = (await saved(page))!;
+  expect(applied.devices).toHaveLength(2);
+  expect(applied.devices.find((device) => device.id === 'monitor-left')).toMatchObject({
+    name: 'Left monitor',
+    source: 'demo',
+    status: 'unknown',
+  });
+  expect(applied.connections).toEqual(base.connections);
+  expect(applied.history).toHaveLength(base.history.length + 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(base);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(applied);
+});
+
 test('applying a scene is one undo step and preserves user-reported identity, links and status', async ({
   page,
 }) => {

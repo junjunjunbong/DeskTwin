@@ -8,11 +8,11 @@ test.setTimeout(60_000);
 async function saved(page: Page): Promise<Workspace> {
   return page.evaluate((name) => JSON.parse(localStorage.getItem(name)!), key);
 }
-async function openTwoTabs(context: BrowserContext, page: Page) {
+async function openTwoTabs(context: BrowserContext, page: Page, fixture?: Workspace) {
   await context.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await context.route('**/api/health', (route) => route.fulfill({ json: { mode: 'demo' } }));
   await page.goto('/');
-  const initial = createDemoWorkspace();
+  const initial = fixture ? structuredClone(fixture) : createDemoWorkspace();
   initial.name = 'Shared desk';
   await page.evaluate(({ name, value }) => localStorage.setItem(name, value), {
     name: key,
@@ -63,6 +63,92 @@ test('a stale tab cannot overwrite another tab; reload resets undo and retains t
   await expect(
     second.getByRole('heading', { name: 'Saved by tab B after reload', exact: true }),
   ).toBeVisible();
+});
+
+test('an open photo preview cannot overwrite a newer save from another tab', async ({
+  context,
+  page,
+}) => {
+  const fixture = createDemoWorkspace();
+  fixture.connections[0] = {
+    ...fixture.connections[0],
+    source: 'user-reported',
+    fromPort: 'Left USB-C port',
+    toPort: 'Host input',
+    note: 'Recorded by the user; operation has not been tested.',
+  };
+  const { second, initial } = await openTwoTabs(context, page, fixture);
+  await second.route('**/api/health', (route) =>
+    route.fulfill({ json: { mode: 'meta', model: 'mock-only', photoAvailable: true } }),
+  );
+  await second.route('**/api/photo', (route) =>
+    route.fulfill({
+      json: {
+        mode: 'meta',
+        message: 'Mock-only proposal for the older workspace.',
+        objects: [
+          {
+            id: 'desk',
+            deviceId: null,
+            kind: 'desk',
+            name: 'Unapplied photo desk',
+            placement: { x: 0, y: 0, z: 0, rotation: 0 },
+            scale: { x: 1, y: 1, z: 1 },
+            color: '#aabbcc',
+            parts: [],
+            note: 'A visual estimate, not a device or cable test.',
+          },
+        ],
+      },
+    }),
+  );
+  await second.reload();
+  await second.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const image = await second.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 4;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#aabbcc';
+    ctx.fillRect(0, 0, 4, 4);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await second.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-cross-tab-desk.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  });
+  await second.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await second.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  const preview = second.getByRole('dialog', { name: 'Review your desk scene' });
+  const apply = preview.getByRole('button', { name: 'Confirm and apply scene' });
+  await expect(preview).toBeVisible();
+  await expect(apply).toBeEnabled();
+  expect(await saved(second)).toEqual(initial);
+
+  // Tab A saves through the real UI after tab B has prepared its photo snapshot.
+  await commitRename(page, 'Newer workspace from tab A');
+  const latest = await saved(page);
+  expect(latest.connections).toEqual(initial.connections);
+  await expect(apply).toBeDisabled();
+  await expect(
+    preview.getByText(/Your saved workspace changed after this preview started/),
+  ).toBeVisible();
+  expect(await saved(second)).toEqual(latest);
+  await expect(preview).toBeVisible();
+
+  await preview.getByRole('button', { name: 'Discard preview' }).click();
+  await expect(preview).not.toBeVisible();
+  await second.getByRole('button', { name: 'Load latest saved workspace' }).click();
+  await expect(
+    second.getByRole('heading', { name: 'Newer workspace from tab A', exact: true }),
+  ).toBeVisible();
+  await expect(second.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  expect(await saved(second)).toEqual(latest);
+  expect((await saved(second)).connections).toEqual(initial.connections);
+  expect(
+    (await saved(second)).objects.some((object) => object.name === 'Unapplied photo desk'),
+  ).toBe(false);
 });
 
 test('two writes queued behind the same Web Lock produce one winner without a lost update', async ({

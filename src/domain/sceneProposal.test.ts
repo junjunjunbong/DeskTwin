@@ -237,6 +237,7 @@ describe('photo scene draft isolation and evidence', () => {
     input.objects[0].name = '  Office   monitor  ';
     const preview = buildScenePreview(base, input);
     expect(preview.observations[0].matchedDeviceId).toBe('my-monitor');
+    expect(preview.observations[0].needsRecordChoice).toBe(false);
     expect(preview.draft.devices).toHaveLength(2);
     const separate = rebindSceneDevice(
       preview.draft,
@@ -268,6 +269,87 @@ describe('photo scene draft isolation and evidence', () => {
     expect(rebound.draft.connections).toEqual(base.connections);
   });
 
+  it('requires a record choice for an unmatched photo of a sample device with user connections', () => {
+    const base = createDemoWorkspace();
+    base.devices = base.devices.filter((device) => ['laptop', 'monitor-left'].includes(device.id));
+    base.objects = [];
+    base.connections = [
+      {
+        id: 'my-hdmi',
+        from: 'laptop',
+        to: 'monitor-left',
+        connector: 'HDMI',
+        fromPort: 'HDMI output',
+        toPort: 'HDMI 1',
+        source: 'user-reported',
+        note: 'I recorded this cable. Its operation has not been tested.',
+      },
+    ];
+    const before = structuredClone(base);
+    const input = proposal();
+    input.objects = [input.objects[0]];
+    input.objects[0].name = 'Different photo label';
+    const preview = buildScenePreview(base, input);
+    expect(preview.observations[0]).toMatchObject({
+      matchedDeviceId: null,
+      needsRecordChoice: true,
+    });
+    expect(preview.draft.devices).toHaveLength(3);
+    expect(preview.draft.connections).toEqual(base.connections);
+
+    const separate = rebindSceneDevice(
+      preview.draft,
+      base,
+      preview.observations,
+      input.objects[0].id,
+      null,
+    );
+    expect(separate.observations[0]).toMatchObject({
+      sceneId: preview.observations[0].sceneId,
+      matchedDeviceId: null,
+      needsRecordChoice: false,
+    });
+    expect(separate.draft).toBe(preview.draft);
+    expect(preview.observations[0].needsRecordChoice).toBe(true);
+
+    const matched = rebindSceneDevice(
+      preview.draft,
+      base,
+      preview.observations,
+      input.objects[0].id,
+      'monitor-left',
+    );
+    expect(matched.observations[0]).toMatchObject({
+      sceneId: 'monitor-left',
+      matchedDeviceId: 'monitor-left',
+      needsRecordChoice: false,
+    });
+    expect(matched.draft.devices).toHaveLength(2);
+    expect(matched.draft.devices.find((device) => device.id === 'monitor-left')).toMatchObject({
+      id: before.devices[1].id,
+      name: before.devices[1].name,
+      model: before.devices[1].model,
+      source: before.devices[1].source,
+      status: before.devices[1].status,
+      statusNote: before.devices[1].statusNote,
+    });
+    expect(matched.draft.connections).toEqual(before.connections);
+    const applied = applySceneDraft(base, base, matched.draft);
+    expect(applied.history).toHaveLength(base.history.length + 1);
+    expect(applied.connections).toEqual(before.connections);
+    expect(base).toEqual(before);
+    expect(preview.draft.devices).toHaveLength(3);
+  });
+
+  it('does not require record choices when no retained device has the candidate’s type', () => {
+    const preview = buildScenePreview(createDemoWorkspace(), proposal());
+    expect(preview.observations).toHaveLength(1);
+    expect(preview.observations[0]).toMatchObject({
+      matchedDeviceId: null,
+      needsRecordChoice: false,
+    });
+  });
+
   it('accepts a formerly sample device when the user attached real reports to that record', () => {
     const base = createDemoWorkspace();
     const device = base.devices.find((entry) => entry.kind === 'monitor')!;
@@ -277,6 +359,7 @@ describe('photo scene draft isolation and evidence', () => {
     input.objects[0].deviceId = device.id;
     const preview = buildScenePreview(base, input);
     expect(preview.observations[0].matchedDeviceId).toBe(device.id);
+    expect(preview.observations[0].needsRecordChoice).toBe(false);
     expect(preview.draft.devices.find((entry) => entry.id === device.id)?.status).toBe(
       'reported-working',
     );
