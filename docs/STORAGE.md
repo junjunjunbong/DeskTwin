@@ -1,0 +1,76 @@
+# Workspace storage and editing consistency
+
+## Save format and compatibility
+
+DeskTwin continues to use the localStorage key `desktwin.workspace.v1`. The value is a plain workspace JSON document, not a new storage envelope. JSON import and export use that same document format.
+
+The current document has `schemaVersion: 2`. Attachment and custom-shape fields are optional so existing v2 saves remain readable. Existing v1 files are parsed using their original permissive object-key behavior, then migrated in memory: devices keep their IDs, identity, reported state, connections, history, and appearance; visual defaults and editable example furniture are added. Generated example furniture IDs are made unique if a legacy device already uses one of those IDs. Migration does not write storage on page load or on an explicit reload of the saved workspace.
+
+A successful editing action saves the current document. New custom shapes and attachments require this version of DeskTwin; older builds are not guaranteed to understand newer optional fields even though the document remains v2. Keep an exported original if opening it in an older build is necessary.
+
+Validation remains active for imports and every saved command. Invalid data is not silently accepted as a workspace. When the initial saved document is unreadable, an example is opened and the unreadable original remains until the user saves a new change. If another tab supplies invalid data during the session, loading it fails without replacing the current view or overwriting that data.
+
+## Two tabs and concurrent edits
+
+Each tab remembers the exact saved JSON value from which its current view was loaded. Every write follows this sequence:
+
+1. Join the tab's command queue.
+2. Acquire the exclusive `desktwin.workspace.write` Web Lock for the origin.
+3. Read storage again and compare it with the tab's expected saved value.
+4. Reject the operation if another tab has changed that value.
+5. Validate and write the new document, then update the displayed workspace and Undo/Redo state.
+
+The comparison is inside the lock. A comparison performed before waiting for the lock would still permit two tabs to overwrite one another. Commands are evaluated against the current workspace when their turn in the queue begins.
+
+Position, scale, color, and individual box edits carry the specific fields the user changed. Those fields are merged into the latest same-tab state. A queued Z edit therefore preserves an earlier X edit, and a color edit preserves a width change. An explicit return to the original value is still a command; it is not discarded by comparing the request with an old rendered snapshot.
+
+Adding, removing, duplicating, or restoring shape parts replaces a whole part array. Such a replacement is rejected if the shape changed after the view used to prepare it; the user can retry against the updated parts. Individual part commands check their expected part count before using an index. A saved drag path is also rejected if its object moved while the drag was waiting in the queue.
+
+A storage event or focus check reveals that another tab has saved a different version. DeskTwin keeps the older tab's current view and shows a conflict notice. The user can export that tab's copy and choose **Load latest saved workspace**. Reload validates the newest document, changes the view only after validation succeeds, and resets that tab's Undo/Redo stacks. It does not merge objects automatically or overwrite the other tab's version.
+
+Undo and Redo use the same lock and comparison as ordinary edits. An old Undo snapshot cannot replace another tab's newer save. Replacing the whole workspace also checks its prepared baseline inside the lock; a photo draft or import cannot overwrite a same-tab command that completed while the replacement was queued.
+
+Web Locks are required for writing. When the browser does not provide them, DeskTwin reports that safe saving requires a supported browser on HTTPS or localhost. It does not fall back to an unprotected write. This protocol coordinates tabs running this implementation on the same origin. An older DeskTwin build or unrelated script that writes directly to the same key without the lock is outside that coordination protocol.
+
+## Undo, failed writes, and confirmation
+
+Undo/Redo retain up to 20 snapshots in tab memory. They are separate from the persisted activity history and are not restored after reloading the page. Reloading another tab's saved workspace clears these local snapshots so they cannot be mistaken for the new version's edit history.
+
+Storage writes happen before the rendered workspace or history stacks change. A rejected command, quota error, or conflict leaves the last saved scene and Undo/Redo state unchanged. Unchanged command results do not write storage or create an Undo step.
+
+Async mutation methods return `Promise<boolean>`. The caller must await success before dismissing a dialog or reporting completion. Photo approval, JSON import, device creation, connection creation, and diagnostic result saving follow this rule. A failed photo save leaves the editable preview open. Failed device and connection saves retain the user's form entries for correction or retry. A failed diagnostic save does not claim that the reported result was saved.
+
+Photo previews remain in memory and require explicit approval. Their saved baseline and cross-tab conflict state are checked again on approval. Photo bytes are never added to the saved workspace. Selecting a photo or editing an unsaved preview does not transmit it; photo transfer retains its separate consent flow.
+
+## Text and decimal inputs
+
+Name and numeric fields keep local text while the user types. A trailing space, `0.`, or a lone minus sign is not forced into the persisted model. Blur or Enter commits a complete valid value; Escape restores the saved value. Names are trimmed at commit, preserving internal spaces. Blank required names and incomplete or out-of-range numbers show validation feedback without changing the saved object.
+
+A commit is not repeated merely because Enter is followed by blur. A different deliberate commit while an earlier save is waiting is still queued; it is not discarded as a duplicate. Responses from older attempts do not erase newer text that the user has started typing. Accepted constrained values are reflected back into the input. JSON export contains the last successfully committed workspace, not incomplete field drafts.
+
+Range controls likewise retain a local draft while saves are pending, including an intentional return to the original value. Their DOM value follows the browser's range step without rounding the saved geometry. Imported uppercase colors are normalized only for the color control. These browser normalizations cannot enqueue a second stale write after the user's intended edit; ordinary change-only color events remain supported.
+
+## Regression coverage
+
+`tests/storage.spec.ts` uses real same-context Chromium tabs, localStorage events, and Web Locks. It covers:
+
+- Stale-tab writes, explicit reload, Undo/Redo, and page reload persistence.
+- Two writes queued behind a held cross-tab lock with exactly one winner.
+- Stale Undo rejection and preservation of invalid external data.
+- Blocking unsafe writes when Web Locks are unavailable.
+- A photo approval that encounters a quota failure, keeps its preview, and succeeds on retry.
+- A prepared replacement queued behind a same-tab edit.
+- Device and connection dialogs retaining entered values on failed writes.
+- Diagnostic result feedback reporting success only after a successful save.
+
+`tests/inputs.spec.ts` checks normal typing with spaces, intermediate decimal text, validation, Escape, exactly one history step per commit, a second commit while the first waits for a lock, and persistence after reload.
+
+`tests/queued-edits.spec.ts` holds a real Web Lock while editing different position axes, scale axes, color, and box axes. It checks that every intended field survives, including a numeric return to its original value, and that a stale structural shape replacement is rejected without losing the preceding part edit. `src/domain/queuedCommand.test.ts` covers the corresponding command semantics, collision checks, and stale-index/drag rejection independently of the UI.
+
+Run the focused suite with the standard Playwright Chromium installation:
+
+```sh
+MODEL_API_KEY='' npm run test:e2e -- tests/storage.spec.ts tests/inputs.spec.ts tests/queued-edits.spec.ts
+```
+
+The development verification also supports the existing `DESKTWIN_CHROMIUM_EXECUTABLE` override. When running multiple Playwright processes, use separate `--output` directories and `PLAYWRIGHT_HTML_OUTPUT_DIR` values to keep one runner from removing another runner's artifacts. The photo test responses are browser fixtures, and the server key is blank. These tests make no real Meta API calls.

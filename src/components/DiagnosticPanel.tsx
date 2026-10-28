@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ArrowRight, ArrowCounterClockwise } from '@phosphor-icons/react';
 import {
   answerDiagnosis,
@@ -13,10 +13,13 @@ export function DiagnosticPanel({
   onPropose,
 }: {
   device: Device;
-  onPropose: (p: Proposal) => void;
+  onPropose: (p: Proposal) => unknown;
 }) {
   const [state, setState] = useState<ReturnType<typeof startDiagnosis> | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
   if (!state)
     return (
       <button className="button secondary full" onClick={() => setState(startDiagnosis(device.id))}>
@@ -69,25 +72,48 @@ export function DiagnosticPanel({
             ) : (
               <button
                 className="button primary"
-                onClick={() => {
-                  onPropose({
-                    type: 'set-status',
-                    deviceId: device.id,
-                    status: 'reported-working',
-                    note: diagnosisNote(state),
-                    reason: 'The user checked the result after following the guided steps.',
-                  });
-                  setSaved(true);
+                disabled={saving}
+                onClick={async () => {
+                  if (pending.current) return;
+                  pending.current = true;
+                  setSaving(true);
+                  setError('');
+                  try {
+                    const result = await onPropose({
+                      type: 'set-status',
+                      deviceId: device.id,
+                      status: 'reported-working',
+                      note: diagnosisNote(state),
+                      reason: 'The user checked the result after following the guided steps.',
+                    });
+                    if (result !== false) setSaved(true);
+                    else
+                      setError(
+                        'The test result was not saved. Check the storage notice and try again.',
+                      );
+                  } catch {
+                    setError('The test result could not be saved. You can try again.');
+                  } finally {
+                    pending.current = false;
+                    setSaving(false);
+                  }
                 }}
               >
-                Save result as user-reported
+                {saving ? 'Saving test result...' : 'Save result as user-reported'}
               </button>
             ))}
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
           <button
             className="text-button"
+            disabled={saving}
             onClick={() => {
               setState(startDiagnosis(device.id));
               setSaved(false);
+              setError('');
             }}
           >
             <ArrowCounterClockwise size={15} />

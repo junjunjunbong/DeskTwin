@@ -10,7 +10,14 @@ import {
   type WorkspaceCommand,
 } from '../domain/workspace';
 import { Modal } from './ui';
-import { PartsEditor, TransformEditor, type VisualPatch } from './TransformEditor';
+import { TransformEditor, type VisualPatch } from './TransformEditor';
+import { ShapeEditor } from './ShapeEditor';
+import { PlacementControls } from './PlacementControls';
+import {
+  rebindSceneDevice,
+  retainedDevices,
+  type SceneDeviceObservation,
+} from '../domain/sceneProposal';
 const DeskCanvas = lazy(() => import('./DeskCanvas'));
 
 export function ScenePreview({
@@ -21,36 +28,46 @@ export function ScenePreview({
   photo,
   onApply,
   onDiscard,
+  storageConflict = false,
+  initialObservations = [],
 }: {
   base: Workspace;
   initialDraft: Workspace;
   current: Workspace;
   message: string;
   photo: string;
-  onApply: (draft: Workspace, base: Workspace) => void;
+  onApply: (draft: Workspace, base: Workspace) => void | Promise<void>;
   onDiscard: () => void;
+  storageConflict?: boolean;
+  initialObservations?: SceneDeviceObservation[];
 }) {
   const [draft, setDraft] = useState(initialDraft);
+  const [observations, setObservations] = useState(initialObservations);
   const [selected, setSelected] = useState<string | null>(
     initialDraft.objects[0]?.id ?? initialDraft.devices[0]?.id ?? null,
   );
   const [error, setError] = useState('');
+  const [applying, setApplying] = useState(false);
   const items = [...draft.objects, ...draft.devices];
   const item = items.find((entry) => entry.id === selected);
-  const stale = JSON.stringify(current) !== JSON.stringify(base);
+  const observation = observations.find((entry) => entry.sceneId === selected);
+  const unresolved = observations.filter((entry) => entry.needsRecordChoice);
+  const stale = storageConflict || JSON.stringify(current) !== JSON.stringify(base);
   function command(c: WorkspaceCommand) {
     try {
       const next = applyCommand(draft, c);
       setDraft(next);
       setError('');
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message.split('\n')[0] : 'Could not update the preview.');
+      return false;
     }
   }
   function update(patch: VisualPatch) {
     if (!item) return;
-    if ('status' in item) command({ type: 'update-device', id: item.id, patch });
-    else command({ type: 'update-object', id: item.id, patch });
+    if ('status' in item) return command({ type: 'update-device', id: item.id, patch });
+    return command({ type: 'update-object', id: item.id, patch });
   }
   const existing =
     !!item &&
@@ -76,18 +93,8 @@ export function ScenePreview({
               selected={selected}
               mode="edit"
               onSelect={setSelected}
-              onMove={(id, x, z) => {
-                const entity = items.find((o) => o.id === id);
-                if (!entity) return;
-                const patch = {
-                  placement: { ...entity.placement, x, z },
-                  visual: { ...entity.visual, source: 'user-reported' as const },
-                };
-                command(
-                  'status' in entity
-                    ? { type: 'update-device', id, patch }
-                    : { type: 'update-object', id, patch },
-                );
+              onMove={(id, placement, dragPath) => {
+                command({ type: 'move-object', id, placement, dragPath });
               }}
             />
           </Suspense>
@@ -118,6 +125,81 @@ export function ScenePreview({
           {item ? (
             <>
               <h3>{item.name}</h3>
+              {observation && (
+                <label>
+                  Device record
+                  <select
+                    aria-label="Preview device record"
+                    aria-invalid={observation.needsRecordChoice}
+                    aria-describedby={
+                      observation.needsRecordChoice ? 'scene-record-choice-help' : undefined
+                    }
+                    value={
+                      observation.needsRecordChoice
+                        ? ':choose-record'
+                        : (observation.matchedDeviceId ?? '')
+                    }
+                    onChange={(event) => {
+                      if (event.target.value === ':choose-record') return;
+                      try {
+                        const result = rebindSceneDevice(
+                          draft,
+                          base,
+                          observations,
+                          observation.proposalId,
+                          event.target.value || null,
+                        );
+                        setDraft(result.draft);
+                        setObservations(result.observations);
+                        setSelected(
+                          result.observations.find(
+                            (entry) => entry.proposalId === observation.proposalId,
+                          )!.sceneId,
+                        );
+                        setError('');
+                      } catch (cause) {
+                        setError(
+                          cause instanceof Error ? cause.message : 'Could not match this device.',
+                        );
+                      }
+                    }}
+                  >
+                    {observation.needsRecordChoice && (
+                      <option value=":choose-record" disabled>
+                        Choose an existing or separate new device
+                      </option>
+                    )}
+                    <option value="">Keep as a separate new device</option>
+                    {retainedDevices(base)
+                      .filter((device) => device.kind === observation.kind)
+                      .map((device) => (
+                        <option
+                          key={device.id}
+                          value={device.id}
+                          disabled={observations.some(
+                            (entry) =>
+                              entry.proposalId !== observation.proposalId &&
+                              entry.matchedDeviceId === device.id,
+                          )}
+                        >
+                          Use existing: {device.name}
+                          {base.devices.filter(
+                            (entry) =>
+                              entry.kind === device.kind &&
+                              entry.name.trim().toLowerCase() === device.name.trim().toLowerCase(),
+                          ).length > 1
+                            ? ` (x ${device.placement.x.toFixed(2)}, z ${device.placement.z.toFixed(2)})`
+                            : ''}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="micro-note">
+                    {observation.needsRecordChoice
+                      ? 'An existing device has the same type. Choose its record or explicitly keep a separate new device to avoid duplicates.'
+                      : 'This is a suggested visual match. You can correct its record; existing names and reported status are preserved.'}
+                  </span>
+                </label>
+              )}
               {existing && (
                 <p className="micro-note">
                   Existing record. Identity, connections, and reported status are preserved.
@@ -136,7 +218,8 @@ export function ScenePreview({
                         patch: {
                           kind: e.target.value as ObjectKind,
                           parts: [],
-                          visual: { ...item.visual, source: 'user-reported' },
+                          shapeMode: 'template',
+                          visual: { source: 'user-reported' },
                         },
                       })
                     }
@@ -155,21 +238,29 @@ export function ScenePreview({
                 onChange={update}
                 prefix="Preview object"
               />
-              {!('status' in item) && item.kind === 'generic' && (
-                <PartsEditor
-                  parts={item.parts}
-                  onChange={(parts) =>
-                    command({
-                      type: 'update-object',
-                      id: item.id,
-                      patch: {
-                        parts,
-                        visual: { ...item.visual, color: null, source: 'user-reported' },
-                      },
-                    })
-                  }
-                />
-              )}
+              <PlacementControls
+                item={item}
+                workspace={draft}
+                onCommand={command}
+                prefix="Preview object"
+              />
+              <ShapeEditor
+                item={item}
+                onPartChange={(index, patch) =>
+                  command({
+                    type: 'update-part',
+                    id: item.id,
+                    index,
+                    expectedLength: item.parts?.length ?? 0,
+                    patch,
+                  })
+                }
+                onChange={(patch) =>
+                  'status' in item
+                    ? command({ type: 'update-device', id: item.id, patch })
+                    : command({ type: 'update-object', id: item.id, patch })
+                }
+              />
               {!existing && (
                 <button
                   className="text-button danger-text"
@@ -178,6 +269,9 @@ export function ScenePreview({
                       'status' in item
                         ? { type: 'remove-device', id: item.id }
                         : { type: 'remove-object', id: item.id },
+                    );
+                    setObservations((current) =>
+                      current.filter((entry) => entry.sceneId !== item.id),
                     );
                     setSelected(null);
                   }}
@@ -196,6 +290,23 @@ export function ScenePreview({
           Room shell and lighting are illustrative. Screen artwork and cable paths do not establish
           device activity or physical wiring.
         </p>
+        {unresolved.length > 0 && (
+          <div className="inference-note" role="status" id="scene-record-choice-help">
+            <p>
+              Choose a device record for {unresolved.length} photo{' '}
+              {unresolved.length === 1 ? 'object' : 'objects'} before applying. Select an existing
+              device or explicitly keep a separate new device. Your recorded connections stay
+              unchanged.
+            </p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setSelected(unresolved[0].sceneId)}
+            >
+              Review device record
+            </button>
+          </div>
+        )}
         {(error || stale) && (
           <p role="alert" className="form-error">
             {stale
@@ -210,19 +321,23 @@ export function ScenePreview({
           </button>
           <button
             className="button primary"
-            disabled={stale}
-            onClick={() => {
+            disabled={stale || applying || unresolved.length > 0}
+            onClick={async () => {
+              if (applying || stale || unresolved.length > 0) return;
+              setApplying(true);
               try {
-                onApply(draft, base);
+                await onApply(draft, base);
               } catch (e) {
                 setError(
                   e instanceof Error ? e.message.split('\n')[0] : 'Could not apply this scene.',
                 );
+              } finally {
+                setApplying(false);
               }
             }}
           >
             <Check size={18} />
-            Confirm and apply scene
+            {applying ? 'Saving scene...' : 'Confirm and apply scene'}
           </button>
         </div>
       </div>

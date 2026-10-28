@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  fitSceneProposal,
+  findFreePlacement,
+  rebaseAttachedPlacement,
+  validateSceneCollisions,
+} from './spatial';
+import {
   BoxPartSchema,
   ColorSchema,
   DeviceKindSchema,
@@ -12,6 +18,7 @@ import {
   WorkspaceSchema,
   parseWorkspace,
   type Device,
+  type SceneObject,
   type Workspace,
 } from './workspace';
 
@@ -24,7 +31,7 @@ export const SceneProposalItemSchema = z.strictObject({
   placement: PlacementSchema,
   scale: ScaleSchema,
   color: ColorSchema,
-  parts: z.array(BoxPartSchema).max(16),
+  parts: z.array(BoxPartSchema).max(32),
   note: z.string().max(300),
 });
 export const SceneProposalSchema = z
@@ -58,18 +65,12 @@ export const SceneProposalSchema = z
             message: 'Only device templates can reference a device.',
           });
       }
-      if (object.kind !== 'generic' && object.parts.length)
-        ctx.addIssue({
-          code: 'custom',
-          path: ['objects', index, 'parts'],
-          message: 'Only generic objects can contain custom parts.',
-        });
     });
   });
 export type SceneProposal = z.infer<typeof SceneProposalSchema>;
 export type SceneProposalItem = z.infer<typeof SceneProposalItemSchema>;
 
-function retainedDevices(base: Workspace): Device[] {
+export function retainedDevices(base: Workspace): Device[] {
   // A user report can refer to an original demo ID. Keep the evidence and its endpoints.
   const reportedEndpoints = new Set(
     base.connections
@@ -82,25 +83,82 @@ function retainedDevices(base: Workspace): Device[] {
       device.status !== 'unknown' ||
       device.statusNote !== '' ||
       device.visual.source !== 'demo' ||
+      !!device.attachment ||
       reportedEndpoints.has(device.id),
   );
 }
 
+function retainedObjects(base: Workspace): SceneObject[] {
+  const explicit = base.objects.filter(
+    (object) => object.visual.source !== 'demo' || !!object.attachment,
+  );
+  const parents = new Set(
+    [...retainedDevices(base), ...explicit].flatMap((item) =>
+      item.attachment ? [item.attachment.parentId] : [],
+    ),
+  );
+  return base.objects.filter((object) => explicit.includes(object) || parents.has(object.id));
+}
+
+export type SceneDeviceObservation = {
+  proposalId: string;
+  sceneId: string;
+  kind: Device['kind'];
+  proposedName: string;
+  matchedDeviceId: string | null;
+  /** The reviewer must distinguish a new device from retained records of the same kind. */
+  needsRecordChoice: boolean;
+};
+
+const normalizedName = (name: string) =>
+  name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+
+/** Conservative record matching is visible and reversible in the preview, never live identification. */
+function suggestedMatch<T extends Device | SceneObject>(
+  objects: T[],
+  candidate: SceneProposalItem,
+  used: Set<string>,
+): T | undefined {
+  const available = objects.filter(
+    (object) => object.kind === candidate.kind && !used.has(object.id),
+  );
+  const stable = available.find((object) => object.id === `photo-${candidate.id.slice(0, 80)}`);
+  if (stable && normalizedName(stable.name) === normalizedName(candidate.name)) return stable;
+  const named = available.filter(
+    (object) => normalizedName(object.name) === normalizedName(candidate.name),
+  );
+  return named.length === 1 ? named[0] : undefined;
+}
+
 /** Pure draft creation: no persistence, history event, provider call, or mutation of base. */
 export function buildSceneDraft(base: Workspace, value: unknown): Workspace {
+  return buildScenePreview(base, value).draft;
+}
+
+export function buildScenePreview(
+  base: Workspace,
+  value: unknown,
+): {
+  draft: Workspace;
+  observations: SceneDeviceObservation[];
+} {
   const source = parseWorkspace(base);
   const proposal = SceneProposalSchema.parse(value);
   const next = structuredClone(source);
   // A hidden-decor preference must not conceal the proposal the user is asked to review.
   next.appearance.decor = true;
   next.devices = retainedDevices(source);
-  next.objects = source.objects.filter((object) => object.visual.source !== 'demo');
+  // A sample desk with user-attached objects is no longer disposable scenery.
+  next.objects = retainedObjects(source);
   const retainedIds = new Set(next.devices.map((device) => device.id));
   next.connections = source.connections.filter(
     (connection) => retainedIds.has(connection.from) && retainedIds.has(connection.to),
   );
   // Include removed sample IDs too: a new visual observation must not inherit sample identity.
   const taken = new Set([...source.devices, ...source.objects].map((object) => object.id));
+  const matched = new Set<string>();
+  const observations: SceneDeviceObservation[] = [];
+  const changedIds: string[] = [];
   function freshId(candidate: string) {
     const prefix = `photo-${candidate.slice(0, 80)}`;
     let id = prefix;
@@ -117,48 +175,174 @@ export function buildSceneDraft(base: Workspace, value: unknown): Workspace {
     };
     const deviceKind = DeviceKindSchema.safeParse(object.kind);
     if (deviceKind.success) {
-      if (object.deviceId !== null) {
-        const existing = source.devices.find((device) => device.id === object.deviceId);
-        if (!existing || existing.source === 'demo' || existing.kind !== object.kind)
-          throw new Error(
-            'A photo suggestion references an unknown, sample, or mismatched device.',
-          );
+      const eligible = retainedDevices(source);
+      const existing =
+        object.deviceId !== null
+          ? eligible.find((device) => device.id === object.deviceId)
+          : suggestedMatch(eligible, object, matched);
+      if (object.deviceId !== null && (!existing || existing.kind !== object.kind))
+        throw new Error(
+          'A photo suggestion references an unknown, unused sample, or mismatched device.',
+        );
+      if (existing) {
+        if (matched.has(existing.id))
+          throw new Error('Two photo objects reference the same device record.');
+        matched.add(existing.id);
         const index = next.devices.findIndex((device) => device.id === existing.id);
         // Keep name, model, status, identity source and every user connection unchanged.
         next.devices[index] = DeviceSchema.parse({
           ...existing,
           placement: object.placement,
           visual,
+          parts: object.parts,
+          shapeMode: object.parts.length ? 'custom' : 'template',
         });
+        observations.push({
+          proposalId: object.id,
+          sceneId: existing.id,
+          kind: deviceKind.data,
+          proposedName: object.name,
+          matchedDeviceId: existing.id,
+          needsRecordChoice: false,
+        });
+        changedIds.push(existing.id);
       } else {
+        const id = freshId(object.id);
         next.devices.push(
           DeviceSchema.parse({
-            id: freshId(object.id),
+            id,
             kind: deviceKind.data,
             name: object.name,
             model: '',
             placement: object.placement,
             visual,
+            parts: object.parts,
+            shapeMode: object.parts.length ? 'custom' : 'template',
             source: 'photo-inferred',
             status: 'unknown',
             statusNote: '',
           }),
         );
+        observations.push({
+          proposalId: object.id,
+          sceneId: id,
+          kind: deviceKind.data,
+          proposedName: object.name,
+          matchedDeviceId: null,
+          needsRecordChoice: eligible.some((device) => device.kind === deviceKind.data),
+        });
+        changedIds.push(id);
       }
     } else {
-      next.objects.push(
-        SceneObjectSchema.parse({
-          id: freshId(object.id),
-          kind: object.kind,
-          name: object.name,
-          placement: object.placement,
-          visual,
-          parts: object.parts,
-        }),
-      );
+      const existing = suggestedMatch(next.objects, object, matched);
+      const replacement = SceneObjectSchema.parse({
+        ...(existing ?? {}),
+        id: existing?.id ?? freshId(object.id),
+        kind: object.kind,
+        name: existing?.name ?? object.name,
+        placement: object.placement,
+        visual,
+        parts: object.parts,
+        shapeMode: object.parts.length ? 'custom' : 'template',
+      });
+      if (existing) {
+        matched.add(existing.id);
+        next.objects[next.objects.findIndex((item) => item.id === existing.id)] = replacement;
+      } else next.objects.push(replacement);
+      matched.add(replacement.id);
+      changedIds.push(replacement.id);
     }
   }
-  return WorkspaceSchema.parse(next);
+  const bounded = WorkspaceSchema.parse(next);
+  return {
+    draft: WorkspaceSchema.parse(fitSceneProposal(source, bounded, changedIds)),
+    observations,
+  };
+}
+
+/** User-selected identity binding changes only the preview's visual association. */
+export function rebindSceneDevice(
+  draft: Workspace,
+  base: Workspace,
+  observations: SceneDeviceObservation[],
+  proposalId: string,
+  targetId: string | null,
+): { draft: Workspace; observations: SceneDeviceObservation[] } {
+  const observation = observations.find((item) => item.proposalId === proposalId);
+  if (!observation) throw new Error('Photo object not found.');
+  const current = draft.devices.find((item) => item.id === observation.sceneId);
+  if (!current) throw new Error('Photo device not found.');
+  if (targetId === observation.matchedDeviceId)
+    return {
+      draft,
+      // Choosing "separate new device" is meaningful even when there was no
+      // suggested match. It resolves the ambiguity without replacing its ID or geometry.
+      observations: observation.needsRecordChoice
+        ? observations.map((item) =>
+            item.proposalId === proposalId ? { ...item, needsRecordChoice: false } : item,
+          )
+        : observations,
+    };
+  if (
+    targetId &&
+    observations.some((item) => item.proposalId !== proposalId && item.matchedDeviceId === targetId)
+  )
+    throw new Error('That device is already represented by another photo object.');
+  const target = targetId
+    ? retainedDevices(base).find((item) => item.id === targetId && item.kind === observation.kind)
+    : undefined;
+  if (targetId && !target) throw new Error('Choose an existing device of the same type.');
+  const next = structuredClone(draft);
+  const restoredIds: string[] = [];
+  if (observation.matchedDeviceId) {
+    const original = base.devices.find((item) => item.id === observation.matchedDeviceId)!;
+    const restored = structuredClone(original);
+    restored.placement = rebaseAttachedPlacement(base, next, original);
+    next.devices[next.devices.findIndex((item) => item.id === original.id)] = restored;
+    restoredIds.push(original.id);
+  } else next.devices = next.devices.filter((item) => item.id !== current.id);
+  let replacement: Device;
+  if (target) {
+    replacement = DeviceSchema.parse({
+      ...target,
+      placement: current.placement,
+      visual: current.visual,
+      parts: current.parts,
+      shapeMode: current.shapeMode,
+    });
+    next.devices[next.devices.findIndex((item) => item.id === target.id)] = replacement;
+  } else {
+    const taken = new Set(
+      [...base.devices, ...base.objects, ...next.devices, ...next.objects].map((item) => item.id),
+    );
+    const prefix = `photo-${proposalId.slice(0, 80)}`;
+    let id = prefix;
+    for (let suffix = 2; taken.has(id); suffix++) id = `${prefix}-${suffix}`;
+    replacement = DeviceSchema.parse({
+      ...current,
+      id,
+      name: observation.proposedName,
+      model: '',
+      source: 'photo-inferred',
+      status: 'unknown',
+      statusNote: '',
+      attachment: null,
+    });
+    next.devices.push(replacement);
+  }
+  return {
+    draft: WorkspaceSchema.parse(
+      findFreePlacement(
+        fitSceneProposal(base, next, [...restoredIds, replacement.id]),
+        replacement.id,
+      ),
+    ),
+    observations: observations.map((item) =>
+      item.proposalId === proposalId
+        ? { ...item, sceneId: replacement.id, matchedDeviceId: targetId, needsRecordChoice: false }
+        : item,
+    ),
+  };
 }
 
 function identity(device: Device) {
@@ -187,6 +371,12 @@ export function applySceneDraft(
       'Your workspace changed while this preview was open. Discard it and analyze again.',
     );
   const next = parseWorkspace(draft);
+  if (
+    retainedObjects(baseValidated).some(
+      (original) => !next.objects.some((object) => object.id === original.id),
+    )
+  )
+    throw new Error('A scene preview cannot remove existing furniture or props.');
   const protectedDevices = retainedDevices(baseValidated);
   for (const original of protectedDevices) {
     const updated = next.devices.find((device) => device.id === original.id);
@@ -213,6 +403,9 @@ export function applySceneDraft(
   );
   if (JSON.stringify(next.connections) !== JSON.stringify(expectedConnections))
     throw new Error('A scene preview cannot change reported connections.');
+  const collisions = validateSceneCollisions(next, baseValidated);
+  if (collisions.length)
+    throw new Error(`Resolve the scene placement before applying: ${collisions[0]}`);
   // Draft edits may use applyCommand. Their temporary events never enter saved history.
   next.history = [
     {

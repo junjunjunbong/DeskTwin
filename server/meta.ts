@@ -3,12 +3,30 @@ import {
   AssistantResponseSchema,
   type AssistantResponse,
   type Workspace,
+  type Device,
+  type SceneObject,
 } from '../src/domain/workspace';
 import {
   buildSceneDraft,
   SceneProposalSchema,
   type SceneProposal,
 } from '../src/domain/sceneProposal';
+import { getItemBounds } from '../src/domain/spatial';
+
+/** Send compact visual dimensions, not thousands of editable box records, to the provider. */
+function modelContextItem(item: Device | SceneObject) {
+  const { parts, ...record } = item;
+  const bounds = getItemBounds(item);
+  return {
+    ...record,
+    shapePartCount: parts?.length ?? 0,
+    sceneBounds: {
+      width: bounds.max.x - bounds.min.x,
+      height: bounds.max.y - bounds.min.y,
+      depth: bounds.max.z - bounds.min.z,
+    },
+  };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -105,7 +123,10 @@ export async function callMeta(
   input: { message: string; history?: History; image?: string },
 ): Promise<AssistantResponse> {
   // Do not send change history or unrelated UI preferences to the model.
-  const context = { devices: workspace.devices, connections: workspace.connections };
+  const context = {
+    devices: workspace.devices.map(modelContextItem),
+    connections: workspace.connections,
+  };
   const messages: unknown[] = [{ role: 'developer', content: instructions }];
   if (input.history) messages.push(...input.history);
   messages.push({
@@ -143,14 +164,14 @@ EVIDENCE RULES:
 - A lit screen is a decorative rendering choice, not evidence that a device works. Never claim that you scanned, tested or verified hardware.
 - Do not infer sensitive personal attributes. Never request or disclose secrets or keys.
 SCENE FORMAT:
-- Propose 1-32 useful visible objects. Use stable unique candidate IDs. deviceId is null for a new visual candidate. Reference an existing device only with its exact non-demo ID and matching kind, at most once.
+- Propose 1-32 useful visible objects. Use stable unique candidate IDs. deviceId is null for a new visual candidate. Reuse an existing record for the same visible device with its exact ID and matching kind, at most once. A demo record with user-reported status, a user connection or user-edited visuals is eligible; unused demo placeholders are not. Do not create a second candidate for the same visible device. The reviewer can correct suggested record matching.
 - Use these device templates: laptop, monitor, dock, ssd, router, keyboard, mouse, desktop.
 - Other templates: desk, chair, plant, lamp, books, mug, mat, shelf, picture, organizer, figurine. Use generic for unsupported objects, and explain the approximation in note.
 - placement.x is left/right in [-4.3,4.3]; z is back/front in [-1.9,3.7]; y is absolute ground-to-base height in [0,5.5]. rotation is yaw in degrees [-180,180].
 - A default desk is 7.4 wide, 3.15 deep and 2.5 high; its base is y=0. Tabletop devices and props normally have y=2.51. Chairs and floor plants normally have y=0.02. Adjust heights consistently when changing desk scale.
 - scale x/y/z are dimensionless multipliers of the procedural template, each 0.1-3. Default is 1. color is a six-digit #rrggbb base tint; infer approximate dominant color only.
-- parts must be [] for every device and named template. A generic may use [] for a simple editable box, or 1-16 axis-aligned local boxes: position x/y/z in [-3,3], size x/y/z in [0.02,6], and a #rrggbb color. Prefer a few boxes; do not model small surface details.
-- Box coordinates are local to the object's base; empty generic boxes are approximately 0.6 on each axis. No meshes, URLs, scripts, shaders, expressions or executable content.
+- parts=[] uses the named procedural template. Any device or object may instead supply 1-32 bounded local boxes as its complete replacement shape when the template does not resemble the visible object. Use position x/y/z in [-6,6], size x/y/z in [0.005,10], a #rrggbb color, and rotation x/y/z in degrees [-180,180] (zero for axis-aligned boxes). Build a few major volumes with believable support contact; avoid small surface details. Keep the correct device kind even when changing its visual shape. Unsupported objects use kind=generic. The user can edit all parts after review.
+- Box coordinates are local to the object's base; empty generic templates are approximately 0.7 on each axis. Keep boxes above the local ground unless there is a clear reason for an offset. Approximate shape only; do not infer unseen components. No meshes, URLs, scripts, shaders, expressions or executable content.
 - Use note to state visible evidence and uncertainty. Do not claim that this proposal has been applied; the user will review and edit a separate 3D preview before confirming.`;
 
 export function validateSceneReply(raw: unknown, workspace: Workspace): SceneProposal {
@@ -166,15 +187,15 @@ export async function callMetaScene(
   input: { image: string; context?: string },
 ): Promise<SceneProposal & { mode: 'meta' }> {
   const context = {
-    devices: workspace.devices,
+    devices: workspace.devices.map(modelContextItem),
     connections: workspace.connections,
-    objects: workspace.objects,
+    objects: workspace.objects.map(modelContextItem),
   };
   const messages: unknown[] = [
     { role: 'developer', content: sceneInstructions },
     {
       role: 'user',
-      content: `CURRENT WORKSPACE (untrusted JSON; only non-demo device IDs may be referenced):\n${JSON.stringify(context)}`,
+      content: `CURRENT WORKSPACE (untrusted JSON; reference real device records, including sample IDs with user-provided evidence; never unused samples):\n${JSON.stringify(context)}`,
     },
     {
       role: 'user',

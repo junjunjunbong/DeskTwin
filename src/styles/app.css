@@ -777,7 +777,7 @@ hr {
 }
 .connection-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 11px;
   padding: 12px 0;
   border-bottom: 1px solid #edf0f2;
@@ -785,6 +785,7 @@ hr {
 }
 .connection-item > div {
   flex: 1;
+  min-width: 0;
 }
 .connection-item strong {
   font-size: 11px;
@@ -1772,5 +1773,222 @@ hr {
   }
   .quick-prompts button:not(.provider-toggle) {
     display: none !important;
+  }
+}
+.placement-controls {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border, #dedbd5);
+  border-radius: 14px;
+  background: #f6f4ef;
+}
+.placement-controls h3 {
+  margin: 0 0 12px;
+}
+.placement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.placement-actions .button {
+  flex: 1 1 130px;
+}
+.storage-conflict {
+  position: fixed;
+  z-index: 110;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid #d3b36c;
+  border-radius: 16px;
+  background: #fff8e8;
+  color: #493d25;
+  box-shadow: 0 12px 40px #29221922;
+}
+.storage-conflict p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.storage-conflict .button {
+  font-size: 12px;
+}
+.spatial-feedback {
+  position: absolute;
+  bottom: 42px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  max-width: calc(100% - 32px);
+  padding: 9px 13px;
+  border: 1px solid #cfbc8d;
+  border-radius: 10px;
+  background: #fff9e9ee;
+  color: #4d422d;
+  font-size: 12px;
+  pointer-events: none;
+}
+.connection-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  min-height: 36px;
+  border: 1px solid #dfe6ed;
+  border-radius: 10px;
+  background: #f4f7fa;
+  color: #647789;
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.connection-toggle:hover {
+  background: #eaf1f9;
+}
+.connection-toggle[aria-checked='true'] {
+  border-color: #c5d9f7;
+  background: #edf4ff;
+  color: #3268b4;
+}
+.connection-toggle-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 35px;
+  padding: 4px 5px;
+  border-radius: 7px;
+  background: #e1e7ec;
+  color: #697c8c;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.connection-toggle[aria-checked='true'] .connection-toggle-state {
+  background: #3e7ae8;
+  color: #fff;
+}
+.device-marker.is-selected {
+  border-color: #6794de;
+  box-shadow:
+    0 0 0 2px #6693dd25,
+    0 6px 20px #243c521a;
+}
+.device-marker.is-connected {
+  border-color: #42a9b7;
+  background: #f1fcfdeb;
+  box-shadow:
+    0 0 0 2px #42a9b720,
+    0 6px 20px #243c521a;
+}
+.device-marker.is-connected > svg {
+  color: #267c89;
+}
+.connection-summary {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.connection-legend {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: calc(100% - 48px);
+}
+.connection-legend-copy {
+  color: #7c8c91;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.connection-legend-key {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+.connection-legend-key > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.connection-legend-key .text-button {
+  margin-left: auto;
+}
+.connection-counterpart {
+  display: inline-block;
+  padding: 0 0 5px;
+  text-align: left;
+}
+.connection-counterpart strong {
+  color: #317786;
+  font-weight: 600;
+}
+.connection-counterpart:hover strong {
+  text-decoration: underline;
+}
+.connection-details dl {
+  margin: 4px 0 0;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.connection-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(65px, 0.9fr) minmax(0, 1.1fr);
+  gap: 8px;
+  margin: 5px 0;
+}
+.connection-details dt {
+  color: #8b98a2;
+  overflow-wrap: anywhere;
+}
+.connection-details dd {
+  margin: 0;
+  color: #526879;
+  overflow-wrap: anywhere;
+}
+.connection-details .source-badge {
+  padding: 3px 5px;
+  font-size: 9px;
+}
+.connection-note {
+  margin: 8px 0 0;
+  font-size: 10px;
+  color: #7d8b95;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 680px) {
+  .brand small {
+    display: none;
+  }
+  .connection-toggle {
+    gap: 6px;
+    padding: 5px 7px;
+    font-size: 10px;
+  }
+  .connection-toggle > span:first-child {
+    max-width: 66px;
+    white-space: normal;
+    text-align: left;
+    line-height: 1.35;
+  }
+  .connection-toggle-state {
+    min-width: 31px;
+    font-size: 8px;
+  }
+  .connection-legend {
+    max-width: calc(100% - 16px);
+  }
+  .connection-legend-key {
+    gap: 8px;
+  }
+  .connection-legend-copy {
+    font-size: 8px;
   }
 }

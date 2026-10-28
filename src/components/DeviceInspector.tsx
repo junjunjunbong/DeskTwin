@@ -3,6 +3,8 @@ import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { TransformEditor } from './TransformEditor';
+import { ShapeEditor } from './ShapeEditor';
+import { PlacementControls } from './PlacementControls';
 import {
   kindLabels,
   sourceLabels,
@@ -15,9 +17,10 @@ interface Props {
   device: Device;
   workspace: Workspace;
   mode: string;
-  onCommand: (command: WorkspaceCommand) => void;
+  onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
   onClose: () => void;
   onConnect: () => void;
+  onSelect: (id: string) => void;
 }
 export function DeviceInspector({
   device: d,
@@ -26,6 +29,7 @@ export function DeviceInspector({
   onCommand,
   onClose,
   onConnect,
+  onSelect,
 }: Props) {
   const [name, setName] = useState(d.name);
   const [model, setModel] = useState(d.model);
@@ -128,6 +132,25 @@ export function DeviceInspector({
               prefix="Device"
               onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
             />
+            <PlacementControls
+              item={d}
+              workspace={workspace}
+              onCommand={onCommand}
+              prefix="Device"
+            />
+            <ShapeEditor
+              item={d}
+              onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
+              onPartChange={(index, patch) =>
+                onCommand({
+                  type: 'update-part',
+                  id: d.id,
+                  index,
+                  expectedLength: d.parts?.length ?? 0,
+                  patch,
+                })
+              }
+            />
           </section>
         )}
         <section className="panel-section">
@@ -150,11 +173,37 @@ export function DeviceInspector({
               return (
                 <div className="connection-item" key={c.id}>
                   <DeviceIcon kind={other.kind} size={20} />
-                  <div>
-                    <strong>{other.name}</strong>
-                    <small>
-                      {c.connector} · {sourceLabels[c.source]}
-                    </small>
+                  <div className="connection-details">
+                    <button
+                      className="connection-counterpart"
+                      aria-label={`Select connected device ${other.name}`}
+                      onClick={() => onSelect(other.id)}
+                    >
+                      <strong>{other.name}</strong>
+                    </button>
+                    <dl>
+                      <div>
+                        <dt>Connection</dt>
+                        <dd>{c.connector}</dd>
+                      </div>
+                      <div>
+                        <dt>{d.name} port</dt>
+                        <dd>{(c.from === d.id ? c.fromPort : c.toPort) || 'Not recorded'}</dd>
+                      </div>
+                      <div>
+                        <dt>{other.name} port</dt>
+                        <dd>{(c.from === d.id ? c.toPort : c.fromPort) || 'Not recorded'}</dd>
+                      </div>
+                      <div>
+                        <dt>Source</dt>
+                        <dd>
+                          <span className={`source-badge ${c.source}`}>
+                            {sourceLabels[c.source]}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                    {c.note && <p className="connection-note">{c.note}</p>}
                   </div>
                   <button
                     className="icon-button small"
@@ -167,7 +216,10 @@ export function DeviceInspector({
               );
             })
           )}
-          <p className="micro-note">A recorded connection does not confirm the cable is working.</p>
+          <p className="micro-note">
+            These are recorded relationships. Live hardware operation and physical cable routes have
+            not been verified. Photo estimates do not establish hidden wiring.
+          </p>
         </section>
         {d.kind === 'monitor' && (
           <DiagnosticPanel
@@ -175,7 +227,7 @@ export function DeviceInspector({
             device={d}
             onPropose={(p) => {
               if (p.type === 'set-status')
-                onCommand({
+                return onCommand({
                   type: 'update-device',
                   id: d.id,
                   patch: { status: p.status, statusNote: p.note },
@@ -188,9 +240,8 @@ export function DeviceInspector({
             <p>Delete this device and its associated connections?</p>
             <button
               className="button danger"
-              onClick={() => {
-                onCommand({ type: 'remove-device', id: d.id });
-                onClose();
+              onClick={async () => {
+                if ((await onCommand({ type: 'remove-device', id: d.id })) !== false) onClose();
               }}
             >
               Confirm deletion

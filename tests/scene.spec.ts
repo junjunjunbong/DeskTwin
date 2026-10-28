@@ -125,6 +125,60 @@ async function exportJSON(page: Page) {
   return JSON.parse(Buffer.concat(chunks).toString()) as Workspace;
 }
 
+test('repeated photo analysis matches an existing device and exposes a reversible record choice', async ({
+  page,
+}) => {
+  const fixture = proposal();
+  fixture.objects = fixture.objects.filter((item) => ['desk', 'monitor'].includes(item.id));
+  fixture.objects.find((item) => item.kind === 'monitor')!.parts = [
+    { position: { x: 0, y: 0.03, z: 0 }, size: { x: 0.6, y: 0.06, z: 0.4 }, color: '#52616c' },
+    { position: { x: 0, y: 0.3, z: 0 }, size: { x: 0.08, y: 0.5, z: 0.08 }, color: '#52616c' },
+    {
+      position: { x: 0, y: 0.9, z: 0 },
+      size: { x: 1.4, y: 0.8, z: 0.1 },
+      rotation: { x: 0, y: 0, z: 0 },
+      color: '#374956',
+    },
+  ];
+  let calls = 0;
+  await page.route('**/api/photo', (route) => {
+    calls++;
+    return route.fulfill({ json: { mode: 'meta', ...fixture } });
+  });
+  await openPhoto(page);
+  let modal = await analyze(page);
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo monitor · Monitor' });
+  await expect(modal.getByLabel('Preview device record')).toHaveValue('');
+  await expect(modal.getByLabel('Shape part')).toHaveCount(1);
+  await modal.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  await expect(modal).not.toBeVisible();
+  const first = (await saved(page))!;
+  expect(first.devices).toHaveLength(1);
+  expect(first.devices[0].shapeMode).toBe('custom');
+  expect(first.devices[0].parts).toHaveLength(3);
+  modal = await analyze(page);
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo monitor · Monitor' });
+  await expect(modal.getByLabel('Preview device record')).toHaveValue(first.devices[0].id);
+  await modal.getByLabel('Preview device record').selectOption('');
+  await expect(modal.getByLabel('Preview device record')).toHaveValue('');
+  expect(await saved(page)).toEqual(first);
+  await modal.getByLabel('Preview device record').selectOption(first.devices[0].id);
+  await modal.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  await expect(modal).not.toBeVisible();
+  const repeated = (await saved(page))!;
+  expect(repeated.devices).toHaveLength(1);
+  expect(repeated.objects).toHaveLength(1);
+  expect(repeated.devices[0].id).toBe(first.devices[0].id);
+  expect(repeated.devices[0].status).toBe('unknown');
+  await page.reload();
+  expect(await saved(page)).toEqual(repeated);
+  expect(calls).toBe(2);
+});
+
 test('photo consent and notes lead to an editable preview; discarding never writes storage', async ({
   page,
 }) => {
@@ -159,6 +213,78 @@ test('photo consent and notes lead to an editable preview; discarding never writ
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
+test('an unmatched photo device requires an explicit record choice and keeps user connections', async ({
+  page,
+}) => {
+  const base = createDemoWorkspace();
+  base.devices = base.devices.filter((device) => ['laptop', 'monitor-left'].includes(device.id));
+  base.objects = [];
+  base.connections = [
+    {
+      id: 'recorded-hdmi',
+      from: 'laptop',
+      to: 'monitor-left',
+      connector: 'HDMI',
+      fromPort: 'HDMI output',
+      toPort: 'HDMI 1',
+      source: 'user-reported',
+      note: 'Cable recorded by the user. Working status is unknown.',
+    },
+  ];
+  const fixture = proposal();
+  fixture.objects = fixture.objects.filter((item) => item.kind === 'monitor');
+  fixture.objects[0].name = 'Monitor in the photo';
+  await seed(page, base);
+  await page.route('**/api/photo', (route) =>
+    route.fulfill({ json: { mode: 'meta', ...fixture } }),
+  );
+  await openPhoto(page);
+  let modal = await analyze(page);
+  const apply = () => modal.getByRole('button', { name: 'Confirm and apply scene' });
+  await expect(apply()).toBeDisabled();
+  await expect(
+    modal.getByText(/Choose a device record for 1 photo object before applying/),
+  ).toBeVisible();
+  expect(await saved(page)).toEqual(base);
+  await modal.getByRole('button', { name: 'Review device record', exact: true }).click();
+  const record = () => modal.getByLabel('Preview device record');
+  await expect(record()).toHaveValue(':choose-record');
+  await expect(record()).toHaveAttribute('aria-invalid', 'true');
+
+  // Keeping a new device is an explicit, reversible review decision, not a default.
+  await record().selectOption('');
+  await expect(apply()).toBeEnabled();
+  await expect(record()).toHaveValue('');
+  expect(await saved(page)).toEqual(base);
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+  expect(await saved(page)).toEqual(base);
+
+  // A fresh preview still requires its own decision. Matching keeps the original record and cable.
+  modal = await analyze(page);
+  await expect(apply()).toBeDisabled();
+  await modal.getByRole('button', { name: 'Review device record', exact: true }).click();
+  await record().selectOption('monitor-left');
+  await expect(apply()).toBeEnabled();
+  await expect(record()).toHaveValue('monitor-left');
+  expect(await saved(page)).toEqual(base);
+  await apply().click();
+  await expect(modal).not.toBeVisible();
+  const applied = (await saved(page))!;
+  expect(applied.devices).toHaveLength(2);
+  expect(applied.devices.find((device) => device.id === 'monitor-left')).toMatchObject({
+    name: 'Left monitor',
+    source: 'demo',
+    status: 'unknown',
+  });
+  expect(applied.connections).toEqual(base.connections);
+  expect(applied.history).toHaveLength(base.history.length + 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(base);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(applied);
+});
+
 test('applying a scene is one undo step and preserves user-reported identity, links and status', async ({
   page,
 }) => {
@@ -173,6 +299,8 @@ test('applying a scene is one undo step and preserves user-reported identity, li
   base.connections[1].note = 'I connected this cable myself.';
   await seed(page, base);
   const scene = proposal();
+  // Keep the approval/Undo fixture clear of the intended desk movement. Collision rejection has dedicated tests.
+  scene.objects.find((object) => object.kind === 'chair')!.placement.z = 3.2;
   scene.objects.find((object) => object.kind === 'monitor')!.deviceId = monitor.id;
   await page.route('**/api/photo', (route) => route.fulfill({ json: { mode: 'meta', ...scene } }));
   await openPhoto(page);
@@ -213,6 +341,13 @@ test('applying a scene is one undo step and preserves user-reported identity, li
 test('desk, chair, plants and generic box parts remain editable and survive JSON round trips', async ({
   page,
 }) => {
+  const initial = createDemoWorkspace();
+  initial.devices = [];
+  initial.connections = [];
+  initial.objects = initial.objects.filter((object) =>
+    ['decor-desk', 'decor-chair', 'decor-plant-left'].includes(object.id),
+  );
+  await seed(page, initial);
   await page.goto('/');
   let list = await openObjects(page);
   await list.getByRole('button', { name: /^Desk Desk / }).click();
@@ -232,12 +367,18 @@ test('desk, chair, plants and generic box parts remain editable and survive JSON
   list = await openObjects(page);
   await list.getByRole('button', { name: /Editable prop Generic object/ }).click();
   const inspector = page.getByRole('complementary', { name: 'Selected scene object' });
-  await inspector.getByText('Box composition (default box)', { exact: true }).click();
-  await inspector.getByRole('button', { name: 'Add box' }).click();
+  await inspector.getByRole('button', { name: 'Customize template shape' }).click();
+  await inspector.getByLabel('Shape part').selectOption('0');
   await inspector.getByLabel('Box 1 size x').fill('0.85');
   await inspector.getByLabel('Box 1 position y').fill('0.4');
   await changeColor(inspector.getByLabel('Box 1 color'), '#d29b58');
   await inspector.getByRole('slider', { name: 'Object height position', exact: true }).fill('2.8');
+  await expect
+    .poll(
+      async () =>
+        (await saved(page))?.objects.find((object) => object.name === 'Editable prop')?.placement.y,
+    )
+    .toBe(2.8);
   const expected = (await saved(page))!;
   expect(expected.objects.find((object) => object.id === 'decor-desk')?.visual.scale.x).toBe(1.15);
   expect(expected.objects.find((object) => object.id === 'decor-chair')?.placement.rotation).toBe(
@@ -249,7 +390,15 @@ test('desk, chair, plants and generic box parts remain editable and survive JSON
   expect(expected.objects.find((object) => object.name === 'Editable prop')).toMatchObject({
     kind: 'generic',
     placement: { y: 2.8 },
-    parts: [{ size: { x: 0.85 }, position: { y: 0.4 }, color: '#d29b58' }],
+    shapeMode: 'custom',
+    parts: [
+      expect.objectContaining({
+        size: expect.objectContaining({ x: 0.85 }),
+        position: expect.objectContaining({ y: 0.4 }),
+        color: '#d29b58',
+      }),
+      expect.any(Object),
+    ],
   });
   await page.reload();
   expect(await saved(page)).toEqual(expected);
@@ -466,6 +615,11 @@ test('replacing a photo cancels the old analysis and requires fresh consent', as
 });
 
 test('scene object editing and creation are usable in a narrow viewport', async ({ page }) => {
+  const initial = createDemoWorkspace();
+  initial.objects = initial.objects.filter(
+    (object) => object.kind === 'desk' || object.kind === 'chair',
+  );
+  await seed(page, initial);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const list = await openObjects(page);

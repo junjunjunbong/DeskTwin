@@ -7,12 +7,16 @@ import {
   kindLabels,
   sourceLabels,
   type SceneObject,
+  type SceneObjectPatch,
   type Workspace,
   type WorkspaceCommand,
   type ObjectKind,
 } from '../domain/workspace';
 import { DeviceIcon, Modal } from './ui';
-import { PartsEditor, TransformEditor } from './TransformEditor';
+import { TransformEditor } from './TransformEditor';
+import { ShapeEditor } from './ShapeEditor';
+import { PlacementControls } from './PlacementControls';
+import { CommitTextInput } from './CommitInput';
 
 export function SceneObjectList({
   workspace,
@@ -87,15 +91,17 @@ export function SceneObjectList({
 
 export function SceneObjectInspector({
   object,
+  workspace,
   onCommand,
   onClose,
 }: {
   object: SceneObject;
-  onCommand: (command: WorkspaceCommand) => void;
+  workspace: Workspace;
+  onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
   onClose: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
-  const update = (patch: Partial<Omit<SceneObject, 'id'>>) =>
+  const update = (patch: SceneObjectPatch) =>
     onCommand({ type: 'update-object', id: object.id, patch });
   return (
     <aside className="floating-panel inspector" aria-label="Selected scene object">
@@ -116,13 +122,11 @@ export function SceneObjectInspector({
       <div className="panel-scroll">
         <label>
           Object name
-          <input
+          <CommitTextInput
             aria-label="Object name"
             maxLength={60}
             value={object.name}
-            onChange={(e) => {
-              if (e.target.value.trim()) update({ name: e.target.value });
-            }}
+            onCommit={(name) => update({ name })}
           />
         </label>
         <label>
@@ -134,7 +138,8 @@ export function SceneObjectInspector({
               update({
                 kind: e.target.value as ObjectKind,
                 parts: [],
-                visual: { ...object.visual, source: 'user-reported' },
+                shapeMode: 'template',
+                visual: { source: 'user-reported' },
               })
             }
           >
@@ -146,26 +151,32 @@ export function SceneObjectInspector({
           </select>
         </label>
         <TransformEditor placement={object.placement} visual={object.visual} onChange={update} />
-        {object.kind === 'generic' && (
-          <PartsEditor
-            parts={object.parts}
-            onChange={(parts) =>
-              update({ parts, visual: { ...object.visual, color: null, source: 'user-reported' } })
-            }
-          />
-        )}
+        <PlacementControls item={object} workspace={workspace} onCommand={onCommand} />
+        <ShapeEditor
+          item={object}
+          onChange={update}
+          onPartChange={(index, patch) =>
+            onCommand({
+              type: 'update-part',
+              id: object.id,
+              index,
+              expectedLength: object.parts.length,
+              patch,
+            })
+          }
+        />
         <p className="micro-note">
-          Furniture and props have no operating status. Templates are approximate; objects move
-          independently.
+          Furniture and props have no operating status. Templates and dimensions are editable
+          approximations.
         </p>
         {deleting ? (
           <div className="delete-confirm">
             <p>Delete this object? You can undo this change.</p>
             <button
               className="button danger"
-              onClick={() => {
-                onCommand({ type: 'remove-object', id: object.id });
-                onClose();
+              onClick={async () => {
+                if ((await onCommand({ type: 'remove-object', id: object.id })) !== false)
+                  onClose();
               }}
             >
               Confirm object deletion
@@ -190,7 +201,7 @@ export function AddObjectDialog({
   onCommand,
 }: {
   onClose: () => void;
-  onCommand: (command: WorkspaceCommand) => void;
+  onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
 }) {
   const [kind, setKind] = useState<ObjectKind>('plant');
   const [name, setName] = useState('');
@@ -198,12 +209,11 @@ export function AddObjectDialog({
     <Modal title="Add scene object" onClose={onClose}>
       <p className="muted">Choose a voxel template or build a generic object from boxes.</p>
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           const object = createSceneObject(kind);
           if (name.trim()) object.name = name.trim();
-          onCommand({ type: 'add-object', object });
-          onClose();
+          if ((await onCommand({ type: 'add-object', object })) !== false) onClose();
         }}
       >
         <label>
