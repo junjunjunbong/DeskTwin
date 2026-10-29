@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { WorkspaceSchema } from '../src/domain/workspace';
 import { demoReply } from '../src/domain/demoAssistant';
 import { ApiError, callMeta, callMetaScene, HistorySchema, type MetaConfig } from './meta';
+import { HardwareRequestError, HardwareService } from './hardware';
 
 const ChatRequest = z.object({
   message: z.string().trim().min(1).max(2000),
@@ -24,6 +25,7 @@ const PhotoRequest = z.object({
 interface ServerConfig extends MetaConfig {
   productionRoot?: string;
   requestsPerMinute?: number;
+  hardware?: HardwareService;
 }
 const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
@@ -32,13 +34,13 @@ export function isAllowedRequest(req: IncomingMessage) {
   if (!host) return false;
   try {
     const target = new URL(`http://${host}`);
-    if (!loopback.has(target.hostname)) return false;
+    if (!loopback.has(target.hostname) || target.host !== host) return false;
     const origin = req.headers.origin;
     if (origin) {
       const url = new URL(origin);
       if (!loopback.has(url.hostname) || !['http:', 'https:'].includes(url.protocol)) return false;
       // Vite proxy preserves frontend Host; production is same-origin too.
-      if (url.host !== target.host) return false;
+      if (url.host !== target.host || url.origin !== origin) return false;
     }
     if (req.headers['sec-fetch-site'] === 'cross-site') return false;
     return true;
@@ -123,6 +125,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, root: stri
 }
 
 export function createApp(config: ServerConfig) {
+  const hardware = config.hardware ?? new HardwareService();
   let windowStart = Date.now();
   let requests = 0;
   let active = 0;
@@ -140,6 +143,35 @@ export function createApp(config: ServerConfig) {
           photoAvailable: !!config.apiKey,
         });
         return;
+      }
+      if (path.startsWith('/api/hardware/')) {
+        // A cross-origin page cannot add this header without a preflight, which
+        // this same-origin API never permits. Tokens additionally isolate tabs.
+        if (req.headers['x-desktwin-hardware'] !== '1')
+          throw new ApiError(403, 'Use the DeskTwin hardware panel to access local detection.');
+        const origin = req.headers.origin ?? new URL(`http://${req.headers.host}`).origin;
+        if (path === '/api/hardware/session' && req.method === 'GET') {
+          json(res, 200, await hardware.createSession(origin));
+          return;
+        }
+        const token = req.headers['x-desktwin-hardware-token'];
+        if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))
+          throw new ApiError(403, 'A local hardware session is required.');
+        if (path === '/api/hardware/snapshot' && req.method === 'GET') {
+          json(res, 200, await hardware.snapshot(token, origin));
+          return;
+        }
+        if (path === '/api/hardware/start' && req.method === 'POST') {
+          z.strictObject({ consent: z.literal(true) }).parse(await readJSON(req));
+          json(res, 200, await hardware.start(token, origin));
+          return;
+        }
+        if (path === '/api/hardware/stop' && req.method === 'POST') {
+          z.strictObject({}).parse(await readJSON(req));
+          json(res, 200, hardware.stop(token, origin));
+          return;
+        }
+        throw new ApiError(405, 'Unsupported hardware endpoint or request method.');
       }
       if (!path.startsWith('/api/')) {
         if (config.productionRoot) await serveStatic(req, res, config.productionRoot);
@@ -213,7 +245,8 @@ export function createApp(config: ServerConfig) {
       }
     } catch (error) {
       if (res.headersSent || res.destroyed) return;
-      if (error instanceof ApiError) json(res, error.status, { error: error.message });
+      if (error instanceof ApiError || error instanceof HardwareRequestError)
+        json(res, error.status, { error: error.message });
       else if (error instanceof z.ZodError)
         json(res, 400, { error: 'The input format or workspace configuration is invalid.' });
       else
@@ -225,5 +258,6 @@ export function createApp(config: ServerConfig) {
   });
   server.requestTimeout = 45000;
   server.headersTimeout = 10000;
+  server.on('close', () => hardware.close());
   return server;
 }
