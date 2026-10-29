@@ -626,7 +626,12 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
         (entry) => entry.id === id,
       );
       if (next && JSON.stringify(next.placement) !== JSON.stringify(item.placement)) {
-        down.path.push({ ...next.placement });
+        const path = result.path ?? [{ ...next.placement }];
+        if (down.path.length + path.length > 512) {
+          cb.onFeedback('Release and drag again to continue.');
+          return;
+        }
+        down.path.push(...path);
         down.liveWorkspace = result.workspace;
         showTransforms(result.workspace);
       }
