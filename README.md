@@ -4,11 +4,11 @@
 
 DeskTwin은 책상을 넓게 보여주는 **실제 3D voxel 작업실**과, 기기·연결 관계를 함께 수정하는 workspace companion입니다. 그림을 배경으로 붙인 UI가 아닙니다. Three.js 장면에서 기기와 가구·소품을 선택하고, 위치·회전·크기·색을 편집하며 연결을 기록할 수 있습니다.
 
-> 아래 화면은 예시 책상과 새 오른쪽 고정 패널입니다. Mac 감지는 중지된 상태이며, 예시 기기는 실제 감지 결과가 아닙니다. [검증 범위](docs/VALIDATION.md)를 참고하세요.
+> 아래 화면은 예시 책상과 새 오른쪽 고정 패널입니다. Mac 감지는 중지된 상태이며, 예시 기기는 실제 감지 결과가 아닙니다. [초기 구현 검증 기록](docs/VALIDATION.md)과 [PR #4 검토 후 수정·검증 기록](docs/PR4_REVIEW_FIXES.md)을 참고하세요.
 
 ![View 모드의 예시 책상과 오른쪽 고정 Workspace overview 패널](docs/screenshots/workspace-overview-desktop.png)
 
-> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. Meta API 연결 코드는 구현되어 있지만, 실제 키를 이용한 live 호출 및 모델 정확도 평가는 아직 완료하지 않았습니다. macOS의 실제 CoreGraphics/AppKit·IOKit API를 읽는 로컬 감지 경로를 추가했습니다. **이 Linux 작업 환경에서는 Swift 빌드와 실제 Mac 연결·해제를 검증하지 못했습니다.** Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다.
+> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. Meta API 연결 코드는 구현되어 있지만, 실제 키를 이용한 live 호출 및 모델 정확도 평가는 아직 완료하지 않았습니다. macOS의 실제 CoreGraphics/AppKit·IOKit API를 읽는 로컬 감지 경로를 추가했습니다. **이 Linux 작업 환경에서는 Swift 빌드와 실제 Mac 연결·해제를 직접 검증하지 못했습니다.** 사용자는 이전 `2de1813`에서 Mac 빌드와 production 감지가 성공했다고 보고했습니다. 이번 개발 proxy·식별 처리 수정은 fixture로 검증했으며, 수정 후 Mac 확인은 별도로 필요합니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다.
 
 ## 빠르게 실행하기
 
@@ -22,6 +22,8 @@ npm run dev
 ```
 
 브라우저에서 **http://127.0.0.1:5173**을 엽니다. API 서버는 `127.0.0.1:4318`에서 실행합니다. 두 서버 모두 기본적으로 로컬 컴퓨터에서만 접근할 수 있습니다.
+
+`npm run dev`의 UI에서 보내는 `/api` 요청은 개발 서버의 로컬 proxy를 거칩니다. Proxy는 브라우저가 사용한 Host와 Origin을 유지하여 대화·사진·하드웨어 요청을 같은 UI 주소에서 처리하고, API의 요청 출처 검증을 유지합니다.
 
 다른 작업에서 이 포트를 사용 중이면 별도 포트로 실행할 수 있습니다. `DESKTWIN_WEB_PORT`는 UI 서버, `PORT`는 API 서버와 UI의 API proxy를 지정합니다. 다음 예시는 API 키를 비운 로컬 데모입니다.
 
@@ -38,8 +40,14 @@ UI 포트가 이미 사용 중이면 실행이 실패합니다. 다른 포트로
 
 - **View**: 아무것도 선택하지 않으면 오른쪽 **Workspace overview**에 기기·기록된 연결·사용자 보고·Mac 감지 요약이 표시됩니다. 기기를 선택하면 같은 고정 패널에서 이름, 모델, 연결 상대, 양쪽 포트, 출처와 메모를 확인합니다.
 - **Edit**: 장면에서 직접 드래그하고 오른쪽 패널에서 위치·회전·크기·색·부품을 수정합니다. 선택 label과 편집 팝업은 장면 위에 나타나지 않습니다. 삭제 확인은 해당 패널 안에서 처리합니다.
-- 데스크톱에서는 장면과 상세 패널이 화면을 나눕니다. 모바일에서는 아래 상세 패널을 접어 드래그 공간을 늘릴 수 있습니다. View/Edit 전환은 저장된 장면을 바꾸지 않으며, 선택한 항목의 입력 초안도 유지합니다.
+- 데스크톱에서는 장면과 상세 패널이 화면을 나눕니다. 모바일에서는 아래 상세 패널을 접어 드래그 공간을 늘릴 수 있습니다. View/Edit 전환은 저장된 장면을 바꾸지 않으며, 선택한 편집기의 입력 초안도 유지합니다.
 - **Show connections**는 두 모드에서 독립적으로 켜고 끕니다. 선택한 기기의 연결 상대와 선이 강조되고, 편집 중 선의 끝점도 기기를 따라 움직입니다.
+
+기기의 이름·모델·사용자 보고 상태·메모 초안은 **현재 열린 앱의 메모리**에 기기별로 보관됩니다. **My desk**, 다른 기기, 패널 닫기·열기, 사진·히스토리 등으로 이동해도 유지되며, **Unsaved device details**에서 다시 열어 **Save device details** 또는 **Discard draft**를 선택합니다. View에는 저장된 기록을 표시하므로 미저장 정상 작동 보고가 실제 보고처럼 나타나지 않습니다. 초안은 JSON 내보내기나 모델 전송 구성에 포함되지 않으며, 브라우저 새로고침이나 탭 닫기 이후에는 복원되지 않습니다.
+
+최신 저장본 불러오기·가져오기·초기화 또는 저장된 이름·모델·보고·메모 변경 후에는 초안을 유지하면서 검토를 요구합니다. **Keep my edited fields after review**는 최신 값과 비교한 뒤 편집을 계속하는 선택이며, 실제 적용에는 다시 **Save device details**가 필요합니다. 삭제된 기기의 초안은 참조하거나 명시적으로 폐기할 수 있습니다. 자세한 경계와 저장 충돌 처리는 [Storage](docs/STORAGE.md)에 설명했습니다.
+
+연결의 추가·제거는 **Edit**에서 수행합니다. View의 **Edit connections**는 모드만 전환하며, 연결 제거는 오른쪽 패널의 **Confirm removal / Cancel removal**로 확인합니다. Assistant의 연결 제안도 **Edit to review connection** 이후 별도의 **Confirm and apply**가 필요합니다.
 
 ## 지금 사용할 수 있는 기능
 
@@ -67,7 +75,7 @@ UI 포트가 이미 사용 중이면 실행이 실패합니다. 다른 포트로
 
 사진의 **Device record**에서 기존 기기 매칭을 확인하거나 별도의 새 기기로 바꿀 수 있습니다. 이전 사진 ID와 고유한 이름을 재사용해 반복 분석의 중복을 줄입니다. 같은 종류의 기존 기기가 있지만 매칭을 결정할 수 없으면 **기존 기기 또는 별도의 새 기기를 명시적으로 선택하기 전에는 적용할 수 없습니다.** 기존 예시 기기에 사용자가 기록한 연결이 있어도 해당 기기와 연결을 보존합니다. 기존 이름·모델·작동 상태도 유지하고 새 기기의 상태는 `unknown`으로 둡니다.
 
-두 탭의 변경이 충돌하면 오래된 탭은 최신 저장을 덮어쓰지 않고 자신의 화면을 유지합니다. 필요한 경우 그 탭의 구성을 내보낸 뒤 **Load latest saved workspace**로 최신 구성을 불러옵니다. 안전한 저장은 Web Locks를 지원하는 HTTPS 또는 localhost 브라우저 환경을 사용합니다. 이름과 숫자는 Enter 또는 포커스 이동 때 저장됩니다.
+두 탭의 변경이 충돌하면 오래된 탭은 최신 저장을 덮어쓰지 않고 자신의 화면을 유지합니다. 필요한 경우 그 탭의 구성을 내보낸 뒤 **Load latest saved workspace**로 최신 구성을 불러옵니다. 안전한 저장은 Web Locks를 지원하는 HTTPS 또는 localhost 브라우저 환경을 사용합니다. Workspace·장면 물체 이름과 숫자 편집은 Enter 또는 포커스 이동 때 저장되며, 기기의 이름·모델·사용자 보고·메모는 **Save device details**로 저장합니다.
 
 저장 형식은 별도 wrapper가 없는 Workspace v2 JSON이며, 기존 `desktwin.workspace.v1` 저장 키를 유지합니다. 승인된 OS 매칭은 선택적 `hardwareBinding`으로 로컬 저장합니다. JSON 내보내기·가져오기는 설치별 매칭을 제거하므로 다시 매칭해야 합니다. 승인한 기기 이름·모델과 `hardwareOrigin` 출처는 내보내기에 유지됩니다. v1/v2 저장본과 JSON을 읽을 수 있고, 읽기나 마이그레이션만으로 원본을 다시 저장하지 않습니다. Web Locks를 지원하지 않는 환경에서는 편집 저장을 막고 JSON 내보내기를 제공합니다.
 
@@ -96,13 +104,13 @@ MODEL_API_KEY='' npm run dev
 | USB devices and hubs | IOKit에 등록된 USB 이름·제품/제조사 정보와 OS USB 상위 기기                                   | 전송·충전·영상 기능의 정상 여부, OS에 없는 물리적 포트·케이블 정보, USB entry가 없는 Thunderbolt-only 기기 |
 | Bluetooth            | 수동으로 기록한 연결은 계속 표시                                                              | 실시간 pairing·연결·배터리 상태: **Unavailable**, 감지하지 않음                                            |
 
-활성화한 탭은 약 5초마다 갱신합니다. 감지 상태, 각 정보의 출처, 마지막 성공 시각을 표시합니다. **Detection stopped**와 **Status unavailable**은 물리적 연결 해제를 뜻하지 않습니다. 같은 설치에서 승인한 안정적 identity가 성공한 category 조회에 없을 때만 **Not detected**입니다. 식별이 불안정한 기기는 재연결 또는 새 세션에서 **Match again**으로 다시 선택해야 합니다.
+활성화한 탭은 약 5초마다 갱신합니다. 감지 상태, 각 정보의 출처, 마지막 성공 시각을 표시합니다. **Detection stopped**와 **Status unavailable**은 물리적 연결 해제를 뜻하지 않습니다. 같은 설치에서 승인한 안정적 identity가 성공한 category 조회에 없을 때만 **Not detected**입니다. 식별이 불안정한 기기는 재연결 또는 새 세션에서 **Match again**으로 다시 선택해야 합니다. 같은 식별 정보가 여러 기기에서 관측되면 기존 매칭도 **Match again**이 됩니다. 이후 하나만 남아도 이전 기기라고 자동 판단하지 않습니다. 로컬에 저장된 최소 충돌 기록으로 일반적인 bridge 재시작 후에도 이 판단을 유지하며, 기록을 안전하게 읽거나 쓸 수 없으면 **Status unavailable**로 표시합니다. 저장 실패와 프로세스 종료가 겹치는 경우의 한계는 [Mac 감지 문서](docs/MACOS_HARDWARE.md#local-collision-trust-history)에 명시했습니다.
 
 감지된 항목을 선택하고 **Desk device match**에서 기존 기기 또는 별도의 새 기기를 고릅니다. **Review match → Confirm and save match**를 거쳐야 저장됩니다. 비슷한 이름으로 자동 병합하지 않습니다. 기존 기기의 이름·배치·연결·사용자 상태는 보존합니다. 새 기기는 사용자가 고른 template과 빈 위치로 추가하며 작동 상태는 `unknown`입니다. 감지가 3D 배치나 케이블 연결을 측정하는 것은 아닙니다.
 
 감지 결과는 기본적으로 로컬에서만 사용합니다. 일련번호는 필요한 안정적 매칭에만 사용하고 native process 안에서 설치별 HMAC으로 바꿉니다. 원문 일련번호와 live snapshot은 로그·JSON 내보내기에 넣지 않습니다. OS에서 생성한 기기와 관련 연결은 이름 수정·매칭 해제 후에도 Meta 자동 전송 구성에서 제외합니다. 매칭한 기존 수동 기기는 수동 정보만 기존 동의 범위로 사용할 수 있습니다.
 
-**실제 Mac 검증은 아직 필요합니다.** [정확한 감지 범위, 실행 방법과 Mac 수동 확인 절차](docs/MACOS_HARDWARE.md)에 따라 display/USB 연결·분리, 동일 이름 기기, bridge 중단, 매칭 및 권한 오류를 확인하세요. Linux의 mock 테스트 통과는 native API 성공의 증거가 아닙니다.
+**수정한 브랜치의 실제 Mac 검증은 아직 필요합니다.** [정확한 감지 범위, 실행 방법과 Mac 수동 확인 절차](docs/MACOS_HARDWARE.md)에 따라 display/USB 연결·분리, 동일 이름 기기, bridge 중단, 매칭 및 권한 오류를 확인하세요. Linux의 mock 테스트 통과는 native API 성공의 증거가 아닙니다.
 
 ## 연결 정보는 어떻게 믿나요?
 
@@ -179,7 +187,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 8. 사진 흐름은 선택 → 별도 전송 동의 → preview 수정 → **Confirm and apply scene** 순서입니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 사진 테스트는 mock 결과이며 실제 인식 성공으로 소개하지 않습니다.
 9. **Open settings → Export JSON**으로 구성을 내보냅니다. 승인한 장면과 출처는 남고 설치별 하드웨어 매칭은 제외됩니다.
 
-로컬 대화 데모에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.
+로컬 대화 데모에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. View에서는 **Edit to review connection**으로 Edit에 들어간 뒤 **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.
 
 ## Production 실행
 
@@ -208,7 +216,7 @@ Meta 요청은 테스트에서 mock으로 대체합니다. `test:e2e`와 `test:p
 DESKTWIN_TEST_PORT=5187 DESKTWIN_TEST_API_PORT=4337 npm run test:e2e
 ```
 
-`DESKTWIN_TEST_PORT`와 `DESKTWIN_TEST_API_PORT`는 Playwright가 시작할 UI/API 서버에 전달됩니다. 기존 서버를 종료하거나 설정을 바꿀 필요가 없습니다. 테스트는 실제 Meta API 크레딧을 사용하지 않습니다. 실행한 검사와 남은 수동 검증은 [검증 기록](docs/VALIDATION.md)에 구분해서 기록합니다.
+`DESKTWIN_TEST_PORT`와 `DESKTWIN_TEST_API_PORT`는 Playwright가 시작할 UI/API 서버에 전달됩니다. 기존 서버를 종료하거나 설정을 바꿀 필요가 없습니다. 테스트는 실제 Meta API 크레딧을 사용하지 않습니다. 초기 구현 검사는 [기존 검증 기록](docs/VALIDATION.md)에 남겨 두며, 이번 검토 후 수정·재현·후속 검증은 [PR #4 검토 수정 기록](docs/PR4_REVIEW_FIXES.md)에 구분해서 기록합니다.
 
 - [Mac 하드웨어 감지와 실제 Mac 수동 확인](docs/MACOS_HARDWARE.md)
 - [기본 장면 드래그·비동기 저장 회귀 조사](docs/BASELINE_REGRESSIONS.md)
@@ -216,7 +224,8 @@ DESKTWIN_TEST_PORT=5187 DESKTWIN_TEST_API_PORT=4337 npm run test:e2e
 - [탭 간 저장 충돌과 입력 처리](docs/STORAGE.md)
 - [구조와 구현 범위](docs/ARCHITECTURE.md)
 - [개인정보와 보안 경계](docs/PRIVACY.md)
-- [실제 검증 기록과 남은 확인](docs/VALIDATION.md)
+- [PR #4 검토 후 수정과 후속 검증](docs/PR4_REVIEW_FIXES.md)
+- [초기 구현 검증 기록과 당시 남은 확인](docs/VALIDATION.md)
 - [기여 방법](CONTRIBUTING.md)
 - [원래 프로젝트 brief](docs/PROJECT.md)
 - [해커톤 제출 체크리스트](docs/HACKATHON.md)

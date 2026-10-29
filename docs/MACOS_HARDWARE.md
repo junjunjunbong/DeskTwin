@@ -2,7 +2,9 @@
 
 DeskTwin can read actual display and USB metadata from the Mac running its local API server. Detection is off by default. Opening the application or checking availability does not scan hardware. A user must review the local-data notice and explicitly start detection.
 
-**Validation boundary:** the native implementation uses real macOS APIs. This change was developed in Linux; compiling the Swift helper, OS permission behavior and actual hardware hot-plug behavior have **not** been tested on a Mac. Passing fixture-based service/API/browser tests is not evidence of native hardware success. Complete the Mac checklist below before the hackathon demonstration.
+**Validation boundary:** the native implementation uses real macOS APIs. The user independently reported a successful native helper build and successful production-mode detection on their Mac at PR #4 revision `2de1813`. This is user-reported validation, not a Mac run performed by the implementation environment. Hardware counts, names and identifiers from that run are deliberately omitted from repository documentation.
+
+The review fixes leave `native/HardwareProbe.swift` and `scripts/build-hardware.mjs` unchanged. The revised development proxy, identity handling and local trust ledger were verified in Linux with synthetic observations and browser/API tests. They have not received a new actual-Mac run. The earlier production result does not establish that every checklist item, development mode, permission case or identifier-collision case passed. Complete the relevant checks below on the revised branch before the demonstration. See [PR #4 review verification](PR4_REVIEW_FIXES.md) for the separate automated evidence.
 
 ## Build and run on a Mac
 
@@ -34,6 +36,8 @@ MODEL_API_KEY='' DESKTWIN_WEB_PORT=5187 PORT=4337 npm run dev
 # Open http://127.0.0.1:5187
 ```
 
+Development keeps the browser's original Host, including the web port, when Vite proxies `/api` to the local API port. The server still checks the exact Origin against that Host. This fixes same-origin hardware Start and chat POST requests without allowing foreign origins or removing token checks. A successful production run does not by itself verify this separate proxy path.
+
 Production uses the same local bridge:
 
 ```bash
@@ -64,24 +68,48 @@ The panel refreshes by polling approximately every five seconds while enabled. E
 
 Detection itself never changes the saved desk. Select an observation, explicitly choose an existing record or a separate new device, review the choice, and confirm it. Existing names, placement, visual source, recorded connections and user-reported operating status remain intact. New records start with an unknown user-reported operating status.
 
-Names are display labels, never automatic matching keys. A unique available hardware serial together with vendor/model information can provide a persistent identity. The native process converts it to an installation-specific HMAC before emitting JSON; the serial itself is not emitted, logged or stored. Duplicate identifiers in the same scan are downgraded to session identities. Vendor/model codes alone and a missing or placeholder serial are never treated as persistent identities.
+Names are display labels, never automatic matching keys. A unique available hardware serial together with vendor/model information can provide a candidate persistent identity. The native process converts it to an installation-specific HMAC before emitting JSON; the serial itself is not emitted, logged or stored. Vendor/model codes alone and a missing or placeholder serial are never treated as persistent identities.
+
+When a successful category read reports multiple devices with the same identifier, its uniqueness has been disproved. The server records the affected opaque identity in an installation-scoped collision quarantine. All observations using that identity become **session-only** and remain so when the observed count changes from one to two to one, when neither device remains, and through later Stop/Start, new tabs and ordinary bridge restarts. The count returning to one does not identify which physical device remains.
+
+An earlier approved persistent binding is retained in the saved desk but shows **Match again**, with an explanation that the previous match is ambiguous. It does not become **Not detected** merely because current observations now have session identities. This remains conservative even after an empty successful category scan. The user can explicitly select a current observation and approve replacing that binding with a session match. This does not overwrite the record's name, model, placement, connections or reported operating status. A stale confirmation for the old persistent observation is rejected.
 
 An observation without a unique usable serial has a **session identity**. Reconnecting after an observed removal, restarting detection, restarting the bridge, or losing the category's ability to check invalidates that identity. The user must choose a match again. Moving a USB device without a serial to another port commonly creates a new registry identity and requires matching again. Identical names are still separate devices.
 
 Persistent identities are scoped to the current local installation key. Reconnecting a uniquely identified device may restore its existing approved mapping. Deleting `local-data/hardware-identity.key`, moving to a different installation, or restoring a portable export requires user matching again. Successful snapshots include the installation scope even when no devices are present, so the UI can distinguish a different installation from a successfully checked missing device. Manufacturer-provided serials can themselves be faulty or reused; a persistent match is not a cryptographic proof of physical identity. CoreGraphics serial sentinels (`0` and `0xFFFFFFFF`) and common placeholder USB serials do not qualify as persistent identities.
 
-Only local approved mapping metadata is stored with the browser workspace. Live snapshots, local session tokens and raw native identifiers are not part of workspace history. JSON export retains the approved device name/model and privacy provenance, but excludes hardware bindings and live observations. The model context also omits records created from OS observations and connections involving those records, including after a rename or unlink; it clears stored history because older text may contain an OS-derived name. Existing manually entered records linked to an observation remain ordinary manual records, with their hardware binding and observations excluded from model context. Linking an observation does not grant consent to send detection information to Meta. This implementation provides no automatic hardware-to-Meta transfer.
+### Local collision trust history
+
+The bridge stores this narrowly scoped trust evidence outside the workspace in the ignored directory:
+
+```text
+local-data/hardware-identity-collisions/<installation scope>/<category>_<opaque identity key>
+```
+
+Each marker is an empty file. Its name contains the category and the same opaque public matching key already used by the bridge; it contains no raw native fingerprint, serial, device name or observation payload. The bridge creates private directories with mode `0700` and marker files with mode `0600`, and validates ownership, permissions, entry types and names when reading them. Exclusive append-only creation prevents concurrent bridge instances from overwriting one another's evidence. The ledger is bounded to 4,096 identities per installation and does not automatically expire entries when devices leave.
+
+The ledger is accessed only during explicitly enabled detection. Capability checks and stopped polling do not initialize it or scan hardware. Cached responses also consult trust evidence, so a collision learned by another tab or bridge instance cannot restore an already-disproved persistent identity. New snapshot ambiguity evidence is optional for older fixture compatibility; current server responses include it. The stored workspace and binding formats are unchanged.
+
+If this history cannot be safely read or saved, the service reports **Status unavailable**. Already observed ambiguity is retained in memory and immediately invalidates affected cached matches, even if the write failed. On recovery the service retries the complete known union before publishing a new result. Preserve this directory together with `local-data/hardware-identity.key`; deleting only the history while keeping the key discards evidence and is not a recovery procedure. The application does not automatically clear the quarantine or expose a reset action.
+
+**Durability limit:** successfully written evidence survives an ordinary bridge restart. If every attempt to write a newly observed collision fails and the process terminates before a successful retry, its unwritten in-memory evidence cannot survive that termination. After such a restart, a singleton with that unrecorded identifier may again be treated as persistent because the bridge has no saved collision evidence. This implementation does not provide a durable pre-scan journal guaranteeing that stronger failure case. A failed trust-history check is not successful identity verification.
+
+### Saved and shared data
+
+Only local approved mapping metadata is stored with the browser workspace. Live snapshots, ambiguity evidence, local session tokens and raw native identifiers are not part of workspace history. JSON export retains the approved device name/model and privacy provenance, but excludes hardware bindings and live observations. The model context also omits records created from OS observations and connections involving those records, including after a rename or unlink; it clears stored history because older text may contain an OS-derived name. Existing manually entered records linked to an observation remain ordinary manual records, with their hardware binding and observations excluded from model context. Linking an observation does not grant consent to send detection information to Meta. This implementation provides no automatic hardware-to-Meta transfer.
 
 ## Stopped, unknown and absent are different
 
-| Situation                                                                                 | UI meaning                                                                            |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Detection has not started or was stopped                                                  | **Detection stopped**; presence unknown                                               |
-| Server stopped, helper missing, timeout, malformed native response or disconnected bridge | **Status unavailable / Unknown**; previous confirmation time retained where available |
-| A category is permission-denied or otherwise fails                                        | Only that category becomes unknown. Other successfully read categories can continue   |
-| This tab has not polled for 20 seconds                                                    | Its lease stops; explicit Start is required to resume                                 |
-| A category completes successfully and a previously approved stable match is absent        | **Not detected** for that category at that successful check time                      |
-| A serial-less identity cannot be safely resumed                                           | **Match again / Unknown**; choose the corresponding observation explicitly            |
+| Situation                                                                                              | UI meaning                                                                                   |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Detection has not started or was stopped                                                               | **Detection stopped**; presence unknown                                                      |
+| Server stopped, helper missing, timeout, malformed native response or disconnected bridge              | **Status unavailable / Unknown**; previous confirmation time retained where available        |
+| Local identity trust history cannot be safely read or saved                                            | **Status unavailable**; no presence or absence claim is inferred from the failure            |
+| A category is permission-denied or otherwise fails                                                     | Only that category becomes unknown. Other successfully read categories can continue          |
+| This tab has not polled for 20 seconds                                                                 | Its lease stops; explicit Start is required to resume                                        |
+| A category succeeds in the approved installation and an unambiguous persistent match is absent         | **Not detected** for that category at that successful check time                             |
+| An earlier persistent match has a known identifier collision, including after an empty successful scan | **Match again / Unknown**; returning to one observation does not restore identity confidence |
+| A serial-less or session-only identity cannot be safely resumed                                        | **Match again / Unknown**; choose the corresponding observation explicitly                   |
 
 “Not detected” is never derived from an unavailable category, a stopped bridge or an expired lease. Snapshots do not promote user-reported state to working and do not overwrite user-reported issues.
 
@@ -102,20 +130,20 @@ Requests cannot choose an executable path, command, source code, native argument
 
 The ignored `local-data/hardware-identity.key` is a random 32-byte local key created only when detection actually starts on a supported installation. It is written with owner-only file permissions; the enclosing directory is owner-only when created by the bridge. It is not a serial, account token or API key, and is not shared with external services. Replacing it invalidates old mappings. Anyone already able to run arbitrary code under the same local OS account is outside this local-MVP security boundary.
 
-## Mac demonstration checklist (not completed in Linux)
+## Mac demonstration checklist for the revised branch
 
-1. Build successfully with `npm run hardware:build`. Record the Mac model, macOS version and architecture in the validation notes, without serial numbers. Start with `MODEL_API_KEY=''`.
+1. Build successfully with `npm run hardware:build` and start with `MODEL_API_KEY=''`. Check both the development URL and the production URL in separate runs. The user-reported baseline already established a native build and production detection at `2de1813`; development proxy behavior and the revised backend still need a new Mac check. Keep machine-specific observations private. Record only the revision, qualitative pass/fail outcome and any non-identifying limitation in shared validation notes.
 2. Before consent, confirm detection says stopped and no OS observations appear. Enabling detection should show CoreGraphics and IOKit sources with the last successful check time. Bluetooth must say unavailable.
 3. Compare display names/counts with macOS System Settings → Displays. Check built-in, external, mirrored and sleeping cases where available. “Active for drawing: No” for a mirrored/sleeping display must not become a user issue or absence claim.
-4. Connect/remove an external display. Within the polling interval, successful display snapshots should change. An approved persistent mapping should become not detected only after a successful scan missing it; reconnect should match only if the identity is stable.
+4. Connect/remove an external display. Within the polling interval, successful display snapshots should change. An approved, unambiguous persistent mapping should become not detected only after a successful scan missing it; reconnect should match only if the identity is still trustworthy.
 5. Connect a USB hub/dock and a peripheral through it. Compare the visible USB hierarchy against System Information → USB. Check the nearest USB ancestor and IOKit source; no display-to-dock cable should be invented.
-6. Remove/reconnect the USB peripheral, then change ports. Test a device with no unique serial, if available: after an observed removal the UI must ask for a new match, not silently reuse a name. Test two same-name peripherals to ensure explicit separate choices and no auto merge.
+6. Remove/reconnect the USB peripheral, then change ports. Test a device with no unique serial, if available: after an observed removal the UI must ask for a new match, not silently reuse a name. Test two same-name peripherals to ensure explicit separate choices and no auto merge. Equal names alone are not an identifier collision. Deliberate duplicate-identifier transitions are covered by synthetic tests; do not claim those were physical-device tests. If a real collision is observed, the old persistent match must show **Match again** after either device is removed, after stopping/restarting detection and after a normal bridge restart with saved trust evidence.
 7. Select an observation and cancel the mapping confirmation. The saved workspace must remain unchanged. Approve a match to an existing object and verify its name, position, reported issue and recorded connections are preserved. Add another as a new device and verify user-reported status remains unknown.
 8. Stop detection. Previously observed devices must become stopped/unknown, not physically disconnected. Start again. Stop the local API server and verify the UI reports unavailable, then restart the server and require a fresh session.
 9. To check a permission failure without changing system privacy settings, stop detection, temporarily remove the helper executable's execute permission, start detection and confirm unavailable (never “not detected”), then restore permission, select **Check bridge availability** and **Start detection** again. Real macOS registry permission denial still needs validation on a Mac configured to deny it; tests exercise this response with fixtures.
 10. Test two tabs with independently enabled detection. Stop one tab; the other should continue. Let a tab stop polling for more than 20 seconds (e.g. suspend its JavaScript); it must return stopped and require Start rather than silently resume.
 11. Confirm work remains local using the browser Network panel. Only same-origin `/api/hardware/*` calls should occur. Export JSON and verify no `hardwareBinding`, raw serial, hardware token or live snapshot. Confirm linking/removing a match participates in normal Undo/Redo and stale-tab save protection.
-12. Report these results separately from automated fixture tests. Do not label native detection validated until steps 1–8 have run on actual hardware; record any denied/unavailable APIs exactly as observed.
+12. Report these results separately from automated fixtures and the earlier user-reported baseline. Mark unperformed checklist cases as pending. A native build or one successful production scan does not establish hot-plug, permission-denial or collision recovery behavior. Shared notes should contain qualitative outcomes; do not upload detected names, counts, identifiers, snapshots, local keys or the collision ledger without separate authorization.
 
 ## Official API references
 

@@ -1,4 +1,6 @@
-# Validation record — View/Edit and Mac hardware, 2026-10-29 KST
+# Initial validation record — View/Edit and Mac hardware, 2026-10-29 KST
+
+> This is the original implementation record before the independent review of `2de1813`. Its 167-unit/API and 70-browser results and Mac-validation limits describe that checkpoint. See [PR #4 review fixes](PR4_REVIEW_FIXES.md) for the later four regressions, 188-test checks, 82-case browser run, the separate user-reported Mac baseline and current CI status.
 
 **Final integrated verification status: local checks passed.** The expanded browser suite completed **70/70 in 6.6 minutes, with zero retries**, after both application causes from the first 65/67 run were corrected. The repository stayed frozen during that full run. The final production smoke, formatting and diff checks passed. TypeScript, all 167 unit/API tests and the production build passed. Native compilation and physical Mac detection remain unverified; hosted CI has no executed steps.
 

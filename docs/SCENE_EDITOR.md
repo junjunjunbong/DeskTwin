@@ -8,6 +8,10 @@ DeskTwin keeps the existing procedural voxel style. Devices, furniture and props
 
 **Edit** enables real dragging and the existing position, rotation, size, color and shape controls in the same inspector. Scene labels/popups are hidden while editing. Delete confirmation stays inside the panel. View/Edit switches preserve the selected record and its input drafts. On desktop, the panel occupies a separate grid column. On mobile, it sits below the scene and can collapse for more drag room.
 
+Device name, model, user-reported status and note drafts also survive **My desk**, selection of another device, closing/reopening the inspector, and other panel navigation. **Unsaved device details** marks them separately from the saved record; **Resume editing draft** or the draft list reopens them. **Save device details** and **Discard draft** are explicit actions. View continues to show the saved evidence, so an unsaved working-status entry does not become a reported result.
+
+These detail drafts exist only in the current open app, outside workspace storage, JSON export and automatic model context. Browser reload or tab close ends them. Loading another tab's saved workspace, importing or resetting requires review before an existing draft can be saved against the new records. Changed saved details and deleted/restored devices also require review. **Keep my edited fields after review** refreshes the baseline without saving; the user must then choose Save. See [draft lifecycle and transaction protection](STORAGE.md#device-drafts-and-navigation).
+
 ## Display recorded connections
 
 The header's **Show connections ON/OFF** switch works in both **View** and **Edit**. Opening **View connections** turns it on; ordinary mode switches preserve the current toggle state. This is a view setting held in memory. It does not write connection records, create Undo steps, or change exported JSON.
@@ -16,13 +20,15 @@ ON displays every recorded relationship, including Bluetooth and Unknown connect
 
 The device inspector shows the counterpart name, connector, each endpoint's entered port, source and note. Port labels follow the selected device even when it is the `to` endpoint of the stored edge. Missing port text is shown as **Not recorded**. Selecting the counterpart name opens that device.
 
+View offers inspection and **Edit connections**. This action only enters Edit; it does not open an add form or save a change. In Edit, **Add** / **Record a connection** opens the existing user-reported connection form. A Remove action opens **Confirm removal / Cancel removal** within the right inspector. The record remains until confirmation; canceling or returning to View before confirming preserves it. Removing a record does not disconnect hardware, and Undo restores the saved relationship. The connection guide and overview follow the same mode boundary. Assistant connection proposals require **Edit to review connection**, then separate **Confirm and apply** approval.
+
 Dashed arcs represent recorded relationships between visual object anchors. They are not measured cable paths or physical port positions. They do not indicate electrical connectivity, negotiated capabilities or successful hardware operation. Photo inference and example data keep their source labels. Dragging a device, or a desk carrying attached devices, updates these arcs during the unsaved gesture. The lines do not intercept object picking.
 
 ## Move and place objects
 
 Open **Edit** (or the **Edit placement** navigation action) and select an object from the scene or **Scene objects**. Dragging uses the actual rendered box parts for collision checks. It stops at the last safe position instead of passing through another object. The empty space between desk legs remains usable. A fast pointer jump is swept along its path, including thin obstacles.
 
-Position sliders, yaw rotation, axis scale and part edits also check the proposed shape. A blocked numeric edit keeps the prior saved value and shows a reason. Numeric text remains editable while typing `0.`, a minus sign, or a decimal; Enter or leaving the field commits it. Escape restores the saved value. Names preserve spaces while typing and trim only when committed.
+Position sliders, yaw rotation, axis scale and part edits also check the proposed shape. A blocked numeric edit keeps the prior saved value and shows a reason. Numeric text remains editable while typing `0.`, a minus sign, or a decimal; Enter or leaving the field commits it. Escape restores the saved value. Workspace and object names preserve spaces while typing and trim only when committed. Device details use their explicit **Save device details** form instead of these Enter/blur controls.
 
 Resizing an object already resting on the floor or a desk preserves its actual bottom and any small existing support gap, as long as the saved position bounds permit that adjustment. This matters for templates whose origin differs from the bottom of their geometry. Template changes and part size/rotation edits also retain resting contact when the edit does not explicitly change the relevant position. Explicit height or part-position edits remain deliberate placement changes and are collision-checked as entered. This correction does not make floating objects fall or move an unattached object with a separate support.
 
@@ -96,7 +102,7 @@ The model may use a template or supply up to 32 bounded boxes for any device or 
 
 **Open Mac hardware** starts a separate local consent/review flow. A read-only observation does not create a 3D object or a connection by itself. Choose an existing record or **Add as a separate new device**, select a template if adding, review and confirm. A new item uses a collision-checked free position; macOS does not measure its real desk position or shape. Existing names, model, placement, connections and user reports are preserved when linking.
 
-A display can be **OS detected** and **User reports an issue** at the same time. **Detection stopped**, **Status unavailable** and **Match again** do not mean physical removal. A successful missing persistent identity can be **Not detected**. OS USB hierarchy is shown only with its source, separate from recorded cables. Bluetooth live detection is unavailable; manual Bluetooth records remain editable and visible.
+A display can be **OS detected** and **User reports an issue** at the same time. **Detection stopped**, **Status unavailable** and **Match again** do not mean physical removal. A successful scan can report **Not detected** only for a previously approved persistent identity that remains unambiguous. OS USB hierarchy is shown only with its source, separate from recorded cables. Bluetooth live detection is unavailable; manual Bluetooth records remain editable and visible.
 
 The Mac native source, exact build/run procedure and physical-hardware test checklist are in [MACOS_HARDWARE.md](MACOS_HARDWARE.md). Linux fixture tests do not establish that path has run successfully on a Mac.
 
@@ -140,4 +146,4 @@ Units are scene coordinates, not measured meters or centimeters. The default des
 - Photos still need user correction for perspective, scale, occlusion and identity. The fitting search may reject a crowded proposal rather than overwrite retained objects or accept intersections.
 - Live Meta authentication, structured-output compatibility and visual inference quality are unverified. All automated photo tests use mocks. Canceling the browser request cannot retract a photo already sent or guarantee upstream cancellation.
 
-See [Validation](VALIDATION.md) for the actual test record.
+See [initial validation](VALIDATION.md) for the original test record and [PR #4 review fixes](PR4_REVIEW_FIXES.md) for the subsequent reproductions and verification.
