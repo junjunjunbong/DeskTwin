@@ -398,6 +398,7 @@ test('monitor template parts can be extended, rotated, undone and reloaded witho
   await page.getByRole('button', { name: 'Add box', exact: true }).click();
   await expect.poll(async () => (await saved(page)).devices[0].parts?.length).toBe(5);
   await expect(page.getByLabel('Shape part', { exact: true })).toHaveValue('4');
+  const beforePartEdits = (await saved(page)).history.length;
   for (const [label, value] of [
     ['Box 5 size x', '0.42'],
     ['Box 5 position y', '1.8'],
@@ -409,6 +410,12 @@ test('monitor template parts can be extended, rotated, undone and reloaded witho
   }
   await expect.poll(async () => (await saved(page)).devices[0].parts?.[4].rotation?.z).toBe(30);
   const modified = await saved(page);
+  expect(modified.devices[0].parts?.[4]).toMatchObject({
+    size: { x: 0.42, y: 0.6, z: 0.6 },
+    position: { x: 0.7, y: 1.8, z: 0 },
+    rotation: { z: 30 },
+  });
+  expect(modified.history).toHaveLength(beforePartEdits + 4);
   expect(modified.devices[0]).toMatchObject({
     source: 'user-reported',
     status: 'reported-working',
