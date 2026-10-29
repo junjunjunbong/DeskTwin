@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { modelWorkspace } from '../src/domain/workspacePrivacy';
 import {
   AssistantResponseSchema,
   type AssistantResponse,
@@ -122,10 +123,11 @@ export async function callMeta(
   workspace: Workspace,
   input: { message: string; history?: History; image?: string },
 ): Promise<AssistantResponse> {
+  const sharedWorkspace = modelWorkspace(workspace);
   // Do not send change history or unrelated UI preferences to the model.
   const context = {
-    devices: workspace.devices.map(modelContextItem),
-    connections: workspace.connections,
+    devices: sharedWorkspace.devices.map(modelContextItem),
+    connections: sharedWorkspace.connections,
   };
   const messages: unknown[] = [{ role: 'developer', content: instructions }];
   if (input.history) messages.push(...input.history);
@@ -148,7 +150,7 @@ export async function callMeta(
   const parsed = await requestMeta(
     config,
     { messages, name: 'desktwin_response', schema: responseSchema, maxTokens: 4096 },
-    (raw) => validateModelReply(raw, workspace, !!input.image),
+    (raw) => validateModelReply(raw, sharedWorkspace, !!input.image),
   );
   return { ...parsed, mode: 'meta' };
 }
@@ -186,10 +188,11 @@ export async function callMetaScene(
   workspace: Workspace,
   input: { image: string; context?: string },
 ): Promise<SceneProposal & { mode: 'meta' }> {
+  const sharedWorkspace = modelWorkspace(workspace);
   const context = {
-    devices: workspace.devices.map(modelContextItem),
-    connections: workspace.connections,
-    objects: workspace.objects.map(modelContextItem),
+    devices: sharedWorkspace.devices.map(modelContextItem),
+    connections: sharedWorkspace.connections,
+    objects: sharedWorkspace.objects.map(modelContextItem),
   };
   const messages: unknown[] = [
     { role: 'developer', content: sceneInstructions },
@@ -215,7 +218,7 @@ export async function callMetaScene(
   const parsed = await requestMeta(
     config,
     { messages, name: 'desktwin_scene', schema: sceneResponseSchema, maxTokens: 12000 },
-    (raw) => validateSceneReply(raw, workspace),
+    (raw) => validateSceneReply(raw, sharedWorkspace),
   );
   return { ...parsed, mode: 'meta' };
 }

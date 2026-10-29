@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { findFreePlacement, resolveSpatialEdit, snapToSurface } from './spatial';
+import { HardwareBindingSchema, type HardwareBinding } from './hardware';
 
 export const DeviceKindSchema = z.enum([
   'laptop',
@@ -11,7 +12,7 @@ export const DeviceKindSchema = z.enum([
   'mouse',
   'desktop',
 ]);
-export const SourceSchema = z.enum(['demo', 'user-reported', 'photo-inferred']);
+export const SourceSchema = z.enum(['demo', 'user-reported', 'photo-inferred', 'os-detected']);
 export const StatusSchema = z.enum(['unknown', 'reported-working', 'reported-issue']);
 export const ConnectorSchema = z.enum([
   'USB-C',
@@ -139,6 +140,10 @@ export const DeviceSchema = z
     source: SourceSchema,
     status: StatusSchema,
     statusNote: z.string().max(300),
+    // Approved local associations only; live snapshots and serials are never persisted.
+    hardwareBinding: HardwareBindingSchema.optional(),
+    // Retain privacy provenance even after a rename or unbinding. Model context omits these records.
+    hardwareOrigin: z.literal('macos').optional(),
     parts: z.array(BoxPartSchema).max(128).optional(),
     shapeMode: ShapeModeSchema.optional(),
     attachment: AttachmentSchema.nullable().optional(),
@@ -185,6 +190,16 @@ export const WorkspaceSchema = z
   })
   .superRefine((workspace, ctx) => {
     const ids = workspace.devices.map((d) => d.id);
+    const hardwareKeys = workspace.devices.flatMap((device) =>
+      device.hardwareBinding
+        ? [JSON.stringify([device.hardwareBinding.category, device.hardwareBinding.identity])]
+        : [],
+    );
+    if (new Set(hardwareKeys).size !== hardwareKeys.length)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'An OS observation can be linked to only one device.',
+      });
     if (new Set(ids).size !== ids.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate device IDs' });
     const sceneIds = [...ids, ...workspace.objects.map((o) => o.id)];
@@ -236,6 +251,7 @@ export const sourceLabels: Record<Source, string> = {
   demo: 'Example data',
   'user-reported': 'User-reported',
   'photo-inferred': 'Photo-inferred',
+  'os-detected': 'OS-detected record',
 };
 export const statusLabels: Record<Device['status'], string> = {
   unknown: 'Status unknown',
@@ -436,6 +452,8 @@ export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
 
 export type WorkspaceCommand =
   | { type: 'add-device'; device: z.input<typeof DeviceSchema> }
+  | { type: 'bind-hardware'; id: string; binding: HardwareBinding }
+  | { type: 'unbind-hardware'; id: string }
   | { type: 'update-device'; id: string; patch: DevicePatch }
   | { type: 'add-object'; object: SceneObject }
   | { type: 'update-object'; id: string; patch: SceneObjectPatch }
@@ -466,6 +484,20 @@ export function applyCommand(
   let next = structuredClone(current);
   let summary = '';
   switch (command.type) {
+    case 'bind-hardware': {
+      const device = next.devices.find((item) => item.id === command.id);
+      if (!device) throw new Error('Device not found. Review the latest workspace.');
+      device.hardwareBinding = HardwareBindingSchema.parse(command.binding);
+      summary = 'Approved a local OS observation match';
+      break;
+    }
+    case 'unbind-hardware': {
+      const device = next.devices.find((item) => item.id === command.id);
+      if (!device) throw new Error('Device not found. Review the latest workspace.');
+      delete device.hardwareBinding;
+      summary = 'Removed a local OS observation match';
+      break;
+    }
     case 'add-device':
       next.devices.push(
         DeviceSchema.parse({
@@ -482,6 +514,11 @@ export function applyCommand(
       next.devices[index] = DeviceSchema.parse({
         ...previous,
         ...command.patch,
+        hardwareOrigin:
+          previous.hardwareOrigin ??
+          (previous.source === 'os-detected' || previous.visual.source === 'os-detected'
+            ? 'macos'
+            : command.patch.hardwareOrigin),
         placement: command.patch.placement
           ? { ...previous.placement, ...command.patch.placement }
           : previous.placement,
@@ -848,5 +885,9 @@ export function parseWorkspace(value: unknown): Workspace {
       objects,
     });
   }
-  return WorkspaceSchema.parse(value);
+  const workspace = WorkspaceSchema.parse(value);
+  for (const device of workspace.devices)
+    if (device.source === 'os-detected' || device.visual.source === 'os-detected')
+      device.hardwareOrigin = 'macos';
+  return workspace;
 }

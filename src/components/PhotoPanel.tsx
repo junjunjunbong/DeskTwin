@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, X, Sparkle, Plus, Check } from '@phosphor-icons/react';
+import { modelWorkspace } from '../domain/workspacePrivacy';
 import { type Workspace } from '../domain/workspace';
 import {
   SceneProposalSchema,
@@ -102,7 +103,12 @@ export function PhotoPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ image: photo, consent: true, workspace: base, context }),
+        body: JSON.stringify({
+          image: photo,
+          consent: true,
+          workspace: modelWorkspace(base),
+          context,
+        }),
       });
       const data = await res.json();
       if (token !== version.current) return;

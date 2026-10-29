@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { modelWorkspace } from './workspacePrivacy';
 import { demoReply } from './demoAssistant';
 import { AssistantResponseSchema, type Proposal, type Workspace } from './workspace';
 export type ChatMessage = {
@@ -50,11 +51,13 @@ export function useAssistant(workspace: Workspace) {
     setPending(true);
     // Previous proposals are not state. The latest workspace is always included separately.
     const history = messages
+      // Local-demo replies can mention hardware-derived labels. They were never approved for transfer.
+      .filter((entry) => entry.mode === 'meta')
       .slice(-12)
       .map((m) => ({ role: m.role, content: m.content.slice(0, 6000) }));
     setMessages((items) => [
       ...items.slice(-79),
-      { id: crypto.randomUUID(), role: 'user', content: message, proposals: [] },
+      { id: crypto.randomUUID(), role: 'user', content: message, proposals: [], mode },
     ]);
     try {
       let reply;
@@ -63,7 +66,12 @@ export function useAssistant(workspace: Workspace) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: AbortSignal.timeout(40000),
-          body: JSON.stringify({ message, workspace, history, consent: true }),
+          body: JSON.stringify({
+            message,
+            workspace: modelWorkspace(workspace),
+            history,
+            consent: true,
+          }),
         });
         const raw = await response.json();
         if (!response.ok)

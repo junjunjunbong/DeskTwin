@@ -180,6 +180,76 @@ describe('local API and Meta boundary', () => {
     const url = await app({ apiKey: 'test-key', fetchImpl });
     expect((await post(url, '/api/chat', request())).status).toBe(502);
   });
+  it('keeps OS-derived records and local identities out of chat and photo provider payloads', async () => {
+    const workspace = createDemoWorkspace();
+    workspace.devices[2].name = 'PRIVATE OS MONITOR';
+    workspace.devices[2].model = 'PRIVATE OS MODEL';
+    workspace.devices[2].source = 'os-detected';
+    workspace.devices[2].hardwareOrigin = 'macos';
+    const binding = {
+      category: 'display' as const,
+      identity: {
+        key: 'private_local_identity',
+        stability: 'persistent' as const,
+        scope: 'installation_private_scope',
+      },
+      approvedAt: new Date().toISOString(),
+    };
+    workspace.devices[2].hardwareBinding = binding;
+    workspace.devices[1].hardwareBinding = {
+      ...binding,
+      identity: { ...binding.identity, key: 'manual_linked_identity' },
+    };
+    workspace.history.push({
+      id: 'private-history',
+      at: new Date().toISOString(),
+      summary: 'Updated PRIVATE OS MONITOR',
+      source: 'user-reported',
+    });
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(upstream(validReply))
+      .mockResolvedValueOnce(upstream(sceneReply()));
+    const url = await app({ apiKey: 'test-only-key', fetchImpl });
+    expect((await post(url, '/api/chat', { ...request(), workspace })).status).toBe(200);
+    expect((await post(url, '/api/photo', { ...photoRequest(), workspace })).status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, options] of fetchImpl.mock.calls) {
+      const body = String(options?.body);
+      expect(body).toContain('Left monitor');
+      for (const privateValue of [
+        'PRIVATE OS',
+        'private_local_identity',
+        'manual_linked_identity',
+        'installation_private_scope',
+        'hardwareBinding',
+        'hardwareOrigin',
+        'monitor-right',
+      ])
+        expect(body).not.toContain(privateValue);
+    }
+    expect(workspace.devices[2].hardwareBinding).toEqual(binding);
+  });
+  it('rejects a model proposal referencing a local-only hardware record omitted from its context', async () => {
+    const input = request();
+    input.workspace.devices[2].source = 'os-detected';
+    input.workspace.devices[2].hardwareOrigin = 'macos';
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      upstream({
+        message: 'Rename the display?',
+        proposals: [
+          {
+            type: 'rename-device',
+            deviceId: 'monitor-right',
+            name: 'Invented shared device',
+            reason: 'A guessed reference',
+          },
+        ],
+      }),
+    );
+    const url = await app({ apiKey: 'test-only-key', fetchImpl });
+    expect((await post(url, '/api/chat', input)).status).toBe(502);
+  });
   it('hides arbitrary provider error bodies', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
