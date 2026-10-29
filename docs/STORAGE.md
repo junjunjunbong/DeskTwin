@@ -2,9 +2,15 @@
 
 ## Save format and compatibility
 
-DeskTwin continues to use the localStorage key `desktwin.workspace.v1`. The value is a plain workspace JSON document, not a new storage envelope. JSON import and export use that same document format.
+DeskTwin continues to use the localStorage key `desktwin.workspace.v1`. The value is a plain workspace JSON document, not a new storage envelope. JSON import and export use that same document format, with installation-specific hardware bindings removed.
 
-The current document has `schemaVersion: 2`. Attachment and custom-shape fields are optional so existing v2 saves remain readable. Existing v1 files are parsed using their original permissive object-key behavior, then migrated in memory: devices keep their IDs, identity, reported state, connections, history, and appearance; visual defaults and editable example furniture are added. Generated example furniture IDs are made unique if a legacy device already uses one of those IDs. Migration does not write storage on page load or on an explicit reload of the saved workspace.
+The current document has `schemaVersion: 2`. Attachment, custom-shape and hardware metadata fields are optional so existing v2 saves remain readable. Existing v1 files are parsed using their original permissive object-key behavior, then migrated in memory: devices keep their IDs, identity, reported state, connections, history, and appearance; visual defaults and editable example furniture are added. Generated example furniture IDs are made unique if a legacy device already uses one of those IDs. Migration does not write storage on page load or on an explicit reload of the saved workspace.
+
+Approved OS matching is an ordinary undoable workspace command. `hardwareBinding` contains the category, opaque identity/stability/scope and approval time; it changes only after review/confirmation. It does not replace a name, model, layout, connection or reported working/issue status. Live observations, active polling state and session tokens are not workspace data.
+
+`portableWorkspace()` removes every device's hardware binding on both JSON export and UI import. Approved labels/models and `hardwareOrigin: 'macos'` are retained. `parseWorkspace()` normalizes imported OS-source provenance; renaming a record or removing its binding does not erase that privacy provenance. A portable import cannot claim that an old installation's hardware match is currently present. The user explicitly matches again.
+
+`modelWorkspace()` applies a stricter projection than export: OS-derived records, incident links and stored history are excluded, as well as all bindings. Therefore a user-controlled export may contain approved device labels that are intentionally absent from automatic model context. See [Privacy](PRIVACY.md).
 
 A successful editing action saves the current document. New custom shapes and attachments require this version of DeskTwin; older builds are not guaranteed to understand newer optional fields even though the document remains v2. Keep an exported original if opening it in an older build is necessary.
 
@@ -38,9 +44,15 @@ Undo/Redo retain up to 20 snapshots in tab memory. They are separate from the pe
 
 Storage writes happen before the rendered workspace or history stacks change. A rejected command, quota error, or conflict leaves the last saved scene and Undo/Redo state unchanged. Unchanged command results do not write storage or create an Undo step.
 
-Async mutation methods return `Promise<boolean>`. The caller must await success before dismissing a dialog or reporting completion. Photo approval, JSON import, device creation, connection creation, and diagnostic result saving follow this rule. A failed photo save leaves the editable preview open. Failed device and connection saves retain the user's form entries for correction or retry. A failed diagnostic save does not claim that the reported result was saved.
+Async mutation methods return `Promise<boolean>`. The caller must await success before dismissing a dialog or reporting completion. Photo approval, JSON import, device creation, connection creation, OS-match approval/removal, and diagnostic result saving follow this rule. A failed photo save leaves the editable preview open. Failed device and connection saves retain the user's form entries for correction or retry. A failed diagnostic save does not claim that the reported result was saved.
 
 Photo previews remain in memory and require explicit approval. Their saved baseline and cross-tab conflict state are checked again on approval. Photo bytes are never added to the saved workspace. Selecting a photo or editing an unsaved preview does not transmit it; photo transfer retains its separate consent flow.
+
+## Mode switches and async test assertions
+
+View/Edit, connection visibility and mobile panel expansion do not write the workspace. The selected inspector remains mounted across View/Edit changes, preserving its name/model and incomplete numeric drafts. A form already saving keeps its pending state across a mode switch. Normal Enter/blur or explicit Save behavior still controls commits.
+
+Browser tests must wait for a saved field or a success indicator that appears after the transaction. A completed Playwright click does not mean that the Web Lock callback has run. The unchanged baseline test read seven devices immediately after Undo, while the later failure snapshot already showed eight. Exact polling for the expected saved value resolves that race without changing the expected result or bypassing the lock. See [Baseline investigation](BASELINE_REGRESSIONS.md).
 
 ## Text and decimal inputs
 
@@ -62,6 +74,8 @@ Range controls likewise retain a local draft while saves are pending, including 
 - A prepared replacement queued behind a same-tab edit.
 - Device and connection dialogs retaining entered values on failed writes.
 - Diagnostic result feedback reporting success only after a successful save.
+
+`tests/hardware.spec.ts` exercises explicit OS match approval, duplicate prevention, Undo/Redo, portable export, reconnect review and stale-tab rejection with fixture observations. `tests/workspace-modes.spec.ts` covers preserved drafts and a save held behind a real Web Lock during a mode switch. These browser fixtures do not validate native Mac APIs.
 
 `tests/inputs.spec.ts` checks normal typing with spaces, intermediate decimal text, validation, Escape, exactly one history step per commit, a second commit while the first waits for a lock, and persistence after reload.
 

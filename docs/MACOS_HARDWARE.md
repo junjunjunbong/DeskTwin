@@ -9,7 +9,10 @@ DeskTwin can read actual display and USB metadata from the Mac running its local
 Requirements: macOS 12 or later, Node.js 22.12 or later, and Apple Xcode Command Line Tools. The helper is built for the architecture of the current Mac. Build it again when moving the checkout to another architecture.
 
 ```bash
-# In your authenticated checkout of DeskTwin's PR branch:
+# Use a separate folder to keep any existing checkout untouched:
+git clone --branch feat/hackathon-macos-inspector-20261029 \
+  https://github.com/junjunjunbong/DeskTwin.git DeskTwin-hackathon
+cd DeskTwin-hackathon
 npm ci
 
 # If Apple Command Line Tools are not already installed, run this yourself:
@@ -22,7 +25,7 @@ npm run hardware:build
 MODEL_API_KEY='' npm run dev
 ```
 
-Open **http://127.0.0.1:5173** on that Mac. Open the hardware detection panel, read the notice describing which metadata is read locally, check its consent control, and select **Start detection**. The native helper is not started until this action. Use **Stop detection** to stop this tab's session. Detection in another tab has a separate consent session.
+Open **http://127.0.0.1:5173** on that Mac. Select **Open Mac hardware** to open the **Mac hardware** panel, read the notice describing which metadata is read locally, check its consent control, and select **Start detection**. The native helper is not started until this action. Use **Stop detection** to stop this tab's session. Detection in another tab has a separate consent session.
 
 If the usual ports are occupied, use a separate pair without stopping another checkout:
 
@@ -109,7 +112,7 @@ The ignored `local-data/hardware-identity.key` is a random 32-byte local key cre
 6. Remove/reconnect the USB peripheral, then change ports. Test a device with no unique serial, if available: after an observed removal the UI must ask for a new match, not silently reuse a name. Test two same-name peripherals to ensure explicit separate choices and no auto merge.
 7. Select an observation and cancel the mapping confirmation. The saved workspace must remain unchanged. Approve a match to an existing object and verify its name, position, reported issue and recorded connections are preserved. Add another as a new device and verify user-reported status remains unknown.
 8. Stop detection. Previously observed devices must become stopped/unknown, not physically disconnected. Start again. Stop the local API server and verify the UI reports unavailable, then restart the server and require a fresh session.
-9. To check a permission failure without changing system privacy settings, stop detection, temporarily remove the helper executable's execute permission, start detection and confirm unavailable (never “not detected”), then restore permission and retry. Real macOS registry permission denial still needs validation on a Mac configured to deny it; tests exercise this response with fixtures.
+9. To check a permission failure without changing system privacy settings, stop detection, temporarily remove the helper executable's execute permission, start detection and confirm unavailable (never “not detected”), then restore permission, select **Check bridge availability** and **Start detection** again. Real macOS registry permission denial still needs validation on a Mac configured to deny it; tests exercise this response with fixtures.
 10. Test two tabs with independently enabled detection. Stop one tab; the other should continue. Let a tab stop polling for more than 20 seconds (e.g. suspend its JavaScript); it must return stopped and require Start rather than silently resume.
 11. Confirm work remains local using the browser Network panel. Only same-origin `/api/hardware/*` calls should occur. Export JSON and verify no `hardwareBinding`, raw serial, hardware token or live snapshot. Confirm linking/removing a match participates in normal Undo/Redo and stale-tab save protection.
 12. Report these results separately from automated fixture tests. Do not label native detection validated until steps 1–8 have run on actual hardware; record any denied/unavailable APIs exactly as observed.
