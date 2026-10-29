@@ -136,6 +136,54 @@ test('the mobile details area collapses to give the canvas room without changing
   await page.screenshot({ path: 'test-results/workspace-edit-mobile.png' });
 });
 
+test('storage notices stay inside the details area and remain reachable on mobile', async ({
+  page,
+  context,
+}, testInfo) => {
+  const initial = await seed(page);
+  const second = await context.newPage();
+  await second.goto('/');
+  const latest = { ...initial, name: 'Updated in another tab' };
+  await second.evaluate(({ name, value }) => localStorage.setItem(name, JSON.stringify(value)), {
+    name: key,
+    value: latest,
+  });
+  const dock = page.getByRole('region', { name: 'Workspace details', exact: true });
+  const notices = dock.getByRole('region', { name: 'Workspace notices', exact: true });
+  const conflict = notices.getByRole('alert', { name: 'Storage conflict', exact: true });
+  await expect(conflict).toBeVisible();
+  const canvas = (await page.getByTestId('desk-canvas').boundingBox())!;
+  const noticeBox = (await notices.boundingBox())!;
+  expect(noticeBox.x).toBeGreaterThanOrEqual(canvas.x + canvas.width);
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath('storage-notice-desktop.png') });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const toggle = dock.locator('.detail-dock-toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toContainText('Saved workspace changed · Expand to resolve');
+  await expect(notices).not.toBeVisible();
+  const collapsedCanvas = (await page.getByTestId('desk-canvas').boundingBox())!;
+  expect(collapsedCanvas.height).toBeGreaterThan(300);
+  await page.screenshot({ path: testInfo.outputPath('storage-notice-mobile-collapsed.png') });
+  await toggle.click();
+  await expect(conflict).toBeVisible();
+  const reload = conflict.getByRole('button', { name: 'Load latest saved workspace' });
+  await reload.scrollIntoViewIfNeeded();
+  const expandedCanvas = (await page.getByTestId('desk-canvas').boundingBox())!;
+  const mobileNoticeBox = (await notices.boundingBox())!;
+  expect(expandedCanvas.height).toBeGreaterThan(180);
+  expect(mobileNoticeBox.y).toBeGreaterThanOrEqual(expandedCanvas.y + expandedCanvas.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('storage-notice-mobile-expanded.png') });
+  await reload.click();
+  await expect(conflict).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: latest.name, exact: true })).toBeVisible();
+  await expect(notices.getByRole('status')).toContainText('Loaded the latest saved workspace');
+  expect(await saved(page)).toEqual(latest);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
 test('a save click waits for the storage transaction and remains pending across a mode switch', async ({
   page,
 }) => {

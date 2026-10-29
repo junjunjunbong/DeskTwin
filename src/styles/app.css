@@ -1141,18 +1141,11 @@ hr {
   margin-left: 15px;
 }
 .toast {
-  position: fixed;
-  bottom: 126px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
-  max-width: min(620px, 90vw);
   display: flex;
   align-items: center;
   gap: 10px;
   background: #fff;
   border: 1px solid #e3e9ee;
-  box-shadow: 0 8px 36px #34465e29;
   border-radius: 11px;
   padding: 12px 14px;
   font-size: 12px;
@@ -1162,6 +1155,13 @@ hr {
 .toast > svg {
   flex-shrink: 0;
   color: #a9986f;
+}
+.toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.toast .icon-button {
+  flex-shrink: 0;
 }
 .form-error {
   font-size: 11px;
@@ -1462,7 +1462,6 @@ hr {
     font-size: 9px;
   }
   .toast {
-    bottom: 110px;
     font-size: 11px;
     padding: 10px;
   }
@@ -1795,18 +1794,11 @@ hr {
   flex: 1 1 130px;
 }
 .storage-conflict {
-  position: fixed;
-  z-index: 110;
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(560px, calc(100vw - 32px));
-  padding: 18px;
+  padding: 14px;
   border: 1px solid #d3b36c;
   border-radius: 16px;
   background: #fff8e8;
   color: #493d25;
-  box-shadow: 0 12px 40px #29221922;
 }
 .storage-conflict p {
   font-size: 13px;
@@ -2017,7 +2009,8 @@ hr {
   position: static;
   inset: auto;
   width: 100%;
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   max-height: none;
   border: 0;
   border-radius: 0;
@@ -2031,6 +2024,28 @@ hr {
 }
 .detail-dock .panel-scroll {
   flex: 1;
+}
+.workspace-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.workspace-notices > * {
+  flex: 0 0 auto;
+}
+.detail-dock-content > .workspace-notices {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 50%;
+  border-top: 1px solid #e3e8ec;
+}
+.modal > .workspace-notices {
+  padding: 0;
+  margin-bottom: 18px;
 }
 .detail-dock-toggle {
   display: none;
@@ -2321,6 +2336,9 @@ hr {
     font-size: 9px;
     color: #839591;
     margin-top: 4px;
+  }
+  .detail-dock-toggle.has-notice small {
+    color: #8b642c;
   }
   .detail-dock-toggle svg {
     flex-shrink: 0;

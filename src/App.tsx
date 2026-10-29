@@ -156,6 +156,63 @@ export default function App() {
     document.addEventListener('keydown', keyboard);
     return () => document.removeEventListener('keydown', keyboard);
   });
+  const noticeMessage = store.error || toast;
+  const hasNotice = Boolean(store.conflict || noticeMessage);
+  const notices = hasNotice && (
+    <div className="workspace-notices" role="region" aria-label="Workspace notices">
+      {store.conflict && (
+        <section className="storage-conflict" role="alert" aria-label="Storage conflict">
+          <strong>This workspace changed in another tab.</strong>
+          <p>
+            Your view is preserved. Export it if needed, then load the latest saved workspace before
+            making more changes.
+          </p>
+          <div className="placement-actions">
+            <button
+              className="button secondary"
+              onClick={() =>
+                downloadFile(
+                  'desktwin-local-copy.json',
+                  JSON.stringify(portableWorkspace(store.workspace), null, 2),
+                )
+              }
+            >
+              Export this tab's copy
+            </button>
+            <button
+              className="button primary"
+              disabled={store.saving}
+              onClick={async () => {
+                if (await store.reloadLatest()) {
+                  setSelected(null);
+                  setToast(
+                    'Loaded the latest saved workspace. Undo history was reset for this tab.',
+                  );
+                }
+              }}
+            >
+              Load latest saved workspace
+            </button>
+          </div>
+        </section>
+      )}
+      {noticeMessage && (
+        <div className="toast" role="status">
+          <WarningCircle size={18} />
+          <span>{noticeMessage}</span>
+          {!store.error && (
+            <button
+              className="icon-button small"
+              aria-label="Dismiss notification"
+              onClick={() => setToast('')}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -450,7 +507,7 @@ export default function App() {
         </main>
         <section className="detail-dock" aria-label="Workspace details">
           <button
-            className="detail-dock-toggle"
+            className={`detail-dock-toggle ${hasNotice ? 'has-notice' : ''}`}
             aria-expanded={detailsExpanded}
             aria-controls="workspace-details"
             onClick={() => setDetailsExpanded((expanded) => !expanded)}
@@ -464,7 +521,11 @@ export default function App() {
               <small>
                 {detailsExpanded
                   ? 'Collapse to make more room for your desk'
-                  : 'Expand details and controls'}
+                  : store.conflict
+                    ? 'Saved workspace changed · Expand to resolve'
+                    : hasNotice
+                      ? 'New notice · Expand to read'
+                      : 'Expand details and controls'}
               </small>
             </span>
             {detailsExpanded ? <CaretDown size={18} /> : <CaretUp size={18} />}
@@ -708,6 +769,7 @@ export default function App() {
                 }
               />
             )}
+            {panel !== 'settings' && notices}
           </div>
         </section>
       </div>
@@ -769,6 +831,7 @@ export default function App() {
       )}
       {panel === 'settings' && (
         <Modal title="Workspace settings" onClose={() => setPanel(null)}>
+          {notices}
           <label>
             Workspace name
             <CommitTextInput
@@ -932,57 +995,6 @@ export default function App() {
             </button>
           )}
         </Modal>
-      )}
-
-      {store.conflict && (
-        <section className="storage-conflict" role="alert" aria-label="Storage conflict">
-          <strong>This workspace changed in another tab.</strong>
-          <p>
-            Your view is preserved. Export it if needed, then load the latest saved workspace before
-            making more changes.
-          </p>
-          <div className="placement-actions">
-            <button
-              className="button secondary"
-              onClick={() =>
-                downloadFile(
-                  'desktwin-local-copy.json',
-                  JSON.stringify(portableWorkspace(store.workspace), null, 2),
-                )
-              }
-            >
-              Export this tab's copy
-            </button>
-            <button
-              className="button primary"
-              disabled={store.saving}
-              onClick={async () => {
-                if (await store.reloadLatest()) {
-                  setSelected(null);
-                  setToast(
-                    'Loaded the latest saved workspace. Undo history was reset for this tab.',
-                  );
-                }
-              }}
-            >
-              Load latest saved workspace
-            </button>
-          </div>
-        </section>
-      )}
-
-      {(toast || store.error) && (
-        <div className="toast" role="status">
-          <WarningCircle size={18} />
-          <span>{toast || store.error}</span>
-          <button
-            className="icon-button small"
-            aria-label="Dismiss notification"
-            onClick={() => setToast('')}
-          >
-            <X size={16} />
-          </button>
-        </div>
       )}
     </div>
   );
