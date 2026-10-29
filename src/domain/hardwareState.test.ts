@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   stoppedHardwareSnapshot,
+  HardwareSnapshotSchema,
   type HardwareBinding,
   type HardwareDevice,
   type HardwareSnapshot,
@@ -136,6 +137,44 @@ describe('OS presence is independent from operating reports', () => {
     expect(hardwarePresence(linked(), otherInstallation).state).toBe('match-again');
   });
 
+  it('treats a quarantined persistent match as ambiguous even with an empty successful scan or stale matching row', () => {
+    const current = snapshot();
+    current.ambiguousIdentities = [{ category: 'display', key: observation().identity.key }];
+    for (const devices of [[observation()], []]) {
+      current.devices = devices;
+      const presence = hardwarePresence(linked(), current);
+      expect(presence.state).toBe('match-again');
+      expect(presence.label).toBe('Match again');
+      expect(presence.explanation).toContain('ambiguous');
+      expect(presence.observation).toBeUndefined();
+    }
+    const unrelated = observation({
+      identity: { ...observation().identity, key: 'unrelated_identity' },
+    });
+    expect(hardwarePresence(linked(unrelated), current).state).toBe('not-detected');
+    current.ambiguousIdentities = [{ category: 'usb', key: observation().identity.key }];
+    expect(hardwarePresence(linked(), current).state).toBe('not-detected');
+  });
+
+  it('does not use ambiguity as evidence of detection during stopped, failed or denied checks', () => {
+    const current = snapshot([]);
+    current.ambiguousIdentities = [{ category: 'display', key: observation().identity.key }];
+    current.state = 'stopped';
+    expect(hardwarePresence(linked(), current).state).toBe('stopped');
+    current.state = 'unavailable';
+    expect(hardwarePresence(linked(), current).state).toBe('unavailable');
+    current.state = 'running';
+    current.categories.display.state = 'permission-denied';
+    expect(hardwarePresence(linked(), current).state).toBe('unavailable');
+  });
+
+  it('continues to parse older snapshots without ambiguity evidence', () => {
+    const { ambiguousIdentities: _omitted, ...legacy } = snapshot();
+    const parsed = HardwareSnapshotSchema.parse(legacy);
+    expect(hardwarePresence(linked(), parsed).state).toBe('detected');
+    expect(hardwarePresence(linked(), { ...parsed, devices: [] }).state).toBe('not-detected');
+  });
+
   it('requires a new explicit match for a serial-less reconnection despite the same name', () => {
     const first = observation({
       identity: { key: 'temporary_first', scope: sessionId, stability: 'session' },
@@ -168,6 +207,32 @@ describe('OS presence is independent from operating reports', () => {
 });
 
 describe('explicit hardware matching preserves existing desk evidence', () => {
+  it('rejects stale persistent review after ambiguity and accepts only an explicitly selected session observation', () => {
+    const base = createDemoWorkspace();
+    base.devices[2].hardwareBinding = binding();
+    const before = structuredClone(base);
+    const current = snapshot();
+    current.ambiguousIdentities = [{ category: 'display', key: observation().identity.key }];
+    expect(() =>
+      hardwareMatchCommand(base, current, observation(), { existingId: 'monitor-right' }),
+    ).toThrow('no longer current');
+    const uncertain = observation({
+      id: 'new_session_observation',
+      identity: { key: 'new_session_identity', stability: 'session', scope: sessionId },
+    });
+    current.devices = [uncertain];
+    const command = hardwareMatchCommand(base, current, uncertain, { existingId: 'monitor-right' });
+    expect(base).toEqual(before);
+    const saved = applyCommand(base, command);
+    expect(saved.devices[2].hardwareBinding?.identity).toEqual(uncertain.identity);
+    expect(hardwarePresence(saved.devices[2], current).state).toBe('detected');
+    expect(saved.devices[2].status).toBe(before.devices[2].status);
+    expect(saved.devices[2].statusNote).toBe(before.devices[2].statusNote);
+    expect(saved.connections).toEqual(before.connections);
+    expect(saved.objects).toEqual(before.objects);
+    expect(JSON.stringify(portableWorkspace(saved))).not.toContain('new_session_identity');
+    expect(JSON.stringify(modelWorkspace(saved))).not.toContain('new_session_identity');
+  });
   it('constructs a proposal without mutation and applies only the approved association', () => {
     const base = createDemoWorkspace();
     base.devices[2].status = 'reported-issue';

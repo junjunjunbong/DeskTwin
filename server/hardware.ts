@@ -1,11 +1,17 @@
 import { execFile } from 'node:child_process';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { HardwareDevice, HardwareSnapshot } from '../src/domain/hardware';
+import {
+  HardwareAmbiguousIdentitySchema,
+  MAX_AMBIGUOUS_HARDWARE_IDENTITIES,
+  type HardwareAmbiguousIdentity,
+  type HardwareDevice,
+  type HardwareSnapshot,
+} from '../src/domain/hardware';
 
 const categories = ['display', 'usb', 'bluetooth'] as const;
 const NativeCategorySchema = z.strictObject({
@@ -53,8 +59,118 @@ export class HardwareProbeError extends Error {
     super(message);
   }
 }
+
+/** Monotonic trust evidence. It never stores raw fingerprints, serials or names. */
+export interface HardwareIdentityQuarantine {
+  remember(
+    scope: string,
+    additions: readonly HardwareAmbiguousIdentity[],
+  ): Promise<HardwareAmbiguousIdentity[]>;
+}
+
+const IdentityScopeSchema = z.string().regex(/^[a-zA-Z0-9_-]{8,160}$/);
+const QuarantinedIdentitySchema = HardwareAmbiguousIdentitySchema.extend({
+  key: z.string().regex(/^hw_[a-f0-9]{64}$/),
+});
+const QuarantinedIdentitiesSchema = z
+  .array(QuarantinedIdentitySchema)
+  .max(MAX_AMBIGUOUS_HARDWARE_IDENTITIES);
+const identityKey = (entry: HardwareAmbiguousIdentity) => `${entry.category}:${entry.key}`;
+const publicIdentityKey = (category: string, fingerprint: string) =>
+  `hw_${createHash('sha256').update(`${category}:${fingerprint}`).digest('hex')}`;
+
+function quarantineFailure(): HardwareProbeError {
+  return new HardwareProbeError(
+    'unavailable',
+    'The local hardware identity trust history could not be safely read or saved. Device presence is unknown. Check local-data permissions.',
+  );
+}
+
+/** Safe default for dependency-injected probes: fixture scans never touch disk. */
+export function createMemoryIdentityQuarantine(): HardwareIdentityQuarantine {
+  const scopes = new Map<string, Map<string, HardwareAmbiguousIdentity>>();
+  return {
+    async remember(scope, additions) {
+      IdentityScopeSchema.parse(scope);
+      const known = new Map(scopes.get(scope));
+      for (const entry of QuarantinedIdentitiesSchema.parse(additions))
+        known.set(identityKey(entry), entry);
+      if (known.size > MAX_AMBIGUOUS_HARDWARE_IDENTITIES) throw quarantineFailure();
+      scopes.set(scope, known);
+      return structuredClone([...known.values()]);
+    },
+  };
+}
+
+/**
+ * One empty, exclusive marker per opaque identity: concurrent bridge instances
+ * cannot overwrite each other's evidence, and a partial write cannot lose it.
+ * The directory is fixed by trusted application code, never an HTTP input.
+ */
+export function createFileIdentityQuarantine(directory: string): HardwareIdentityQuarantine {
+  async function privateDirectory(path: string) {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    const stat = await lstat(path);
+    if (
+      !stat.isDirectory() ||
+      (stat.mode & 0o077) !== 0 ||
+      (process.getuid && stat.uid !== process.getuid())
+    )
+      throw quarantineFailure();
+  }
+  return {
+    async remember(scope, additions) {
+      try {
+        IdentityScopeSchema.parse(scope);
+        const entries = QuarantinedIdentitiesSchema.parse(additions);
+        await privateDirectory(directory);
+        const scopedDirectory = resolve(directory, scope);
+        await privateDirectory(scopedDirectory);
+        const readMarkers = async () => {
+          const files = await readdir(scopedDirectory, { withFileTypes: true });
+          if (files.length > MAX_AMBIGUOUS_HARDWARE_IDENTITIES) throw quarantineFailure();
+          const known: HardwareAmbiguousIdentity[] = [];
+          for (const file of files) {
+            const match = /^(display|usb|bluetooth)_(hw_[a-f0-9]{64})$/.exec(file.name);
+            if (!match || !file.isFile()) throw quarantineFailure();
+            const stat = await lstat(resolve(scopedDirectory, file.name));
+            if (
+              !stat.isFile() ||
+              stat.size !== 0 ||
+              (stat.mode & 0o077) !== 0 ||
+              (process.getuid && stat.uid !== process.getuid())
+            )
+              throw quarantineFailure();
+            known.push(QuarantinedIdentitySchema.parse({ category: match[1], key: match[2] }));
+          }
+          return known;
+        };
+        const known = new Map((await readMarkers()).map((entry) => [identityKey(entry), entry]));
+        for (const entry of entries) known.set(identityKey(entry), entry);
+        if (known.size > MAX_AMBIGUOUS_HARDWARE_IDENTITIES) throw quarantineFailure();
+        for (const entry of entries) {
+          try {
+            await writeFile(resolve(scopedDirectory, `${entry.category}_${entry.key}`), '', {
+              flag: 'wx',
+              mode: 0o600,
+            });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          }
+        }
+        // Re-read after appending, including identities written by another tab
+        // or bridge instance. Never prune entries merely because a device left.
+        return await readMarkers();
+      } catch {
+        throw quarantineFailure();
+      }
+    },
+  };
+}
+
 export interface HardwareProbe {
   platform: string;
+  quarantine?: HardwareIdentityQuarantine;
   availability(): Promise<{
     available: boolean;
     message: string;
@@ -95,6 +211,9 @@ export function createNativeProbe(): HardwareProbe {
   }
   return {
     platform: process.platform,
+    quarantine: createFileIdentityQuarantine(
+      resolve(repositoryRoot, 'local-data/hardware-identity-collisions'),
+    ),
     async availability() {
       if (process.platform !== 'darwin')
         return {
@@ -231,6 +350,7 @@ function emptySnapshot(
       ]),
     ) as HardwareSnapshot['categories'],
     devices: [],
+    ambiguousIdentities: [],
   };
 }
 
@@ -240,14 +360,63 @@ export class HardwareService {
   private readonly now: () => number;
   private readonly leaseMs: number;
   private readonly minPollMs: number;
+  private readonly quarantine: HardwareIdentityQuarantine;
+  private readonly ambiguousIdentities = new Map<string, Map<string, HardwareAmbiguousIdentity>>();
   private reads = 0;
   constructor(
     readonly probe: HardwareProbe = createNativeProbe(),
-    options: { now?: () => number; leaseMs?: number; minPollMs?: number } = {},
+    options: {
+      now?: () => number;
+      leaseMs?: number;
+      minPollMs?: number;
+      quarantine?: HardwareIdentityQuarantine;
+    } = {},
   ) {
     this.now = options.now ?? Date.now;
     this.leaseMs = options.leaseMs ?? 20000;
     this.minPollMs = options.minPollMs ?? 4000;
+    this.quarantine = options.quarantine ?? probe.quarantine ?? createMemoryIdentityQuarantine();
+  }
+  private async rememberAmbiguity(scope: string, additions: HardwareAmbiguousIdentity[]) {
+    const known =
+      this.ambiguousIdentities.get(scope) ?? new Map<string, HardwareAmbiguousIdentity>();
+    for (const entry of QuarantinedIdentitiesSchema.parse(additions))
+      known.set(identityKey(entry), entry);
+    this.ambiguousIdentities.set(scope, known);
+    // Learning that trust is invalid does not depend on successfully saving it.
+    // Retain this evidence and invalidate other caches even if persistence fails.
+    this.invalidateAmbiguousCaches(scope, known);
+    for (;;) {
+      if (known.size > MAX_AMBIGUOUS_HARDWARE_IDENTITIES) throw quarantineFailure();
+      const pending = [...known.values()];
+      const persisted = QuarantinedIdentitiesSchema.parse(
+        await this.quarantine.remember(scope, pending),
+      );
+      const persistedKeys = new Set(persisted.map(identityKey));
+      if (pending.some((entry) => !persistedKeys.has(identityKey(entry))))
+        throw quarantineFailure();
+      for (const entry of persisted) known.set(identityKey(entry), entry);
+      this.invalidateAmbiguousCaches(scope, known);
+      // A concurrent scan can add evidence during the await. Retry the complete
+      // union until it is persisted; recovery from a failed write must also save
+      // the earlier collision even when only one indistinguishable device remains.
+      if ([...known.keys()].every((key) => persistedKeys.has(key))) return;
+    }
+  }
+  private invalidateAmbiguousCaches(scope: string, known: Map<string, HardwareAmbiguousIdentity>) {
+    for (const session of this.sessions.values())
+      if (
+        session.snapshot.state === 'running' &&
+        session.snapshot.identityScope === scope &&
+        session.snapshot.devices.some(
+          (device) =>
+            device.identity.stability === 'persistent' &&
+            known.has(identityKey({ category: device.category, key: device.identity.key })),
+        )
+      )
+        // Do not let another tab's cache revive an identity whose uniqueness was
+        // disproved. Its next authorized poll must obtain session observations.
+        session.lastReadAt = -Infinity;
   }
   private expire() {
     for (const [token, session] of this.sessions) {
@@ -357,15 +526,34 @@ export class HardwareService {
   }
   private async read(session: Session): Promise<HardwareSnapshot> {
     if (session.pending) return session.pending;
-    if (this.now() - session.lastReadAt < this.minPollMs) return session.snapshot;
+    if (
+      this.now() - session.lastReadAt < this.minPollMs &&
+      (session.snapshot.state !== 'running' || !session.snapshot.identityScope)
+    )
+      return session.snapshot;
     const generation = session.generation;
     const previous = session.snapshot;
     const controller = new AbortController();
     session.controller = controller;
-    session.lastReadAt = this.now();
     session.pending = (async () => {
       let entered = false;
       try {
+        if (this.now() - session.lastReadAt < this.minPollMs && previous.identityScope) {
+          // Even a cached response reloads trust evidence. A second local bridge
+          // instance may have discovered a collision since this snapshot.
+          await this.rememberAmbiguity(previous.identityScope, []);
+          if (!session.enabled || generation !== session.generation) return session.snapshot;
+          if (this.now() - session.lastReadAt < this.minPollMs) {
+            session.snapshot = {
+              ...session.snapshot,
+              ambiguousIdentities: [
+                ...this.ambiguousIdentities.get(previous.identityScope)!.values(),
+              ],
+            };
+            return session.snapshot;
+          }
+        }
+        session.lastReadAt = this.now();
         const availability = await this.probe.availability();
         if (!session.enabled || generation !== session.generation) return session.snapshot;
         if (!availability.available)
@@ -388,9 +576,7 @@ export class HardwareService {
         // transient identity cache, even if its native result arrives late.
         if (!session.enabled || generation !== session.generation) return session.snapshot;
         const parsed = NativeSnapshotSchema.parse(raw);
-        z.string()
-          .regex(/^[a-zA-Z0-9_-]{8,160}$/)
-          .parse(scope);
+        IdentityScopeSchema.parse(scope);
         const nativeIds = parsed.devices.map((device) => `${device.category}:${device.id}`);
         if (new Set(nativeIds).size !== nativeIds.length)
           throw new Error('Duplicate native device IDs');
@@ -417,6 +603,7 @@ export class HardwareService {
             ]),
           ) as HardwareSnapshot['categories'],
           devices: [],
+          ambiguousIdentities: [],
         };
         const present = parsed.devices.filter(
           (device) => parsed.categories[device.category].state === 'ok',
@@ -427,6 +614,24 @@ export class HardwareService {
             const fingerprint = `${device.category}:${device.fingerprint}`;
             fingerprints.set(fingerprint, (fingerprints.get(fingerprint) ?? 0) + 1);
           }
+        const collisions = present.flatMap((device) =>
+          device.fingerprint &&
+          (fingerprints.get(`${device.category}:${device.fingerprint}`) ?? 0) > 1
+            ? [
+                {
+                  category: device.category,
+                  key: publicIdentityKey(device.category, device.fingerprint),
+                },
+              ]
+            : [],
+        );
+        await this.rememberAmbiguity(scope, collisions);
+        if (!session.enabled || generation !== session.generation) return session.snapshot;
+        // Another tab may have committed evidence between the awaited store
+        // result and this continuation. Use the latest shared union, not a copy
+        // captured by the earlier promise.
+        next.ambiguousIdentities = [...this.ambiguousIdentities.get(scope)!.values()];
+        const ambiguous = new Set(next.ambiguousIdentities.map(identityKey));
         // Session identities are discarded on a failed category too: a reconnect
         // during the unknown interval must be explicitly matched again.
         const retained = new Set(present.map((device) => `${device.category}:${device.id}`));
@@ -434,13 +639,16 @@ export class HardwareService {
           if (!retained.has(id)) session.transient.delete(id);
         const idMap = new Map<string, string>();
         next.devices = present.map((device) => {
-          const persistent =
-            device.fingerprint !== null &&
-            fingerprints.get(`${device.category}:${device.fingerprint}`) === 1;
+          const stableKey = device.fingerprint
+            ? publicIdentityKey(device.category, device.fingerprint)
+            : null;
+          const isAmbiguous =
+            stableKey !== null &&
+            ambiguous.has(identityKey({ category: device.category, key: stableKey }));
+          const persistent = stableKey !== null && !isAmbiguous;
           const nativeId = `${device.category}:${device.id}`;
           let key: string;
-          if (persistent)
-            key = `hw_${createHash('sha256').update(`${device.category}:${device.fingerprint}`).digest('hex')}`;
+          if (persistent) key = stableKey;
           else {
             key = session.transient.get(nativeId) ?? `hw_${randomBytes(32).toString('hex')}`;
             session.transient.set(nativeId, key);
@@ -459,7 +667,16 @@ export class HardwareService {
               stability: persistent ? 'persistent' : 'session',
               scope: persistent ? scope : session.sessionId,
             },
-            attributes: device.attributes,
+            attributes: isAmbiguous
+              ? [
+                  ...device.attributes,
+                  {
+                    label: 'Identity confidence',
+                    value:
+                      'Ambiguous identifier. Explicit matching is required again in each detection session.',
+                  },
+                ]
+              : device.attributes,
           } satisfies HardwareDevice;
         });
         for (let i = 0; i < present.length; i++) {
@@ -467,7 +684,10 @@ export class HardwareService {
           if (device.category === 'usb' && device.parentId && device.parentId !== device.id)
             next.devices[i].parentId = idMap.get(`usb:${device.parentId}`) ?? null;
         }
-        if (session.enabled && generation === session.generation) session.snapshot = next;
+        if (session.enabled && generation === session.generation) {
+          session.snapshot = next;
+          session.lastReadAt = this.now();
+        }
       } catch (error) {
         if (session.enabled && generation === session.generation) {
           const failure =

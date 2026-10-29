@@ -431,6 +431,77 @@ test('absence requires a successful category scan; denied, disconnected, and sto
   expect(bridge.calls.stop).toBe(1);
 });
 
+test('a duplicate identifier requires an explicit new match through 1→2→1 and empty successful scans', async ({
+  page,
+}) => {
+  const initial = approvedWorkspace();
+  const bridge = await setup(page, initial);
+  bridge.snapshot.devices = [firstDisplay];
+  await start(page);
+  let recognition = await selectDevice(page, 'monitor-right');
+  await expect(recognition.locator('.hardware-badge')).toHaveText('OS detected');
+
+  const uncertain = [1, 2].map((index) => {
+    const item = display(`hw_browser_ambiguous_${index}`);
+    item.identity = { key: item.id, stability: 'session', scope: sessionId };
+    item.attributes.push({
+      label: 'Identity confidence',
+      value: 'Ambiguous identifier. Explicit matching is required again in each detection session.',
+    });
+    return item;
+  });
+  bridge.snapshot.ambiguousIdentities = [{ category: 'display', key: firstDisplay.identity.key }];
+  bridge.snapshot.devices = uncertain;
+  await expect(recognition.locator('.hardware-badge')).toHaveText('Match again', {
+    timeout: 12_000,
+  });
+  await expect(recognition).toContainText('earlier match is ambiguous');
+  await expect(recognition.getByText('Not detected', { exact: true })).toHaveCount(0);
+  expect(await saved(page)).toEqual(initial);
+
+  // The other indistinguishable physical device remains. Its observation is
+  // still session-only; neither its name nor the count of one restores trust.
+  bridge.snapshot.devices = [uncertain[1]];
+  let panel = await openHardware(page);
+  await expect(rows(panel)).toHaveCount(1, { timeout: 12_000 });
+  recognition = await selectDevice(page, 'monitor-right');
+  await expect(recognition.locator('.hardware-badge')).toHaveText('Match again');
+  expect(await saved(page)).toEqual(initial);
+
+  bridge.snapshot.devices = [];
+  panel = await openHardware(page);
+  await expect(rows(panel)).toHaveCount(0, { timeout: 12_000 });
+  recognition = await selectDevice(page, 'monitor-right');
+  await expect(recognition.locator('.hardware-badge')).toHaveText('Match again');
+  await expect(recognition).toContainText('only one or no device remains');
+
+  bridge.snapshot.devices = [uncertain[1]];
+  panel = await openHardware(page);
+  await expect(rows(panel)).toHaveCount(1, { timeout: 12_000 });
+  await rows(panel).first().click();
+  await expect(panel).toContainText('Ambiguous identifier');
+  await expect(panel.getByLabel('Desk device match', { exact: true })).toHaveValue('');
+  await panel.getByLabel('Desk device match', { exact: true }).selectOption('monitor-right');
+  await panel.getByRole('button', { name: 'Review match', exact: true }).click();
+  expect(await saved(page)).toEqual(initial);
+  await panel.getByRole('button', { name: 'Confirm and save match', exact: true }).click();
+  await expect(recognition.locator('.hardware-badge')).toHaveText('OS detected');
+  await expect
+    .poll(
+      async () =>
+        (await saved(page)).devices.find((device) => device.id === 'monitor-right')?.hardwareBinding
+          ?.identity,
+    )
+    .toEqual(uncertain[1].identity);
+  const current = await saved(page);
+  const { hardwareBinding: _old, ...oldRecord } = initial.devices[2];
+  const { hardwareBinding: _new, ...newRecord } = current.devices[2];
+  expect(newRecord).toEqual(oldRecord);
+  expect(current.connections).toEqual(initial.connections);
+  expect(current.objects).toEqual(initial.objects);
+  expect(bridge.externalCalls).toBe(0);
+});
+
 test('a serial-less reconnect keeps the old match unknown until the user selects the new observation', async ({
   page,
 }) => {

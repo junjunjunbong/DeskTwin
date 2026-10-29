@@ -1,14 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
+import { chmod, lstat, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from './app';
 import {
   HardwareService,
   HardwareProbeError,
   createNativeProbe,
+  createFileIdentityQuarantine,
+  createMemoryIdentityQuarantine,
   type NativeSnapshot,
   type HardwareProbe,
+  type HardwareIdentityQuarantine,
 } from './hardware';
-import { HardwareSnapshotSchema } from '../src/domain/hardware';
+import {
+  HardwareSnapshotSchema,
+  MAX_AMBIGUOUS_HARDWARE_IDENTITIES,
+  type HardwareAmbiguousIdentity,
+} from '../src/domain/hardware';
+import { hardwarePresence } from '../src/domain/hardwareState';
+import { createDemoWorkspace } from '../src/domain/workspace';
 
 const origin = 'http://127.0.0.1:5173';
 const nativeDevice = (
@@ -240,6 +252,190 @@ describe('native hardware service state and evidence', () => {
     expect(new Set(result.devices.map((device) => device.id)).size).toBe(2);
     expect(result.devices.every((device) => device.identity.stability === 'session')).toBe(true);
   });
+  it('marks a previously approved persistent identity ambiguous when a duplicate appears', async () => {
+    const { hardware, provider, advance } = service();
+    const { token } = await hardware.createSession(origin);
+    const first = await hardware.start(token, origin);
+    const approved = {
+      ...createDemoWorkspace().devices[2],
+      hardwareBinding: {
+        category: first.devices[0].category,
+        identity: first.devices[0].identity,
+        approvedAt: first.lastCheckedAt!,
+      },
+    };
+    expect(hardwarePresence(approved, first).state).toBe('detected');
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    advance();
+    const collision = await hardware.snapshot(token, origin);
+    expect(collision.ambiguousIdentities).toEqual([
+      { category: 'display', key: first.devices[0].identity.key },
+    ]);
+    expect(hardwarePresence(approved, collision).state).toBe('match-again');
+    expect(hardwarePresence(approved, collision).explanation).toContain('ambiguous');
+    expect(approved.hardwareBinding.identity).toEqual(first.devices[0].identity);
+    expect(JSON.stringify(collision)).not.toContain('a'.repeat(64));
+    provider.read.mockResolvedValueOnce(fixture([]));
+    advance();
+    const noneRemaining = await hardware.snapshot(token, origin);
+    expect(noneRemaining.devices).toEqual([]);
+    expect(hardwarePresence(approved, noneRemaining).state).toBe('match-again');
+    expect(noneRemaining.ambiguousIdentities).toEqual(collision.ambiguousIdentities);
+  });
+  it('never restores a collided persistent identity when only the other device remains', async () => {
+    const { hardware, provider, advance } = service();
+    const { token } = await hardware.createSession(origin);
+    const first = await hardware.start(token, origin);
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    advance();
+    const collision = await hardware.snapshot(token, origin);
+    provider.read.mockResolvedValueOnce(fixture([nativeDevice('display-2')]));
+    advance();
+    const remaining = await hardware.snapshot(token, origin);
+    expect(remaining.devices[0].identity.stability).toBe('session');
+    expect(remaining.devices[0].identity).toEqual(collision.devices[1].identity);
+    expect(remaining.devices[0].identity).not.toEqual(first.devices[0].identity);
+    hardware.stop(token, origin);
+    provider.read.mockResolvedValueOnce(fixture([nativeDevice('display-2')]));
+    const fresh = await hardware.createSession(origin);
+    const restarted = await hardware.start(fresh.token, origin);
+    expect(restarted.devices[0].identity.stability).toBe('session');
+    expect(restarted.devices[0].identity).not.toEqual(remaining.devices[0].identity);
+  });
+  it('invalidates another tab cached persistent observation after a collision becomes known', async () => {
+    const { hardware, provider } = service();
+    const firstTab = await hardware.createSession(origin);
+    const first = await hardware.start(firstTab.token, origin);
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    const secondTab = await hardware.createSession(origin);
+    await hardware.start(secondTab.token, origin);
+    // Within the normal cache interval: the first tab must not replay trusted identity evidence.
+    const refreshed = await hardware.snapshot(firstTab.token, origin);
+    expect(refreshed.devices[0].identity.stability).toBe('session');
+    expect(refreshed.devices[0].identity).not.toEqual(first.devices[0].identity);
+  });
+  it('keeps collision knowledge through category denial, bridge failure and reconnect', async () => {
+    const { hardware, provider, advance } = service(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    const { token } = await hardware.createSession(origin);
+    const collision = await hardware.start(token, origin);
+    const denied = fixture([nativeDevice('display-2')]);
+    denied.categories.display.state = 'permission-denied';
+    provider.read.mockResolvedValueOnce(denied);
+    advance();
+    const unknown = await hardware.snapshot(token, origin);
+    expect(unknown.categories.display.state).toBe('permission-denied');
+    expect(unknown.devices).toEqual([]);
+    provider.read.mockRejectedValueOnce(new HardwareProbeError('unavailable', 'Bridge failed.'));
+    advance();
+    expect((await hardware.snapshot(token, origin)).state).toBe('unavailable');
+    provider.read.mockResolvedValueOnce(fixture([nativeDevice('display-2')]));
+    advance();
+    const returned = await hardware.snapshot(token, origin);
+    expect(returned.ambiguousIdentities).toEqual(collision.ambiguousIdentities);
+    expect(returned.devices[0].identity.stability).toBe('session');
+    expect(returned.devices[0].identity).not.toEqual(collision.devices[1].identity);
+  });
+  it('initializes trust evidence only during consented reads and fails closed if it cannot persist', async () => {
+    const provider = probe();
+    const remember = vi.fn(async (): Promise<HardwareAmbiguousIdentity[]> => []);
+    const hardware = new HardwareService(provider, { quarantine: { remember }, minPollMs: 0 });
+    const { token } = await hardware.createSession(origin);
+    await hardware.snapshot(token, origin);
+    expect(remember).not.toHaveBeenCalled();
+    const first = await hardware.start(token, origin);
+    expect(first.state).toBe('running');
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    const lost = await hardware.snapshot(token, origin);
+    expect(lost.state).toBe('unavailable');
+    expect(lost.message).toContain('trust history');
+    expect(lost.identityScope).toBeNull();
+    expect(lost.devices).toEqual([]);
+    expect(lost.lastCheckedAt).toEqual(first.lastCheckedAt);
+    hardware.stop(token, origin);
+    await hardware.snapshot(token, origin);
+    expect(remember).toHaveBeenCalledTimes(2);
+  });
+  it('uses the shared collision union when overlapping scan completions return an older store view', async () => {
+    const provider = probe();
+    provider.read.mockResolvedValueOnce(fixture([nativeDevice('display-1')]));
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    let releaseFirst: () => void = () => undefined;
+    const firstStoreRead = new Promise<HardwareAmbiguousIdentity[]>((resolve) => {
+      releaseFirst = () => resolve([]);
+    });
+    let remembered: HardwareAmbiguousIdentity[] = [];
+    let calls = 0;
+    const hardware = new HardwareService(provider, {
+      quarantine: {
+        async remember(_scope, additions) {
+          if (++calls === 1) return firstStoreRead;
+          remembered = [...new Map(additions.map((entry) => [entry.key, entry])).values()];
+          // Schedule the older empty view alongside this collision commit.
+          releaseFirst();
+          return remembered;
+        },
+      },
+    });
+    const a = await hardware.createSession(origin);
+    const b = await hardware.createSession(origin);
+    const first = hardware.start(a.token, origin);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const second = hardware.start(b.token, origin);
+    const [one, two] = await Promise.all([first, second]);
+    expect(two.ambiguousIdentities).toHaveLength(1);
+    expect(one.ambiguousIdentities).toEqual(two.ambiguousIdentities);
+    expect(one.devices[0].identity.stability).toBe('session');
+  });
+  it('retains observed ambiguity and invalidates other cached tabs when persistence fails, then retries on recovery', async () => {
+    let now = Date.parse('2026-10-28T00:00:00Z');
+    const provider = probe();
+    const backing = createMemoryIdentityQuarantine();
+    let writesFail = true;
+    const remember = vi.fn<HardwareIdentityQuarantine['remember']>(async (scope, additions) => {
+      if (writesFail && additions.length)
+        throw new HardwareProbeError('unavailable', 'Fixture trust history cannot be saved.');
+      return backing.remember(scope, additions);
+    });
+    const hardware = new HardwareService(provider, { now: () => now, quarantine: { remember } });
+    const a = await hardware.createSession(origin);
+    const original = await hardware.start(a.token, origin);
+    now += 5000;
+    const b = await hardware.createSession(origin);
+    const otherCached = await hardware.start(b.token, origin);
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    const failed = await hardware.snapshot(a.token, origin);
+    expect(failed.state).toBe('unavailable');
+    provider.read.mockResolvedValue(fixture([nativeDevice('display-2')]));
+    // Its cache is still young, but trust was disproved. A failed persistence
+    // attempt must not leave the other tab's earlier match trusted.
+    expect((await hardware.snapshot(b.token, origin)).state).toBe('unavailable');
+    writesFail = false;
+    now += 5000;
+    const recovered = await hardware.snapshot(a.token, origin);
+    expect(recovered.devices[0].identity.stability).toBe('session');
+    expect(recovered.devices[0].identity).not.toEqual(original.devices[0].identity);
+    expect(recovered.ambiguousIdentities).toEqual([
+      { category: 'display', key: original.devices[0].identity.key },
+    ]);
+    expect(remember.mock.calls.at(-1)?.[1]).toEqual(recovered.ambiguousIdentities);
+    const otherRecovered = await hardware.snapshot(b.token, origin);
+    expect(otherRecovered.devices[0].identity.stability).toBe('session');
+    expect(otherRecovered.devices[0].identity).not.toEqual(otherCached.devices[0].identity);
+  });
   it('accepts Swift JSONEncoder omission of nil identity and parent fields without inventing them', async () => {
     const { hardware, provider } = service();
     const {
@@ -400,6 +596,110 @@ describe('native hardware service state and evidence', () => {
   });
 });
 
+const fixtureDirectories: string[] = [];
+async function quarantineDirectory() {
+  const directory = await mkdtemp(join(tmpdir(), 'desktwin-identity-test-'));
+  fixtureDirectories.push(directory);
+  return join(directory, 'quarantine');
+}
+
+describe('installation-local identity collision quarantine', () => {
+  it('persists across bridge instances and invalidates an already cached observation in another instance', async () => {
+    const directory = await quarantineDirectory();
+    const firstProvider = probe();
+    const firstBridge = new HardwareService(firstProvider, {
+      quarantine: createFileIdentityQuarantine(directory),
+      minPollMs: 60000,
+    });
+    const a = await firstBridge.createSession(origin);
+    const first = await firstBridge.start(a.token, origin);
+    const secondBridge = new HardwareService(
+      probe(fixture([nativeDevice('display-1'), nativeDevice('display-2')])),
+      { quarantine: createFileIdentityQuarantine(directory) },
+    );
+    const b = await secondBridge.createSession(origin);
+    const collision = await secondBridge.start(b.token, origin);
+    expect(collision.devices.every((device) => device.identity.stability === 'session')).toBe(true);
+    const refreshed = await firstBridge.snapshot(a.token, origin);
+    expect(refreshed.devices[0].identity.stability).toBe('session');
+    expect(refreshed.ambiguousIdentities).toEqual(collision.ambiguousIdentities);
+    expect(firstProvider.read).toHaveBeenCalledTimes(2);
+    firstBridge.close();
+    secondBridge.close();
+
+    const restartedBridge = new HardwareService(probe(fixture([nativeDevice('display-2')])), {
+      quarantine: createFileIdentityQuarantine(directory),
+    });
+    const c = await restartedBridge.createSession(origin);
+    const restarted = await restartedBridge.start(c.token, origin);
+    expect(restarted.devices[0].identity.stability).toBe('session');
+    expect(restarted.ambiguousIdentities).toEqual(collision.ambiguousIdentities);
+    expect(restarted.devices[0].identity).not.toEqual(first.devices[0].identity);
+
+    const scopedDirectory = join(directory, 'installation_test');
+    const markers = await readdir(scopedDirectory);
+    expect(markers).toEqual([`display_${first.devices[0].identity.key}`]);
+    expect(markers.join('')).not.toContain('a'.repeat(64));
+    expect(markers.join('')).not.toContain('display-1');
+    expect(await readFile(join(scopedDirectory, markers[0]), 'utf8')).toBe('');
+    expect((await lstat(scopedDirectory)).mode & 0o777).toBe(0o700);
+    expect((await lstat(join(scopedDirectory, markers[0]))).mode & 0o777).toBe(0o600);
+    expect(
+      await createFileIdentityQuarantine(directory).remember('installation_other', []),
+    ).toEqual([]);
+    restartedBridge.close();
+  });
+
+  it('merges concurrent append-only writes without losing either identity', async () => {
+    const directory = await quarantineDirectory();
+    const a: HardwareAmbiguousIdentity = { category: 'display', key: `hw_${'1'.repeat(64)}` };
+    const b: HardwareAmbiguousIdentity = { category: 'usb', key: `hw_${'2'.repeat(64)}` };
+    await Promise.all([
+      createFileIdentityQuarantine(directory).remember('installation_test', [a]),
+      createFileIdentityQuarantine(directory).remember('installation_test', [b]),
+    ]);
+    const known = await createFileIdentityQuarantine(directory).remember('installation_test', []);
+    expect(known).toHaveLength(2);
+    expect(known).toEqual(expect.arrayContaining([a, b]));
+  });
+
+  it('rejects permissive or malformed ledger entries rather than restoring stable trust', async () => {
+    const directory = await quarantineDirectory();
+    const entry: HardwareAmbiguousIdentity = { category: 'display', key: `hw_${'1'.repeat(64)}` };
+    const store = createFileIdentityQuarantine(directory);
+    await store.remember('installation_test', [entry]);
+    const scopedDirectory = join(directory, 'installation_test');
+    const marker = join(scopedDirectory, `display_${entry.key}`);
+    await chmod(marker, 0o644);
+    await expect(store.remember('installation_test', [])).rejects.toMatchObject({
+      state: 'unavailable',
+    });
+    await chmod(marker, 0o600);
+    await writeFile(join(scopedDirectory, 'unexpected-entry'), '', { mode: 0o600 });
+    await expect(store.remember('installation_test', [])).rejects.toThrow('trust history');
+  });
+
+  it('bounds trust evidence and rejects path-like scopes before creating storage', async () => {
+    const directory = await quarantineDirectory();
+    const tooMany = Array.from({ length: MAX_AMBIGUOUS_HARDWARE_IDENTITIES + 1 }, (_, index) => ({
+      category: 'display' as const,
+      key: `hw_${index.toString(16).padStart(64, '0')}`,
+    }));
+    const file = createFileIdentityQuarantine(directory);
+    await expect(file.remember('../another-directory', [])).rejects.toThrow('trust history');
+    await expect(file.remember('installation_test', tooMany)).rejects.toThrow('trust history');
+    await expect(lstat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    const memory = createMemoryIdentityQuarantine();
+    await memory.remember('installation_test', tooMany.slice(0, -1));
+    await expect(memory.remember('installation_test', tooMany.slice(-1))).rejects.toThrow(
+      'trust history',
+    );
+    expect(await memory.remember('installation_test', [])).toHaveLength(
+      MAX_AMBIGUOUS_HARDWARE_IDENTITIES,
+    );
+  });
+});
+
 const servers: Server[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -411,14 +711,18 @@ afterEach(async () => {
         }),
     ),
   );
+  // Only directories created by this test process are removed; no desk/runtime data is touched.
+  await Promise.all(
+    fixtureDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
+  );
 });
-async function api() {
+async function api(minPollMs = 4000) {
   const provider = probe();
   const server = createApp({
     apiKey: '',
     model: 'unused',
     baseURL: 'https://api.meta.ai/v1',
-    hardware: new HardwareService(provider),
+    hardware: new HardwareService(provider, { minPollMs }),
   });
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
@@ -440,6 +744,31 @@ async function api() {
   return { provider, url, headers, authenticated, session, post };
 }
 describe('hardware API consent and origin boundary', () => {
+  it('exposes explicit ambiguity evidence without raw fingerprints through 1→2→1 observations', async () => {
+    const { provider, url, post, authenticated } = await api(0);
+    const first = HardwareSnapshotSchema.parse(
+      await (await post('/api/hardware/start', { consent: true })).json(),
+    );
+    provider.read.mockResolvedValueOnce(
+      fixture([nativeDevice('display-1'), nativeDevice('display-2')]),
+    );
+    const collision = HardwareSnapshotSchema.parse(
+      await (await fetch(`${url}/api/hardware/snapshot`, { headers: authenticated })).json(),
+    );
+    expect(collision.ambiguousIdentities).toEqual([
+      { category: 'display', key: first.devices[0].identity.key },
+    ]);
+    provider.read.mockResolvedValueOnce(fixture([nativeDevice('display-2')]));
+    const remaining = HardwareSnapshotSchema.parse(
+      await (await fetch(`${url}/api/hardware/snapshot`, { headers: authenticated })).json(),
+    );
+    expect(remaining.devices[0].identity.stability).toBe('session');
+    expect(remaining.ambiguousIdentities).toEqual(collision.ambiguousIdentities);
+    expect(JSON.stringify(remaining)).not.toContain('fingerprint');
+    expect(JSON.stringify(remaining)).not.toContain('a'.repeat(64));
+    expect(JSON.stringify(remaining)).not.toContain('display-2');
+    await post('/api/hardware/stop', {});
+  });
   it('requires a custom header, a per-tab token and explicit consent', async () => {
     const { provider, url, post, headers } = await api();
     expect((await fetch(`${url}/api/hardware/session`)).status).toBe(403);

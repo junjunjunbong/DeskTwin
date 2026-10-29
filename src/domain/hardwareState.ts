@@ -1,6 +1,11 @@
 import type { Device, DeviceKind, Workspace, WorkspaceCommand } from './workspace';
 import { defaultVisual } from './workspace';
-import { sameHardwareIdentity, type HardwareDevice, type HardwareSnapshot } from './hardware';
+import {
+  isAmbiguousHardwareIdentity,
+  sameHardwareIdentity,
+  type HardwareDevice,
+  type HardwareSnapshot,
+} from './hardware';
 
 export type HardwarePresence = {
   state: 'unlinked' | 'stopped' | 'unavailable' | 'detected' | 'not-detected' | 'match-again';
@@ -46,6 +51,14 @@ export function hardwarePresence(device: Device, snapshot: HardwareSnapshot): Ha
       label: 'Match again',
       explanation:
         'This approved identity cannot be resumed in this detection session or installation. Select the device again.',
+      lastCheckedAt: at,
+    };
+  if (isAmbiguousHardwareIdentity(binding.category, binding.identity, snapshot))
+    return {
+      state: 'match-again',
+      label: 'Match again',
+      explanation:
+        'macOS reported multiple devices with the same identifier. The earlier match is ambiguous, even if only one or no device remains. Choose a current observation explicitly; future detection sessions require a new match.',
       lastCheckedAt: at,
     };
   const observation = snapshot.devices.find(
@@ -101,7 +114,8 @@ export function hardwareMatchCommand(
   if (
     snapshot.state !== 'running' ||
     snapshot.categories[observation.category].state !== 'ok' ||
-    !current
+    !current ||
+    isAmbiguousHardwareIdentity(observation.category, observation.identity, snapshot)
   )
     throw new Error(
       'This observation is no longer current. Refresh detection and review the match again.',

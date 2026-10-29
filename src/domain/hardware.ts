@@ -36,6 +36,13 @@ export const HardwareDeviceSchema = z.strictObject({
     .max(30),
 });
 export type HardwareDevice = z.infer<typeof HardwareDeviceSchema>;
+/** A previously stable, opaque identity whose uniqueness has been disproved. */
+export const HardwareAmbiguousIdentitySchema = z.strictObject({
+  category: HardwareCategorySchema,
+  key: HardwareIdentitySchema.shape.key,
+});
+export type HardwareAmbiguousIdentity = z.infer<typeof HardwareAmbiguousIdentitySchema>;
+export const MAX_AMBIGUOUS_HARDWARE_IDENTITIES = 4096;
 export const HardwareSnapshotSchema = z
   .strictObject({
     state: z.enum(['running', 'stopped', 'unavailable']),
@@ -54,6 +61,12 @@ export const HardwareSnapshotSchema = z
       bluetooth: HardwareCategoryStateSchema,
     }),
     devices: z.array(HardwareDeviceSchema).max(512),
+    // Scoped by identityScope, not by a tab. Optional so older fixtures and
+    // snapshots remain readable; this server always supplies the evidence.
+    ambiguousIdentities: z
+      .array(HardwareAmbiguousIdentitySchema)
+      .max(MAX_AMBIGUOUS_HARDWARE_IDENTITIES)
+      .optional(),
   })
   .superRefine((snapshot, context) => {
     const ids = new Set<string>();
@@ -93,9 +106,25 @@ export function stoppedHardwareSnapshot(): HardwareSnapshot {
     message: 'Detection stopped. No hardware information is being read.',
     categories: { display: { ...category }, usb: { ...category }, bluetooth: { ...category } },
     devices: [],
+    ambiguousIdentities: [],
   };
 }
 
 export function sameHardwareIdentity(a: HardwareIdentity, b: HardwareIdentity): boolean {
   return a.key === b.key && a.scope === b.scope && a.stability === b.stability;
+}
+
+export function isAmbiguousHardwareIdentity(
+  category: HardwareCategory,
+  identity: HardwareIdentity,
+  snapshot: HardwareSnapshot,
+): boolean {
+  return (
+    identity.stability === 'persistent' &&
+    identity.scope === snapshot.identityScope &&
+    (snapshot.ambiguousIdentities?.some(
+      (entry) => entry.category === category && entry.key === identity.key,
+    ) ??
+      false)
+  );
 }
