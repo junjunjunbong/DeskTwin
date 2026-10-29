@@ -12,6 +12,8 @@ interface Props {
   onDismiss: (key: string) => void;
   onSend: (text: string) => void;
   onClose: () => void;
+  editing: boolean;
+  onEditConnections: () => void;
 }
 export function AssistantPanel({
   workspace,
@@ -23,6 +25,8 @@ export function AssistantPanel({
   onDismiss,
   onSend,
   onClose,
+  editing,
+  onEditConnections,
 }: Props) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -114,9 +118,15 @@ export function AssistantPanel({
                     </span>
                   ) : (
                     <div className="proposal-actions">
-                      <button className="button primary" onClick={() => onApply(p, key)}>
-                        Confirm and apply
-                      </button>
+                      {p.type === 'connect' && !editing ? (
+                        <button className="button secondary" onClick={onEditConnections}>
+                          Edit to review connection
+                        </button>
+                      ) : (
+                        <button className="button primary" onClick={() => onApply(p, key)}>
+                          Confirm and apply
+                        </button>
+                      )}
                       <button className="text-button" onClick={() => onDismiss(key)}>
                         Cancel
                       </button>

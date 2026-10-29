@@ -450,11 +450,18 @@ export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
   return localized;
 }
 
+export type DeviceDetails = Pick<Device, 'name' | 'model' | 'status' | 'statusNote'>;
+
 export type WorkspaceCommand =
   | { type: 'add-device'; device: z.input<typeof DeviceSchema> }
   | { type: 'bind-hardware'; id: string; binding: HardwareBinding }
   | { type: 'unbind-hardware'; id: string }
-  | { type: 'update-device'; id: string; patch: DevicePatch }
+  | {
+      type: 'update-device';
+      id: string;
+      patch: DevicePatch;
+      expectedDetails?: DeviceDetails;
+    }
   | { type: 'add-object'; object: SceneObject }
   | { type: 'update-object'; id: string; patch: SceneObjectPatch }
   | { type: 'update-part'; id: string; index: number; expectedLength: number; patch: BoxPartPatch }
@@ -511,6 +518,15 @@ export function applyCommand(
       const index = next.devices.findIndex((d) => d.id === command.id);
       if (index < 0) throw new Error('Device not found. Check the latest workspace.');
       const previous = next.devices[index];
+      if (
+        command.expectedDetails &&
+        (['name', 'model', 'status', 'statusNote'] as const).some(
+          (field) => previous[field] !== command.expectedDetails![field],
+        )
+      )
+        throw new Error(
+          'Saved device details changed. Review the latest record before saving your draft.',
+        );
       next.devices[index] = DeviceSchema.parse({
         ...previous,
         ...command.patch,

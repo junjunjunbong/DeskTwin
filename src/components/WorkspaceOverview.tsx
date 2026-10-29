@@ -176,7 +176,7 @@ export function WorkspaceOverview({
             disabled={workspace.devices.length < 2}
           >
             <ShareNetwork size={16} />
-            Record a connection
+            {mode === 'edit' ? 'Record a connection' : 'Edit connections'}
           </button>
         </div>
         <p className="micro-note">

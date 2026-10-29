@@ -1930,6 +1930,54 @@ hr {
   font-size: 10px;
   line-height: 1.6;
 }
+.connection-item {
+  flex-wrap: wrap;
+}
+.connection-item > .connection-remove-confirm {
+  flex: 1 0 100%;
+  padding: 12px;
+  border: 1px solid #dfc8b4;
+  border-radius: 10px;
+  background: #fff8ef;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.connection-remove-confirm p {
+  margin-bottom: 10px;
+}
+.device-draft-notice,
+.device-draft-list {
+  padding: 12px;
+  border: 1px solid #d8c895;
+  border-radius: 10px;
+  background: #fffbee;
+  color: #66562c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.device-draft-notice {
+  margin: 16px 0;
+}
+.device-draft-list p,
+.device-draft-notice p {
+  margin: 6px 0;
+}
+.device-draft-list > .text-button {
+  display: flex;
+  text-align: left;
+  width: 100%;
+}
+.device-draft-list details {
+  margin-top: 10px;
+}
+.device-draft-list summary {
+  cursor: pointer;
+}
+.draft-review {
+  margin-top: 10px;
+  border-top: 1px solid #dfd0ac;
+  padding-top: 10px;
+}
 .connection-details dl > div {
   display: grid;
   grid-template-columns: minmax(65px, 0.9fr) minmax(0, 1.1fr);

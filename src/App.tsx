@@ -64,6 +64,7 @@ import {
 } from './components/SceneObjectPanel';
 import { applySceneDraft } from './domain/sceneProposal';
 import { CommitTextInput } from './components/CommitInput';
+import { useDeviceDrafts } from './components/useDeviceDrafts';
 import './styles/app.css';
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel =
@@ -98,8 +99,13 @@ export default function App() {
     }
   };
   function command(c: WorkspaceCommand) {
+    if ((c.type === 'connect' || c.type === 'remove-connection') && mode !== 'edit') {
+      setToast('Switch to Edit to change recorded connections.');
+      return Promise.resolve(false);
+    }
     return safe(() => store.command(c));
   }
+  const deviceDrafts = useDeviceDrafts(workspace, store.workspace, command, store.conflict);
   function select(id: string | null, revealDetails = true) {
     setSelected(id);
     if (id) {
@@ -157,9 +163,66 @@ export default function App() {
     return () => document.removeEventListener('keydown', keyboard);
   });
   const noticeMessage = store.error || toast;
-  const hasNotice = Boolean(store.conflict || noticeMessage);
-  const notices = hasNotice && (
+  const allDrafts = Object.values(deviceDrafts.drafts);
+  const otherDrafts = allDrafts.filter((draft) => draft.id !== device?.id);
+  const hasNotice = Boolean(store.conflict || noticeMessage || allDrafts.length);
+  const notices = (store.conflict || noticeMessage || otherDrafts.length > 0) && (
     <div className="workspace-notices" role="region" aria-label="Workspace notices">
+      {otherDrafts.length > 0 && (
+        <section className="device-draft-list" aria-label="Unsaved device drafts">
+          <strong>Unsaved device details</strong>
+          <p>Kept in this open app until you save or discard them.</p>
+          {otherDrafts.map((draft) => {
+            const currentDevice = workspace.devices.find((item) => item.id === draft.id);
+            return currentDevice ? (
+              <button
+                key={draft.id}
+                className="text-button"
+                onClick={() => {
+                  select(draft.id);
+                  setMode('edit');
+                }}
+                aria-label={`Review unsaved details for ${currentDevice.name}`}
+              >
+                <PencilSimple size={14} /> {currentDevice.name} ·{' '}
+                {draft.saving ? 'Saving...' : 'Review draft'}
+              </button>
+            ) : (
+              <details key={draft.id}>
+                <summary>{draft.base.name} · Device no longer in this workspace</summary>
+                <p>
+                  The draft is kept for reference. Undo the removal to review it, or discard it.
+                </p>
+                <dl className="record-facts">
+                  <div>
+                    <dt>Draft name</dt>
+                    <dd>{draft.values.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Draft model</dt>
+                    <dd>{draft.values.model || 'Not recorded'}</dd>
+                  </div>
+                  <div>
+                    <dt>Draft status</dt>
+                    <dd>{draft.values.status}</dd>
+                  </div>
+                  <div>
+                    <dt>Draft note</dt>
+                    <dd>{draft.values.statusNote || 'No note'}</dd>
+                  </div>
+                </dl>
+                <button
+                  className="text-button"
+                  disabled={draft.saving}
+                  onClick={() => deviceDrafts.discard(draft.id)}
+                >
+                  Discard draft for {draft.base.name}
+                </button>
+              </details>
+            );
+          })}
+        </section>
+      )}
       {store.conflict && (
         <section className="storage-conflict" role="alert" aria-label="Storage conflict">
           <strong>This workspace changed in another tab.</strong>
@@ -184,6 +247,7 @@ export default function App() {
               disabled={store.saving}
               onClick={async () => {
                 if (await store.reloadLatest()) {
+                  deviceDrafts.invalidate();
                   setSelected(null);
                   setToast(
                     'Loaded the latest saved workspace. Undo history was reset for this tab.',
@@ -496,10 +560,10 @@ export default function App() {
                 <button
                   className="text-button"
                   disabled={workspace.devices.length < 2}
-                  onClick={() => setDialog('connection')}
+                  onClick={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
                 >
                   <Link size={16} />
-                  Add connection
+                  {mode === 'edit' ? 'Add connection' : 'Edit connections'}
                 </button>
               </div>
             </div>
@@ -523,9 +587,11 @@ export default function App() {
                   ? 'Collapse to make more room for your desk'
                   : store.conflict
                     ? 'Saved workspace changed · Expand to resolve'
-                    : hasNotice
-                      ? 'New notice · Expand to read'
-                      : 'Expand details and controls'}
+                    : allDrafts.length
+                      ? 'Unsaved device details · Expand to review'
+                      : hasNotice
+                        ? 'New notice · Expand to read'
+                        : 'Expand details and controls'}
               </small>
             </span>
             {detailsExpanded ? <CaretDown size={18} /> : <CaretUp size={18} />}
@@ -538,7 +604,7 @@ export default function App() {
                 onSelect={select}
                 onAdd={() => setDialog('device')}
                 onAddObject={() => setDialog('object')}
-                onConnect={() => setDialog('connection')}
+                onConnect={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
                 hardwareSummary={
                   <HardwareSummary
                     hardware={hardware}
@@ -558,10 +624,11 @@ export default function App() {
                 device={device}
                 workspace={workspace}
                 mode={mode}
+                drafts={deviceDrafts}
                 onEdit={() => setMode('edit')}
                 onCommand={command}
                 onClose={() => setSelected(null)}
-                onConnect={() => setDialog('connection')}
+                onConnect={() => mode === 'edit' && setDialog('connection')}
                 onSelect={select}
                 hardwareDetails={
                   <DeviceHardwareStatus
@@ -670,11 +737,14 @@ export default function App() {
                 pending={assistant.pending}
                 mode={assistant.mode}
                 decisions={assistant.decisions}
+                editing={mode === 'edit'}
+                onEditConnections={() => setMode('edit')}
                 onClose={() => setPanel(null)}
                 onSend={send}
                 onDismiss={(key) => assistant.decide(key, 'dismissed')}
                 onApply={(p, key) =>
                   safe(async () => {
+                    if (p.type === 'connect' && mode !== 'edit') return false;
                     if (!(await store.proposal(p))) return false;
                     assistant.decide(key, 'applied');
                     setToast('Applied to your workspace after confirmation.');
@@ -821,7 +891,7 @@ export default function App() {
       {dialog === 'device' && (
         <AddDeviceDialog onClose={() => setDialog(null)} onCommand={command} />
       )}
-      {dialog === 'connection' && (
+      {dialog === 'connection' && mode === 'edit' && (
         <ConnectionDialog
           workspace={workspace}
           selected={selected}
@@ -902,6 +972,7 @@ export default function App() {
                 className="button danger"
                 onClick={async () => {
                   if (!(await store.replace(createDemoWorkspace()))) return;
+                  deviceDrafts.invalidate();
                   setResetConfirm(false);
                   setPanel(null);
                 }}
@@ -933,6 +1004,7 @@ export default function App() {
             if (f.size > 12_000_000) throw new Error('The JSON file must be 12 MB or smaller.');
             const next = portableWorkspace(parseWorkspace(JSON.parse(await f.text())));
             if (!(await store.replace(next))) return;
+            deviceDrafts.invalidate();
             setSelected(null);
             setToast('Workspace imported. Undo to restore the previous state.');
           } catch {

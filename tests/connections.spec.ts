@@ -126,6 +126,123 @@ test('device selection highlights its counterparts and shows source-aware endpoi
   expect(await saved(page)).toEqual(initial);
 });
 
+test('View inspects connections and Edit requires inline confirmation before removing a record', async ({
+  page,
+}, testInfo) => {
+  const initial = createDemoWorkspace();
+  await seed(page, initial);
+  await page.getByRole('switch', { name: 'Show connections', exact: true }).click();
+  const guide = page.getByRole('note', { name: 'Connection display guide', exact: true });
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await expect(guide.getByRole('button', { name: 'Add connection', exact: true })).toHaveCount(0);
+  await expect(
+    overview.getByRole('button', { name: 'Record a connection', exact: true }),
+  ).toHaveCount(0);
+  await expect(guide.getByRole('button', { name: 'Edit connections', exact: true })).toBeVisible();
+  await expect(
+    overview.getByRole('button', { name: 'Edit connections', exact: true }),
+  ).toBeVisible();
+  await selectDevice(page, 'USB-C Dock');
+  const details = page.getByRole('complementary', { name: 'Selected device', exact: true });
+  await expect(details.getByRole('button', { name: /^Remove connection/ })).toHaveCount(0);
+  await expect(details.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
+  await details
+    .getByRole('button', { name: 'Select connected device MacBook', exact: true })
+    .click();
+  await expect(details.getByRole('heading', { name: 'MacBook', exact: true })).toBeVisible();
+  await details
+    .getByRole('button', { name: 'Select connected device USB-C Dock', exact: true })
+    .click();
+  expect(await saved(page)).toEqual(initial);
+  await details.getByRole('button', { name: 'Edit connections', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await details.getByRole('button', { name: 'Remove connection to MacBook', exact: true }).click();
+  const confirm = details.getByRole('region', {
+    name: 'Confirm removing connection to MacBook',
+    exact: true,
+  });
+  await expect(confirm).toBeVisible();
+  expect(await saved(page)).toEqual(initial);
+  await confirm.getByRole('button', { name: 'Cancel removal', exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(await saved(page)).toEqual(initial);
+  await details.getByRole('button', { name: 'Remove connection to MacBook', exact: true }).click();
+  await page.getByRole('button', { name: 'View', exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(details.getByRole('button', { name: /^Remove connection/ })).toHaveCount(0);
+  expect(await saved(page)).toEqual(initial);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  await details.getByRole('button', { name: 'Remove connection to MacBook', exact: true }).click();
+  await confirm.scrollIntoViewIfNeeded();
+  const canvas = (await page.getByTestId('desk-canvas').boundingBox())!;
+  const confirmBox = (await confirm.boundingBox())!;
+  expect(confirmBox.x).toBeGreaterThanOrEqual(canvas.x + canvas.width);
+  await page.screenshot({ path: testInfo.outputPath('connection-removal-confirmation.png') });
+  await confirm.getByRole('button', { name: 'Confirm removal', exact: true }).click();
+  await expect
+    .poll(async () => (await saved(page)).connections.length)
+    .toBe(initial.connections.length - 1);
+  const result = await saved(page);
+  expect(result.connections.some((connection) => connection.id === 'laptop-dock')).toBe(false);
+  expect(result.devices).toEqual(initial.devices);
+  expect(result.history).toHaveLength(1);
+  await expect(renderedLines(page)).toHaveCount(initial.connections.length - 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(initial);
+  await expect(renderedLines(page)).toHaveCount(initial.connections.length);
+});
+
+test('overview and connection guide enter Edit before offering an add dialog', async ({ page }) => {
+  const initial = createDemoWorkspace();
+  await seed(page, initial);
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await overview.getByRole('button', { name: 'Edit connections', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await overview.getByRole('button', { name: 'Record a connection', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Record a connection', exact: true })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click();
+  expect(await saved(page)).toEqual(initial);
+  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  const guide = page.getByRole('note', { name: 'Connection display guide', exact: true });
+  await expect(guide.getByRole('button', { name: 'Add connection', exact: true })).toHaveCount(0);
+  await guide.getByRole('button', { name: 'Edit connections', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await guide.getByRole('button', { name: 'Add connection', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Record a connection', exact: true });
+  await dialog.getByRole('combobox', { name: 'First device', exact: true }).selectOption('laptop');
+  await dialog
+    .getByRole('combobox', { name: 'Second device', exact: true })
+    .selectOption('monitor-right');
+  await dialog.getByRole('combobox', { name: 'Connector', exact: true }).selectOption('HDMI');
+  await dialog.getByLabel(/First device port/).fill('User checked port A');
+  await dialog.getByRole('button', { name: 'Save as user-reported' }).click();
+  await expect
+    .poll(async () => (await saved(page)).connections.length)
+    .toBe(initial.connections.length + 1);
+  expect((await saved(page)).connections.at(-1)).toMatchObject({
+    from: 'laptop',
+    to: 'monitor-right',
+    connector: 'HDMI',
+    fromPort: 'User checked port A',
+    source: 'user-reported',
+  });
+});
+
 function dragWorkspace(): Workspace {
   const sample = createDemoWorkspace();
   const device = (id: string, x: number): Device => ({

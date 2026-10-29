@@ -105,7 +105,14 @@ test('conversation proposals require confirmation and never verify operation', a
   await expect(
     page.getByText('I connected the right monitor to the dock with HDMI', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Confirm and apply' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit to review connection' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm and apply' })).toHaveCount(0);
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
+  await page.getByRole('button', { name: 'Edit to review connection' }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: 'Confirm and apply' }).click();
   await expect(page.getByText('Applied after confirmation')).toBeVisible();
@@ -119,6 +126,7 @@ test('conversation proposals require confirmation and never verify operation', a
 test('supports manual connections and undo', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Record a connection' });
   await modal.getByRole('combobox', { name: 'First device', exact: true }).selectOption('laptop');
