@@ -27,6 +27,7 @@ test('names retain spaces while typing and decimal fields commit once without bl
   );
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
   await page.getByRole('button', { name: /^Editable block Generic object/ }).click();
   const inspector = page.getByRole('complementary', { name: 'Selected scene object' });

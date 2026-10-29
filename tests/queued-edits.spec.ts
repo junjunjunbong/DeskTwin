@@ -55,6 +55,7 @@ test('queued edits to different position, scale, color, and part fields preserve
   );
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
   await page.getByRole('button', { name: /^Queued block Generic object/ }).click();
   const panel = page.getByRole('complementary', { name: 'Selected scene object' });

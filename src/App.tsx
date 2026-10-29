@@ -23,12 +23,24 @@ import {
   X,
   ChatCircleDots,
   Link,
-  WarningCircle,
   Hand,
   Sparkle,
+  Cpu,
+  WarningCircle,
+  CaretDown,
+  CaretUp,
+  Eye,
 } from '@phosphor-icons/react';
 import { useWorkspace, downloadFile } from './domain/useWorkspace';
 import { useAssistant } from './domain/useAssistant';
+import { useHardware } from './domain/useHardware';
+import { portableWorkspace } from './domain/workspacePrivacy';
+import {
+  HardwarePanel,
+  HardwareSummary,
+  HardwareBadge,
+  DeviceHardwareStatus,
+} from './components/HardwarePanel';
 import {
   createDemoWorkspace,
   kindLabels,
@@ -40,6 +52,7 @@ import {
 import type { DeskMode } from './scene/deskScene';
 import type { CanvasHandle } from './components/DeskCanvas';
 import { DeviceInspector } from './components/DeviceInspector';
+import { ReportedStatus, WorkspaceOverview } from './components/WorkspaceOverview';
 import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs';
 import { DeviceIcon, Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
@@ -53,15 +66,18 @@ import { applySceneDraft } from './domain/sceneProposal';
 import { CommitTextInput } from './components/CommitInput';
 import './styles/app.css';
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
-type Panel = 'objects' | 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | null;
+type Panel =
+  'objects' | 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | 'hardware' | null;
 export default function App() {
   const store = useWorkspace();
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
   const assistant = useAssistant(workspace);
+  const hardware = useHardware();
   const [mode, setMode] = useState<DeskMode>('desk');
   const [showConnections, setShowConnections] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [dialog, setDialog] = useState<'object' | 'device' | 'connection' | 'cloud' | null>(null);
   const [prompt, setPrompt] = useState('');
   const [toast, setToast] = useState('');
@@ -73,7 +89,6 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const device = workspace.devices.find((d) => d.id === selected);
   const sceneObject = workspace.objects.find((o) => o.id === selected);
-  const issues = workspace.devices.filter((d) => d.status === 'reported-issue').length;
   const safe = async (run: () => unknown | Promise<unknown>): Promise<boolean> => {
     try {
       return (await run()) !== false;
@@ -85,17 +100,22 @@ export default function App() {
   function command(c: WorkspaceCommand) {
     return safe(() => store.command(c));
   }
-  function select(id: string | null) {
+  function select(id: string | null, revealDetails = true) {
     setSelected(id);
-    if (id) setPanel(null);
+    if (id) {
+      setPanel(null);
+      if (revealDetails) setDetailsExpanded(true);
+    }
   }
   function openPanel(next: Panel) {
     setSelected(null);
     setPanel((p) => (p === next ? null : next));
+    setDetailsExpanded(true);
   }
   function send(text: string) {
     if (!text.trim() || assistant.pending) return;
     setPanel('assistant');
+    setDetailsExpanded(true);
     setSelected(null);
     setPrompt('');
     void assistant.send(text);
@@ -185,7 +205,9 @@ export default function App() {
           </button>
         </div>
       </header>
-      <div className="workspace-body">
+      <div
+        className={`workspace-body ${detailsExpanded ? 'details-expanded' : 'details-collapsed'}`}
+      >
         <nav className="nav-rail" aria-label="Main navigation">
           <div className="nav-top">
             <button
@@ -234,12 +256,19 @@ export default function App() {
               title="Edit placement"
               onClick={() => {
                 setMode('edit');
-                setPanel(null);
               }}
             >
               <PencilSimple size={22} />
             </button>
             <div className="rail-divider" />
+            <button
+              className={`nav-button ${panel === 'hardware' ? 'active' : ''}`}
+              aria-label="Mac hardware"
+              title="Mac hardware"
+              onClick={() => openPanel('hardware')}
+            >
+              <Cpu size={22} />
+            </button>
             <button
               className={`nav-button ${panel === 'photo' ? 'active' : ''}`}
               aria-label="Desk photo"
@@ -277,7 +306,12 @@ export default function App() {
             </button>
           </div>
         </nav>
-        <main className="scene-area" aria-label="My workspace">
+        <main
+          className="scene-area"
+          aria-label="My workspace"
+          data-mode={mode}
+          data-labels={workspace.appearance.labels}
+        >
           <Suspense
             fallback={
               <div className="scene-loading">
@@ -292,7 +326,7 @@ export default function App() {
               selected={selected}
               mode={mode}
               showConnections={showConnections}
-              onSelect={select}
+              onSelect={(id) => select(id, mode !== 'edit')}
               onMove={(id, placement, dragPath) => {
                 void command({ type: 'move-object', id, placement, dragPath });
               }}
@@ -303,30 +337,24 @@ export default function App() {
             <h1>{workspace.name}</h1>
             <span className="scene-caption">
               <span className="neutral-dot" />
-              Editable voxel scene · No live device detection
+              Your layout · Evidence has a source
             </span>
           </div>
-          <div className="view-switch" aria-label="View mode">
-            {(
-              [
-                ['desk', 'My desk'],
-                ['connections', 'Connections'],
-                ['edit', 'Edit placement'],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                className={mode === value ? 'active' : ''}
-                aria-pressed={mode === value}
-                onClick={() => {
-                  setMode(value);
-                  if (value === 'connections') setShowConnections(true);
-                  setPanel(null);
-                }}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="view-switch" role="group" aria-label="Workspace mode">
+            <button
+              className={mode !== 'edit' ? 'active' : ''}
+              aria-pressed={mode !== 'edit'}
+              onClick={() => setMode('desk')}
+            >
+              <Eye size={16} aria-hidden="true" /> View
+            </button>
+            <button
+              className={mode === 'edit' ? 'active' : ''}
+              aria-pressed={mode === 'edit'}
+              onClick={() => setMode('edit')}
+            >
+              <PencilSimple size={16} aria-hidden="true" /> Edit
+            </button>
           </div>
           <div className="scene-toolbar">
             <div className="scene-counter">
@@ -404,7 +432,7 @@ export default function App() {
           {showConnections && (
             <div className="connection-legend" role="note" aria-label="Connection display guide">
               <span className="connection-legend-copy">
-                Recorded relationships · Live status and cable routes are unverified
+                Recorded relationships · Physical cable routes are unverified
               </span>
               <div className="connection-legend-key">
                 <span>Select a device for ports and sources.</span>
@@ -419,215 +447,269 @@ export default function App() {
               </div>
             </div>
           )}
-          {issues > 0 && !selected && !panel && (
-            <button
-              className="issue-summary"
-              onClick={() => {
-                const d = workspace.devices.find((d) => d.status === 'reported-issue');
-                if (d) select(d.id);
-              }}
-            >
-              <WarningCircle size={17} />
-              {issues} {issues === 1 ? 'device' : 'devices'} · User-reported issues
-            </button>
-          )}
-          {device && (
-            <DeviceInspector
-              key={device.id}
-              device={device}
-              workspace={workspace}
-              mode={mode}
-              onCommand={command}
-              onClose={() => setSelected(null)}
-              onConnect={() => setDialog('connection')}
-              onSelect={select}
-            />
-          )}
-          {sceneObject && (
-            <SceneObjectInspector
-              key={sceneObject.id}
-              object={sceneObject}
-              workspace={workspace}
-              onCommand={command}
-              onClose={() => setSelected(null)}
-            />
-          )}
-          {panel === 'objects' && (
-            <SceneObjectList
-              workspace={workspace}
-              onSelect={select}
-              onClose={() => setPanel(null)}
-              onAdd={() => setDialog('object')}
-            />
-          )}
-          {panel === 'devices' && (
-            <aside className="floating-panel device-library" aria-label="Device list panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="eyebrow">YOUR COLLECTION</span>
-                  <h2>
-                    Devices on my desk <span className="count">{workspace.devices.length}</span>
-                  </h2>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="Close device list"
-                  onClick={() => setPanel(null)}
-                >
-                  <X size={19} />
-                </button>
-              </div>
-              <div className="panel-scroll">
-                <input
-                  className="search-input"
-                  aria-label="Search devices"
-                  placeholder="Search devices..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                {workspace.devices
-                  .filter((d) =>
-                    `${d.name} ${d.model} ${kindLabels[d.kind]}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  )
-                  .map((d) => (
-                    <button className="device-list-row" key={d.id} onClick={() => select(d.id)}>
-                      <span className="list-device-glyph">
-                        <DeviceIcon kind={d.kind} size={24} />
-                      </span>
-                      <span>
-                        <strong>{d.name}</strong>
-                        <small>
-                          {kindLabels[d.kind]} · {sourceLabels[d.source]}
-                        </small>
-                      </span>
-                      <i className={`status-dot ${d.status}`} />
-                    </button>
-                  ))}
-                {workspace.devices.length === 0 && (
-                  <p className="empty-copy">Add your first device.</p>
-                )}
-                <button
-                  className="button secondary full"
-                  onClick={() => setDialog('device')}
-                  disabled={workspace.devices.length >= 40}
-                >
-                  <Plus size={18} />
-                  Add a device manually
-                </button>
-              </div>
-              <div className="panel-footnote">
-                Gray: status unknown · Orange: user-reported issue
-              </div>
-            </aside>
-          )}
-          {panel === 'assistant' && (
-            <AssistantPanel
-              workspace={workspace}
-              messages={assistant.messages}
-              pending={assistant.pending}
-              mode={assistant.mode}
-              decisions={assistant.decisions}
-              onClose={() => setPanel(null)}
-              onSend={send}
-              onDismiss={(key) => assistant.decide(key, 'dismissed')}
-              onApply={(p, key) =>
-                safe(async () => {
-                  if (!(await store.proposal(p))) return false;
-                  assistant.decide(key, 'applied');
-                  setToast('Applied to your workspace after confirmation.');
-                })
-              }
-            />
-          )}
-          {panel === 'history' && (
-            <aside className="floating-panel" aria-label="Change history panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="eyebrow">A LITTLE MEMORY</span>
-                  <h2>Change history</h2>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="Close history"
-                  onClick={() => setPanel(null)}
-                >
-                  <X size={19} />
-                </button>
-              </div>
-              <div className="panel-scroll">
-                {workspace.history.length ? (
-                  workspace.history.map((event) => (
-                    <div className="history-item" key={event.id}>
-                      <ClockCounterClockwise size={18} />
-                      <div>
-                        <strong>{event.summary}</strong>
-                        <small>
-                          {new Date(event.at).toLocaleString('en-US')} ·{' '}
-                          {sourceLabels[event.source]}
-                        </small>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">
-                    <ClockCounterClockwise size={36} />
-                    <h3>No changes yet</h3>
-                    <p>Changes to devices and connections will appear here.</p>
-                  </div>
-                )}
-              </div>
-            </aside>
-          )}
-          {panel === 'photo' && (
-            <PhotoPanel
-              workspace={store.workspace}
-              photo={referencePhoto}
-              onPhoto={setReferencePhoto}
-              available={assistant.available}
-              onClose={() => setPanel(null)}
-              onAdd={() => setDialog('device')}
-              onApply={async (draft, base) => {
-                if (!(await store.replace(applySceneDraft(store.workspace, base, draft), base)))
-                  throw new Error(
-                    'The scene was not saved. Resolve the storage notice and try again.',
-                  );
-              }}
-              storageConflict={store.conflict}
-              onRefresh={assistant.refreshHealth}
-              onClearDemo={() =>
-                safe(async () => {
-                  const reportedEndpoints = new Set(
-                    store.workspace.connections
-                      .filter((c) => c.source !== 'demo')
-                      .flatMap((c) => [c.from, c.to]),
-                  );
-                  const devices = store.workspace.devices.filter(
-                    (d) =>
-                      d.source !== 'demo' ||
-                      d.status !== 'unknown' ||
-                      d.statusNote ||
-                      d.visual.source !== 'demo' ||
-                      reportedEndpoints.has(d.id),
-                  );
-                  const ids = new Set(devices.map((d) => d.id));
-                  const saved = await store.replace({
-                    ...store.workspace,
-                    devices,
-                    connections: store.workspace.connections.filter(
-                      (c) => ids.has(c.from) && ids.has(c.to),
-                    ),
-                  });
-                  if (!saved) return false;
-                  setToast(
-                    'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
-                  );
-                })
-              }
-            />
-          )}
         </main>
+        <section className="detail-dock" aria-label="Workspace details">
+          <button
+            className="detail-dock-toggle"
+            aria-expanded={detailsExpanded}
+            aria-controls="workspace-details"
+            onClick={() => setDetailsExpanded((expanded) => !expanded)}
+          >
+            <span>
+              <strong>
+                {device?.name ||
+                  sceneObject?.name ||
+                  (panel ? `${panel[0].toUpperCase()}${panel.slice(1)}` : 'Workspace overview')}
+              </strong>
+              <small>
+                {detailsExpanded
+                  ? 'Collapse to make more room for your desk'
+                  : 'Expand details and controls'}
+              </small>
+            </span>
+            {detailsExpanded ? <CaretDown size={18} /> : <CaretUp size={18} />}
+          </button>
+          <div className="detail-dock-content" id="workspace-details">
+            {!device && !sceneObject && (!panel || panel === 'settings') && (
+              <WorkspaceOverview
+                workspace={workspace}
+                mode={mode}
+                onSelect={select}
+                onAdd={() => setDialog('device')}
+                onAddObject={() => setDialog('object')}
+                onConnect={() => setDialog('connection')}
+                hardwareSummary={
+                  <HardwareSummary
+                    hardware={hardware}
+                    workspace={workspace}
+                    onOpen={() => openPanel('hardware')}
+                    onSelect={select}
+                  />
+                }
+                renderHardwareStatus={(device) => (
+                  <HardwareBadge device={device} snapshot={hardware.snapshot} />
+                )}
+              />
+            )}
+            {device && (
+              <DeviceInspector
+                key={device.id}
+                device={device}
+                workspace={workspace}
+                mode={mode}
+                onEdit={() => setMode('edit')}
+                onCommand={command}
+                onClose={() => setSelected(null)}
+                onConnect={() => setDialog('connection')}
+                onSelect={select}
+                hardwareDetails={
+                  <DeviceHardwareStatus
+                    device={device}
+                    snapshot={hardware.snapshot}
+                    onManage={() => openPanel('hardware')}
+                    onCommand={command}
+                  />
+                }
+              />
+            )}
+            {sceneObject && (
+              <SceneObjectInspector
+                key={sceneObject.id}
+                object={sceneObject}
+                workspace={workspace}
+                mode={mode}
+                onEdit={() => setMode('edit')}
+                onCommand={command}
+                onClose={() => setSelected(null)}
+              />
+            )}
+            {panel === 'objects' && (
+              <SceneObjectList
+                workspace={workspace}
+                onSelect={select}
+                onClose={() => setPanel(null)}
+                onAdd={() => setDialog('object')}
+              />
+            )}
+            {panel === 'hardware' && (
+              <HardwarePanel
+                hardware={hardware}
+                workspace={workspace}
+                onCommand={command}
+                onSelect={select}
+                onClose={() => setPanel(null)}
+              />
+            )}
+            {panel === 'devices' && (
+              <aside className="floating-panel device-library" aria-label="Device list panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">YOUR COLLECTION</span>
+                    <h2>
+                      Devices on my desk <span className="count">{workspace.devices.length}</span>
+                    </h2>
+                  </div>
+                  <button
+                    className="icon-button"
+                    aria-label="Close device list"
+                    onClick={() => setPanel(null)}
+                  >
+                    <X size={19} />
+                  </button>
+                </div>
+                <div className="panel-scroll">
+                  <input
+                    className="search-input"
+                    aria-label="Search devices"
+                    placeholder="Search devices..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {workspace.devices
+                    .filter((d) =>
+                      `${d.name} ${d.model} ${kindLabels[d.kind]}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    )
+                    .map((d) => (
+                      <button className="device-list-row" key={d.id} onClick={() => select(d.id)}>
+                        <span className="list-device-glyph">
+                          <DeviceIcon kind={d.kind} size={24} />
+                        </span>
+                        <span>
+                          <strong>{d.name}</strong>
+                          <small>
+                            {kindLabels[d.kind]} · {sourceLabels[d.source]}
+                          </small>
+                        </span>
+                        <ReportedStatus status={d.status} />
+                      </button>
+                    ))}
+                  {workspace.devices.length === 0 && (
+                    <p className="empty-copy">Add your first device.</p>
+                  )}
+                  <button
+                    className="button secondary full"
+                    onClick={() => setDialog('device')}
+                    disabled={workspace.devices.length >= 40}
+                  >
+                    <Plus size={18} />
+                    Add a device manually
+                  </button>
+                </div>
+                <div className="panel-footnote">
+                  Reports are entered by you. OS observations are shown separately.
+                </div>
+              </aside>
+            )}
+            {panel === 'assistant' && (
+              <AssistantPanel
+                workspace={workspace}
+                messages={assistant.messages}
+                pending={assistant.pending}
+                mode={assistant.mode}
+                decisions={assistant.decisions}
+                onClose={() => setPanel(null)}
+                onSend={send}
+                onDismiss={(key) => assistant.decide(key, 'dismissed')}
+                onApply={(p, key) =>
+                  safe(async () => {
+                    if (!(await store.proposal(p))) return false;
+                    assistant.decide(key, 'applied');
+                    setToast('Applied to your workspace after confirmation.');
+                  })
+                }
+              />
+            )}
+            {panel === 'history' && (
+              <aside className="floating-panel" aria-label="Change history panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">A LITTLE MEMORY</span>
+                    <h2>Change history</h2>
+                  </div>
+                  <button
+                    className="icon-button"
+                    aria-label="Close history"
+                    onClick={() => setPanel(null)}
+                  >
+                    <X size={19} />
+                  </button>
+                </div>
+                <div className="panel-scroll">
+                  {workspace.history.length ? (
+                    workspace.history.map((event) => (
+                      <div className="history-item" key={event.id}>
+                        <ClockCounterClockwise size={18} />
+                        <div>
+                          <strong>{event.summary}</strong>
+                          <small>
+                            {new Date(event.at).toLocaleString('en-US')} ·{' '}
+                            {sourceLabels[event.source]}
+                          </small>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-state">
+                      <ClockCounterClockwise size={36} />
+                      <h3>No changes yet</h3>
+                      <p>Changes to devices and connections will appear here.</p>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            )}
+            {panel === 'photo' && (
+              <PhotoPanel
+                workspace={store.workspace}
+                photo={referencePhoto}
+                onPhoto={setReferencePhoto}
+                available={assistant.available}
+                onClose={() => setPanel(null)}
+                onAdd={() => setDialog('device')}
+                onApply={async (draft, base) => {
+                  if (!(await store.replace(applySceneDraft(store.workspace, base, draft), base)))
+                    throw new Error(
+                      'The scene was not saved. Resolve the storage notice and try again.',
+                    );
+                }}
+                storageConflict={store.conflict}
+                onRefresh={assistant.refreshHealth}
+                onClearDemo={() =>
+                  safe(async () => {
+                    const reportedEndpoints = new Set(
+                      store.workspace.connections
+                        .filter((c) => c.source !== 'demo')
+                        .flatMap((c) => [c.from, c.to]),
+                    );
+                    const devices = store.workspace.devices.filter(
+                      (d) =>
+                        d.source !== 'demo' ||
+                        !!d.hardwareBinding ||
+                        d.status !== 'unknown' ||
+                        d.statusNote ||
+                        d.visual.source !== 'demo' ||
+                        reportedEndpoints.has(d.id),
+                    );
+                    const ids = new Set(devices.map((d) => d.id));
+                    const saved = await store.replace({
+                      ...store.workspace,
+                      devices,
+                      connections: store.workspace.connections.filter(
+                        (c) => ids.has(c.from) && ids.has(c.to),
+                      ),
+                    });
+                    if (!saved) return false;
+                    setToast(
+                      'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
+                    );
+                  })
+                }
+              />
+            )}
+          </div>
+        </section>
       </div>
       <footer className="command-area">
         <form className="composer" onSubmit={submit}>
@@ -731,7 +813,10 @@ export default function App() {
             <button
               className="button secondary"
               onClick={() =>
-                downloadFile('desktwin-workspace.json', JSON.stringify(store.workspace, null, 2))
+                downloadFile(
+                  'desktwin-workspace.json',
+                  JSON.stringify(portableWorkspace(store.workspace), null, 2),
+                )
               }
             >
               <DownloadSimple size={18} />
@@ -783,7 +868,7 @@ export default function App() {
           if (!f) return;
           try {
             if (f.size > 12_000_000) throw new Error('The JSON file must be 12 MB or smaller.');
-            const next = parseWorkspace(JSON.parse(await f.text()));
+            const next = portableWorkspace(parseWorkspace(JSON.parse(await f.text())));
             if (!(await store.replace(next))) return;
             setSelected(null);
             setToast('Workspace imported. Undo to restore the previous state.');
@@ -812,9 +897,11 @@ export default function App() {
             </button>
           </div>
           <p className="muted">
-            Once enabled, messages you send, your last 12 conversation messages, and your device and
-            connection setup are sent to the Meta API. Photos are only sent with separate consent.
-            API usage may incur charges.
+            Once enabled, messages you send, your last 12 Meta conversation messages, and your
+            manually recorded device and connection setup are sent to the Meta API. Local-demo
+            history, OS observations, local matching identifiers and records created from Mac
+            detection are excluded. Photos are only sent with separate consent. API usage may incur
+            charges.
           </p>
           <p className="micro-note">
             The local demo uses limited rules and is not an LLM. Meta responses do not verify
@@ -858,7 +945,10 @@ export default function App() {
             <button
               className="button secondary"
               onClick={() =>
-                downloadFile('desktwin-local-copy.json', JSON.stringify(store.workspace, null, 2))
+                downloadFile(
+                  'desktwin-local-copy.json',
+                  JSON.stringify(portableWorkspace(store.workspace), null, 2),
+                )
               }
             >
               Export this tab's copy
