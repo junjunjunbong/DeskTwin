@@ -57,6 +57,172 @@ function move(w: Workspace, id: string, x: number, z: number, rotation?: number)
 }
 
 describe('shared geometry placement', () => {
+  it.each(['keyboard', 'mouse', 'ssd', 'decor-chair'])(
+    'moves the default %s over its mat/rug without lowering it into the covering',
+    (id) => {
+      for (const delta of [-0.1, 0.1]) {
+        const w = createDemoWorkspace();
+        const initial = structuredClone(w);
+        const item = [...w.devices, ...w.objects].find((entry) => entry.id === id)!;
+        const result = resolveSpatialEdit(
+          w,
+          move(w, id, item.placement.x + delta, item.placement.z),
+          id,
+          {
+            snap: 'auto',
+            sweep: true,
+          },
+        );
+        expect(result.blocked, result.reason).toBe(false);
+        const moved = [...result.workspace.devices, ...result.workspace.objects].find(
+          (entry) => entry.id === id,
+        )!;
+        expect(moved.placement.x).toBeCloseTo(item.placement.x + delta, 6);
+        expect(validateSceneCollisions(result.workspace, w)).toEqual([]);
+        const replay = applyCommand(w, {
+          type: 'move-object',
+          id,
+          placement: moved.placement,
+          dragPath: result.path ?? [moved.placement],
+        });
+        expect(
+          [...replay.devices, ...replay.objects].find((entry) => entry.id === id)?.placement,
+        ).toEqual(moved.placement);
+        expect(replay.history).toHaveLength(1);
+        expect(replay.connections).toEqual(w.connections);
+        expect(w).toEqual(initial);
+      }
+    },
+  );
+  it('sweeps upward, across and down over a thin rug while retaining real blockers', () => {
+    const rug = {
+      ...createSceneObject('mat'),
+      id: 'rug',
+      name: 'Rug',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    const moving = cube('moving', -2.1, 0, 0.2);
+    const w = empty([moving, rug]);
+    const result = resolveSpatialEdit(w, move(w, moving.id, 2.1, 0), moving.id, { snap: 'auto' });
+    expect(result.blocked, result.reason).toBe(false);
+    expect(result.path).toHaveLength(3);
+    expect(result.path![0].y).toBeCloseTo(getItemBounds(rug).max.y + 0.001, 5);
+    expect(result.workspace.objects[0].placement.x).toBeCloseTo(2.1, 6);
+    expect(result.workspace.objects[0].placement.y).toBeCloseTo(moving.placement.y, 8);
+    const replay = applyCommand(w, {
+      type: 'move-object',
+      id: moving.id,
+      placement: result.workspace.objects[0].placement,
+      dragPath: result.path,
+    });
+    expect(replay.objects[0].placement).toEqual(result.workspace.objects[0].placement);
+    const blocker = cube('blocker', 0);
+    blocker.parts = [part(0.025, 1, 1)];
+    const blocked = empty([moving, rug, blocker]);
+    const stopped = resolveSpatialEdit(blocked, move(blocked, moving.id, 2.1, 0), moving.id, {
+      snap: 'auto',
+    });
+    expect(stopped.blocked).toBe(true);
+    expect(stopped.workspace.objects[0].placement.x).toBeLessThan(-0.11);
+    expect(stopped.reason).toMatch(/blocker/);
+  });
+  it('does not let a rug support exemption hide thick, tilted or downward collisions', () => {
+    const moving = cube('moving', -2.1, 0, 0.2);
+    const rug = {
+      ...createSceneObject('mat'),
+      id: 'rug',
+      name: 'Rug',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    for (const altered of [
+      { ...rug, visual: { ...rug.visual, scale: { x: 1, y: 3, z: 1 } } },
+      {
+        ...rug,
+        shapeMode: 'custom' as const,
+        parts: [{ ...part(3, 0.02, 1), rotation: { x: 0, y: 0, z: 10 } }],
+      },
+    ]) {
+      const w = empty([moving, altered]);
+      const result = resolveSpatialEdit(w, move(w, moving.id, 2.1, 0), moving.id, { snap: 'auto' });
+      expect(result.blocked).toBe(true);
+    }
+    const onRug = cube('on-rug', 0, 0, 0.2);
+    onRug.placement.y = getItemBounds(rug).max.y + 0.001;
+    const w = empty([onRug, rug]);
+    expect(() =>
+      applyCommand(w, { type: 'update-object', id: onRug.id, patch: { placement: { y: 0 } } }),
+    ).toThrow(/blocked|intersect/);
+  });
+  it('checks clearance above the starting object before lifting across a covering', () => {
+    const moving = cube('moving', -2.1, 0, 0.2);
+    const rug = {
+      ...createSceneObject('mat'),
+      id: 'rug',
+      name: 'Rug',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    const overhead = cube('overhead-obstruction', -2.1, 0, 0.3);
+    overhead.placement.y = 0.21;
+    const w = empty([moving, rug, overhead]);
+    expect(validateSceneCollisions(w)).toEqual([]);
+    const result = resolveSpatialEdit(w, move(w, moving.id, 2.1, 0), moving.id, { snap: 'auto' });
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toMatch(/overhead-obstruction/);
+    expect(result.workspace.objects[0].placement.x).toBe(moving.placement.x);
+    expect(validateSceneCollisions(result.workspace, w)).toEqual([]);
+  });
+  it('rests on actual rotated mat geometry rather than empty corners of its bounds', () => {
+    const rug = {
+      ...createSceneObject('mat'),
+      id: 'narrow-rug',
+      name: 'Narrow rug',
+      placement: { x: 0, y: 0, z: 0, rotation: 45 },
+      shapeMode: 'custom' as const,
+      parts: [part(3, 0.03, 0.3)],
+    };
+    const moving = cube('moving', 1, 1, 0.1);
+    const w = empty([moving, rug]);
+    const result = resolveSpatialEdit(w, move(w, moving.id, 0.8, 1), moving.id, { snap: 'auto' });
+    expect(result.blocked, result.reason).toBe(false);
+    expect(getItemBounds(result.workspace.objects[0]).min.y).toBeCloseTo(0.001, 8);
+    expect(getItemBounds(snapToSurface(w, moving.id, 'floor').objects[0]).min.y).toBeCloseTo(
+      0.001,
+      8,
+    );
+    const aboveEmptyCorner = structuredClone(w);
+    aboveEmptyCorner.objects[0].parts[0].position.y = 0.07;
+    aboveEmptyCorner.objects[0].placement.y = 0.131;
+    aboveEmptyCorner.objects[1].placement.y = 0.12;
+    const changed = structuredClone(aboveEmptyCorner);
+    changed.objects[0].visual.scale.y = 2;
+    // No actual support exists at this height; an explicit scaling edit should
+    // retain the origin rather than inventing a resting contact in the corner.
+    const scaled = resolveSpatialEdit(aboveEmptyCorner, changed, moving.id, {
+      preserveSupport: true,
+    });
+    expect(scaled.workspace.objects[0].placement.y).toBeCloseTo(0.131, 8);
+  });
+  it('places and attaches above a desk mat and preserves its contact during dimension edits', () => {
+    const w = createDemoWorkspace();
+    const attached = applyCommand(w, {
+      type: 'attach-object',
+      id: 'keyboard',
+      parentId: 'decor-desk',
+    });
+    const keyboard = attached.devices.find((item) => item.id === 'keyboard')!;
+    const mat = attached.objects.find((item) => item.id === 'decor-desk-mat')!;
+    expect(keyboard.attachment).toEqual({ parentId: 'decor-desk' });
+    expect(getItemBounds(keyboard).min.y).toBeCloseTo(getItemBounds(mat).max.y + 0.001, 5);
+    const resized = applyCommand(attached, {
+      type: 'update-device',
+      id: 'keyboard',
+      patch: { visual: { scale: { y: 0.5 } } },
+    });
+    expect(
+      getItemBounds(resized.devices.find((item) => item.id === 'keyboard')!).min.y,
+    ).toBeCloseTo(getItemBounds(keyboard).min.y, 6);
+    expect(validateSceneCollisions(resized, w)).toEqual([]);
+  });
   it('stops a fast move at a thin obstacle instead of tunneling through it', () => {
     const obstacle = cube('thin wall', 0);
     obstacle.id = 'wall';

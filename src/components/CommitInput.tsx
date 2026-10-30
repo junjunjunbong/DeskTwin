@@ -34,6 +34,9 @@ export function CommitTextInput({
     }
   }, [value]);
   async function commit() {
+    // Enter and the following blur are one edit, even if React has not yet
+    // published the accepted workspace after the save promise resolves.
+    if (!dirty.current) return;
     const next = draft.trim();
     if (!next && !allowEmpty) {
       setError('Enter a non-empty name. Press Escape to restore the saved value.');
@@ -43,7 +46,7 @@ export function CommitTextInput({
     dirty.current = false;
     setDraft(next);
     setError('');
-    if (next === latest.current && !pending.current) return;
+    if (next === latest.current && next === submitted.current && !pending.current) return;
     pending.current = true;
     submitted.current = next;
     const request = ++requestVersion.current;
@@ -60,7 +63,8 @@ export function CommitTextInput({
     } finally {
       if (request === requestVersion.current) {
         pending.current = false;
-        if (edit === editVersion.current) setDraft(latest.current);
+        // Successful drafts remain visible until the value effect receives the
+        // accepted prop. Reading latest here can restore the previous value.
       }
     }
   }
@@ -143,6 +147,7 @@ export function CommitNumberInput({
     }
   }, [value]);
   async function commit() {
+    if (!dirty.current) return;
     const text = draft.trim();
     const next = Number(text);
     if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(text) || !Number.isFinite(next)) {
@@ -157,7 +162,9 @@ export function CommitNumberInput({
     dirty.current = false;
     setDraft(String(next));
     setError('');
-    if (next === latest.current && !pending.current) return;
+    // A deliberate return to the old prop must survive a completed save whose
+    // new prop has not been published yet.
+    if (next === latest.current && next === submitted.current && !pending.current) return;
     pending.current = true;
     submitted.current = next;
     const request = ++requestVersion.current;
@@ -174,7 +181,6 @@ export function CommitNumberInput({
     } finally {
       if (request === requestVersion.current) {
         pending.current = false;
-        if (edit === editVersion.current) setDraft(String(latest.current));
       }
     }
   }

@@ -80,6 +80,7 @@ export function retainedDevices(base: Workspace): Device[] {
   return base.devices.filter(
     (device) =>
       device.source !== 'demo' ||
+      !!device.hardwareBinding ||
       device.status !== 'unknown' ||
       device.statusNote !== '' ||
       device.visual.source !== 'demo' ||
@@ -354,6 +355,8 @@ function identity(device: Device) {
     source: device.source,
     status: device.status,
     statusNote: device.statusNote,
+    hardwareBinding: device.hardwareBinding,
+    hardwareOrigin: device.hardwareOrigin,
   };
 }
 
@@ -392,7 +395,9 @@ export function applySceneDraft(
     } else if (
       device.source !== 'photo-inferred' ||
       device.status !== 'unknown' ||
-      device.statusNote !== ''
+      device.statusNote !== '' ||
+      device.hardwareBinding !== undefined ||
+      device.hardwareOrigin !== undefined
     ) {
       throw new Error('New photo devices must have an unknown operating status.');
     }

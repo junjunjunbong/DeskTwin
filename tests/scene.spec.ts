@@ -328,10 +328,10 @@ test('applying a scene is one undo step and preserves user-reported identity, li
   ).toEqual(base.connections[1]);
   expect(applied.history).toHaveLength(base.history.length + 1);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  expect(await saved(page)).toEqual(base);
+  await expect.poll(() => saved(page)).toEqual(base);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
-  expect(await saved(page)).toEqual(applied);
+  await expect.poll(() => saved(page)).toEqual(applied);
   await page.reload();
   expect(await saved(page)).toEqual(applied);
   const list = await openObjects(page);
@@ -349,6 +349,7 @@ test('desk, chair, plants and generic box parts remain editable and survive JSON
   );
   await seed(page, initial);
   await page.goto('/');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   let list = await openObjects(page);
   await list.getByRole('button', { name: /^Desk Desk / }).click();
   await page.getByLabel('Object width scale').fill('1.15');
@@ -622,13 +623,18 @@ test('scene object editing and creation are usable in a narrow viewport', async 
   await seed(page, initial);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   const list = await openObjects(page);
   await list.getByRole('button', { name: /^Desk chair Chair / }).click();
   await expect(page.getByRole('complementary', { name: 'Selected scene object' })).toBeVisible();
   await page.getByRole('slider', { name: 'Object rotation', exact: true }).fill('18');
-  expect(
-    (await saved(page))!.objects.find((object) => object.id === 'decor-chair')?.placement.rotation,
-  ).toBe(18);
+  await expect
+    .poll(
+      async () =>
+        (await saved(page))!.objects.find((object) => object.id === 'decor-chair')?.placement
+          .rotation,
+    )
+    .toBe(18);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -639,5 +645,7 @@ test('scene object editing and creation are usable in a narrow viewport', async 
   await modal.getByLabel('New object template').selectOption('mug');
   await modal.getByLabel('New object name').fill('My mug');
   await modal.getByRole('button', { name: 'Add object to scene' }).click();
-  expect((await saved(page))!.objects.some((object) => object.name === 'My mug')).toBe(true);
+  await expect
+    .poll(async () => (await saved(page))!.objects.some((object) => object.name === 'My mug'))
+    .toBe(true);
 });

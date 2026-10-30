@@ -210,6 +210,156 @@ function surfaces(w: Workspace): Surface[] {
       }),
   ];
 }
+
+/** Only thin, horizontal mats are walk-over support layers. Thick or tilted custom
+ * mats remain ordinary solid obstacles, as do every other object and device. */
+function coveringSurfaces(w: Workspace, excluded: Set<string> = new Set()): Surface[] {
+  return w.objects.flatMap((item) => {
+    if (item.kind !== 'mat' || excluded.has(item.id)) return [];
+    const b = body(item);
+    if (b.bounds.max.y - b.bounds.min.y > 0.06) return [];
+    const horizontal = b.boxes.every((box) =>
+      box.edges.every(
+        (edge) => Math.abs(edge.y) < EPS || (Math.abs(edge.x) < EPS && Math.abs(edge.z) < EPS),
+      ),
+    );
+    if (!horizontal) return [];
+    // Each box retains its real height/footprint: a thin border or disconnected
+    // custom part cannot lend the rest of the mat an invented support surface.
+    return b.boxes.map((box) => ({
+      id: item.id,
+      name: item.name,
+      height: box.bounds.max.y,
+      box,
+    }));
+  });
+}
+
+function boundsOverlapXZ(bounds: Bounds, target: Surface): boolean {
+  if (!target.box) return true;
+  const other = target.box.bounds;
+  return (
+    bounds.min.x < other.max.x - EPS &&
+    bounds.max.x > other.min.x + EPS &&
+    bounds.min.z < other.max.z - EPS &&
+    bounds.max.z > other.min.z + EPS
+  );
+}
+
+function footprintContact(b: Body, target: Surface): boolean {
+  if (!target.box) return true;
+  const layer = target.box;
+  return b.boxes
+    .filter((box) => box.bounds.min.y <= b.bounds.min.y + 0.035)
+    .some((box) => {
+      // The projection of a transformed box is a convex polygon whose edge
+      // directions are its projected box edges. SAT uses their horizontal normals.
+      const normals = [...box.edges, ...layer.edges]
+        .map((edge) => ({ x: -edge.z, y: 0, z: edge.x }))
+        .filter((axis) => length(axis) > 1e-10)
+        .map((axis) => mul(axis, 1 / length(axis)));
+      return normals.every(
+        (axis) =>
+          radius(box, axis) +
+            radius(layer, axis) -
+            Math.abs(dot(sub(box.center, layer.center), axis)) >
+          EPS,
+      );
+    });
+}
+
+/** A drag across a thin covering lifts, translates, then rests. Each segment is
+ * still swept against all solid geometry and returned for exact save replay.
+ * Snapping only to the desk/floor used to lower keyboards and chair wheels INTO
+ * the omitted mat/rug, making an otherwise horizontal drag immediately block. */
+function resolveCoveringMove(
+  before: Workspace,
+  proposed: Workspace,
+  id: string,
+  options: SpatialOptions,
+): SpatialResult | null {
+  const original = find(before, id);
+  const wanted = find(proposed, id);
+  if (
+    original.kind === 'mat' ||
+    original.kind === 'desk' ||
+    original.placement.rotation !== wanted.placement.rotation ||
+    JSON.stringify(original.visual.scale) !== JSON.stringify(wanted.visual.scale) ||
+    JSON.stringify(getGeometryParts(original)) !== JSON.stringify(getGeometryParts(wanted))
+  )
+    return null;
+  const start = getItemBounds(original);
+  const endBody = body(wanted);
+  const end = endBody.bounds;
+  const changed = descendants(before, id);
+  const coverings = coveringSurfaces(proposed, changed).filter(
+    (target) => Math.abs(target.height - start.min.y) < 0.18,
+  );
+  // A conservative footprint envelope only chooses a clearance height. It never
+  // waives a collision: all three movements below use the normal swept solver.
+  const crossed = coverings.filter((target) => boundsOverlapXZ(union([start, end]), target));
+  if (!crossed.length) return null;
+  const supports = surfaces(proposed).filter((target) => target.id !== id && fits(wanted, target));
+  const attached = wanted.attachment
+    ? supports.find((target) => target.id === wanted.attachment?.parentId)
+    : undefined;
+  const base =
+    attached ??
+    supports
+      .filter((target) => Math.abs(target.height - start.min.y) < 0.18)
+      .sort((a, b) => b.height - a.height)[0];
+  const resting = coverings
+    .filter(
+      (target) =>
+        footprintContact(endBody, target) &&
+        (!attached ||
+          (target.height >= attached.height - EPS && target.height <= attached.height + 0.08)),
+    )
+    .sort((a, b) => b.height - a.height)[0];
+  const target = resting && (!base || resting.height > base.height) ? resting : base;
+  if (!target) return null;
+  const final = structuredClone(wanted);
+  try {
+    setHeight(final, target);
+  } catch (error) {
+    return {
+      workspace: before,
+      blocked: true,
+      reason: error instanceof Error ? error.message : 'This shape cannot rest on the surface.',
+    };
+  }
+  const plane = Math.max(
+    start.min.y,
+    getItemBounds(final).min.y,
+    ...crossed.map((s) => s.height + GAP),
+  );
+  const lift = original.placement.y + plane - start.min.y;
+  const travel = final.placement.y + plane - getItemBounds(final).min.y;
+  const placements: Placement[] = [
+    { ...original.placement, y: lift },
+    { ...final.placement, y: travel },
+    { ...final.placement },
+  ];
+  let current = before;
+  const path: Placement[] = [];
+  for (const placement of placements) {
+    if (
+      (['x', 'y', 'z', 'rotation'] as const).every(
+        (axis) => Math.abs(find(current, id).placement[axis] - placement[axis]) < 1e-9,
+      )
+    )
+      continue;
+    const candidate = structuredClone(current);
+    Object.assign(find(candidate, id), { ...wanted, placement });
+    const result = resolveSpatialEdit(current, candidate, id, { ...options, snap: undefined });
+    const next = find(result.workspace, id).placement;
+    if (JSON.stringify(next) !== JSON.stringify(find(current, id).placement))
+      path.push({ ...next });
+    current = result.workspace;
+    if (result.blocked) return { ...result, path };
+  }
+  return { workspace: current, blocked: false, reason: '', path };
+}
 export function getSurfaceTargets(w: Workspace, id: string): { id: string; name: string }[] {
   const item = find(w, id);
   return surfaces(w)
@@ -378,7 +528,13 @@ export type SpatialOptions = {
   /** Dimension edits can keep an existing resting contact without changing an intentional height. */
   preserveSupport?: boolean;
 };
-export type SpatialResult = { workspace: Workspace; blocked: boolean; reason: string };
+export type SpatialResult = {
+  workspace: Workspace;
+  blocked: boolean;
+  reason: string;
+  /** Collision-checked support transitions, replayed as one undoable drag. */
+  path?: Placement[];
+};
 /** Immutable placement solver used by live dragging and persisted commands. */
 export function resolveSpatialEdit(
   before: Workspace,
@@ -386,22 +542,31 @@ export function resolveSpatialEdit(
   id: string,
   options: SpatialOptions = {},
 ): SpatialResult {
+  if (options.snap === 'auto') {
+    const coveringMove = resolveCoveringMove(before, proposed, id, options);
+    if (coveringMove) return coveringMove;
+  }
   const candidate = structuredClone(proposed);
   const oldItem = find(before, id);
   const item = find(candidate, id);
   const changed = descendants(before, id);
   if (options.preserveSupport && item.placement.y === oldItem.placement.y && !options.snap) {
     const oldBody = body(oldItem);
-    const resting = surfaces(before)
+    const coveringIds = new Set(coveringSurfaces(before).map((target) => target.id));
+    const resting = [...surfaces(before), ...coveringSurfaces(before)]
       .filter((target) => {
         const gap = oldBody.bounds.min.y - target.height;
         return (
           target.id !== id &&
           (item.kind !== 'desk' || target.id === 'floor') &&
-          (!oldItem.attachment || target.id === oldItem.attachment.parentId) &&
+          (!oldItem.attachment ||
+            target.id === oldItem.attachment.parentId ||
+            coveringIds.has(target.id)) &&
           gap >= -EPS &&
           gap <= REST_TOLERANCE &&
-          fitsBody(oldBody, target)
+          (coveringIds.has(target.id)
+            ? footprintContact(oldBody, target)
+            : fitsBody(oldBody, target))
         );
       })
       .sort((a, b) => b.height - a.height)[0];
@@ -616,6 +781,15 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
   if (!fits(item, target))
     throw new Error('This object is too large for that desk. Reduce its size first.');
   setHeight(item, target);
+  const covering = coveringSurfaces(candidate, descendants(candidate, id))
+    .filter(
+      (layer) =>
+        layer.height >= target.height - EPS &&
+        layer.height <= target.height + 0.08 &&
+        footprintContact(body(item), layer),
+    )
+    .sort((a, b) => b.height - a.height)[0];
+  if (covering && item.kind !== 'mat' && item.kind !== 'desk') setHeight(item, covering);
   if (item.attachment?.parentId !== surfaceId) item.attachment = null;
   const result = resolveSpatialEdit(workspace, candidate, id, { sweep: false });
   if (result.blocked) throw new Error(result.reason);

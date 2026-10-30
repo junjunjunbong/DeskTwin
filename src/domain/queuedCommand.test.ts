@@ -34,6 +34,78 @@ function fixture(): Workspace {
 }
 
 describe('queued granular editing', () => {
+  it.each(['name', 'model', 'status', 'statusNote'] as const)(
+    'rejects a draft after an earlier queued edit changes the saved %s',
+    (field) => {
+      const view = createDemoWorkspace();
+      const device = view.devices[0];
+      const expectedDetails = {
+        name: device.name,
+        model: device.model,
+        status: device.status,
+        statusNote: device.statusNote,
+      };
+      const current = applyCommand(view, {
+        type: 'update-device',
+        id: device.id,
+        patch:
+          field === 'status'
+            ? { status: 'reported-issue' }
+            : { [field]: 'Saved by an earlier action' },
+      });
+      const before = structuredClone(current);
+      expect(() =>
+        applyQueuedCommand(current, view, {
+          type: 'update-device',
+          id: device.id,
+          patch: { name: 'Stale draft name' },
+          expectedDetails,
+        }),
+      ).toThrow('Saved device details changed');
+      expect(current).toEqual(before);
+    },
+  );
+
+  it('allows an explicit detail save after unrelated visual and hardware binding edits', () => {
+    const view = createDemoWorkspace();
+    const device = view.devices[0];
+    const expectedDetails = {
+      name: device.name,
+      model: device.model,
+      status: device.status,
+      statusNote: device.statusNote,
+    };
+    const binding = {
+      category: 'display' as const,
+      identity: {
+        key: 'stable_test_device',
+        stability: 'persistent' as const,
+        scope: 'installation_test',
+      },
+      approvedAt: '2026-10-29T00:00:00.000Z',
+    };
+    let current = applyCommand(view, {
+      type: 'update-device',
+      id: device.id,
+      patch: { visual: { color: '#123456' } },
+    });
+    current = applyCommand(current, { type: 'bind-hardware', id: device.id, binding });
+    const result = applyQueuedCommand(current, view, {
+      type: 'update-device',
+      id: device.id,
+      patch: { model: 'Explicitly saved model' },
+      expectedDetails,
+    });
+    expect(result.devices[0]).toMatchObject({
+      name: device.name,
+      model: 'Explicitly saved model',
+      status: device.status,
+      statusNote: device.statusNote,
+      visual: { color: '#123456' },
+      hardwareBinding: binding,
+    });
+  });
+
   it('merges different position and scale fields without restoring stale values', () => {
     const view = fixture();
     let saved = applyQueuedCommand(view, view, {

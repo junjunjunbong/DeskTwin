@@ -103,6 +103,50 @@ async function exportJSON(page: Page): Promise<Workspace> {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
+for (const [id, grabHeight, grabZ, grabXOffset] of [
+  ['keyboard', 2.6, 0.88, 0],
+  ['mouse', 2.68, 0.96, 0],
+  // The mug occludes the SSD's center from this camera. Grab its visible left end.
+  ['ssd', 2.615, 0.6, -0.2],
+  ['decor-chair', 2.68, 3.13, 0],
+] as const) {
+  test(`the default ${id} drags naturally over its mat or rug and remains one reversible save`, async ({
+    page,
+  }) => {
+    const initial = createDemoWorkspace();
+    const item = [...initial.devices, ...initial.objects].find((entry) => entry.id === id)!;
+    await seed(page, initial);
+    await page.getByRole('switch', { name: 'Show connections', exact: true }).click();
+    const relationship = initial.connections.find((connection) => connection.to === id);
+    const line = relationship ? page.locator(`[data-connection-id="${relationship.id}"]`) : null;
+    const beforeEndpoint = line ? await line.getAttribute('data-to-position') : null;
+    await movePointer(page, await screen(page, item.placement.x + grabXOffset, grabHeight, grabZ));
+    await page.mouse.down();
+    await movePointer(
+      page,
+      await screen(page, item.placement.x + grabXOffset + 0.24, grabHeight, grabZ),
+      6,
+    );
+    if (line)
+      await expect.poll(() => line.getAttribute('data-to-position')).not.toBe(beforeEndpoint);
+    expect(await saved(page)).toEqual(initial);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await position(page, id)).x)
+      .toBeGreaterThan(item.placement.x + 0.18);
+    const moved = await saved(page);
+    expect((await position(page, id)).x).toBeCloseTo(item.placement.x + 0.24, 2);
+    expect(validateSceneCollisions(moved, initial)).toEqual([]);
+    expect(moved.connections).toEqual(initial.connections);
+    expect(moved.history).toHaveLength(1);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect.poll(() => saved(page)).toEqual(initial);
+    await page.getByRole('button', { name: 'Redo', exact: true }).click();
+    await expect.poll(() => saved(page)).toEqual(moved);
+  });
+}
+
 test('a fast real drag stops at a thin blocker without saving intermediate frames', async ({
   page,
 }) => {
@@ -183,13 +227,18 @@ test('attached objects follow the desk during an actual drag and restore togethe
 }) => {
   const initial = attachedWorkspace();
   await seed(page, initial);
-  const marker = page.getByRole('button', { name: 'Select Attached box', exact: true });
-  await expect(marker).toBeVisible();
-  const before = (await marker.boundingBox())!;
+  // Edit mode suppresses scene labels, but the renderer still projects this
+  // attached object on each live frame. Check that projection alongside the
+  // persisted transforms instead of requiring a scene-obscuring popup.
+  const marker = page.locator('button[aria-label="Select Attached box"]');
+  await expect(marker).toBeAttached();
+  await expect(marker).toBeHidden();
+  const markerX = () => marker.evaluate((node) => parseFloat((node as HTMLElement).style.left));
+  const before = await markerX();
   await movePointer(page, await screen(page, 0.85, 1.36, 0.5));
   await page.mouse.down();
   await movePointer(page, await screen(page, 1.45, 1.36, 0.5), 8);
-  await expect.poll(async () => (await marker.boundingBox())!.x).toBeGreaterThan(before.x + 10);
+  await expect.poll(markerX).toBeGreaterThan(before + 10);
   expect(await saved(page)).toEqual(initial);
   await page.mouse.up();
   await expect.poll(async () => (await position(page, 'small-desk')).x).toBeGreaterThan(0.5);
@@ -212,23 +261,27 @@ test('pointer cancellation restores both desk and attached object without a save
 }) => {
   const initial = attachedWorkspace();
   await seed(page, initial);
-  const marker = page.getByRole('button', { name: 'Select Attached box', exact: true });
-  await expect(marker).toBeVisible();
-  const before = (await marker.boundingBox())!;
+  // Edit mode suppresses scene labels, but the renderer still projects this
+  // attached object on each live frame. Check that projection alongside the
+  // persisted transforms instead of requiring a scene-obscuring popup.
+  const marker = page.locator('button[aria-label="Select Attached box"]');
+  await expect(marker).toBeAttached();
+  await expect(marker).toBeHidden();
+  const markerX = () => marker.evaluate((node) => parseFloat((node as HTMLElement).style.left));
+  const before = await markerX();
   await movePointer(page, await screen(page, 0.85, 1.36, 0.5));
   await page.mouse.down();
   await movePointer(page, await screen(page, 1.45, 1.36, 0.5), 8);
-  await expect.poll(async () => (await marker.boundingBox())!.x).toBeGreaterThan(before.x + 10);
+  await expect.poll(markerX).toBeGreaterThan(before + 10);
   await page.getByTestId('desk-canvas').dispatchEvent('pointercancel', { pointerId: 1 });
   await page.mouse.up();
-  await expect
-    .poll(async () => Math.abs((await marker.boundingBox())!.x - before.x))
-    .toBeLessThan(1);
+  await expect.poll(async () => Math.abs((await markerX()) - before)).toBeLessThan(1);
   expect(await saved(page)).toEqual(initial);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
 async function selectObject(page: Page, name: string) {
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
   const list = page.getByRole('complementary', { name: 'Scene objects panel' });
   await list.getByRole('button', { name: new RegExp(`^${name} `) }).click();
@@ -345,6 +398,7 @@ test('monitor template parts can be extended, rotated, undone and reloaded witho
   await page.getByRole('button', { name: 'Add box', exact: true }).click();
   await expect.poll(async () => (await saved(page)).devices[0].parts?.length).toBe(5);
   await expect(page.getByLabel('Shape part', { exact: true })).toHaveValue('4');
+  const beforePartEdits = (await saved(page)).history.length;
   for (const [label, value] of [
     ['Box 5 size x', '0.42'],
     ['Box 5 position y', '1.8'],
@@ -356,6 +410,12 @@ test('monitor template parts can be extended, rotated, undone and reloaded witho
   }
   await expect.poll(async () => (await saved(page)).devices[0].parts?.[4].rotation?.z).toBe(30);
   const modified = await saved(page);
+  expect(modified.devices[0].parts?.[4]).toMatchObject({
+    size: { x: 0.42, y: 0.6, z: 0.6 },
+    position: { x: 0.7, y: 1.8, z: 0 },
+    rotation: { z: 30 },
+  });
+  expect(modified.history).toHaveLength(beforePartEdits + 4);
   expect(modified.devices[0]).toMatchObject({
     source: 'user-reported',
     status: 'reported-working',

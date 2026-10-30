@@ -1,6 +1,12 @@
-import { test, expect } from '@playwright/test';
-import { createDemoWorkspace } from '../src/domain/workspace';
+import { test, expect, type Page } from '@playwright/test';
+import { createDemoWorkspace, type Workspace } from '../src/domain/workspace';
 const key = 'desktwin.workspace.v1';
+async function saved(page: Page): Promise<Workspace | null> {
+  return page.evaluate((name) => {
+    const value = localStorage.getItem(name);
+    return value ? JSON.parse(value) : null;
+  }, key);
+}
 let pageErrors: string[] = [];
 test.beforeEach(async ({ page }) => {
   pageErrors = [];
@@ -14,7 +20,13 @@ test('renders a real canvas without claiming detected hardware', async ({ page }
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
-  await expect(page.getByText('Editable voxel scene · No live device detection')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'View', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(
+    page.getByRole('complementary', { name: 'Workspace overview', exact: true }),
+  ).toBeVisible();
   await expect(page.locator('header').getByRole('link', { name: /github/i })).toHaveCount(0);
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await expect(page.getByRole('button', { name: /MacBook Laptop/ })).toBeVisible();
@@ -29,6 +41,10 @@ test('adds a device and persists across reload', async ({ page }) => {
   const modal = page.getByRole('dialog', { name: 'Add device' });
   await modal.getByLabel('Device name').fill('Test display');
   await modal.getByRole('button', { name: 'Add to my desk' }).click();
+  await expect(modal).not.toBeVisible();
+  await expect
+    .poll(async () => (await saved(page))?.devices.find((d) => d.name === 'Test display')?.source)
+    .toBe('user-reported');
   await page.reload();
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await expect(page.getByRole('button', { name: /Test display Monitor/ })).toBeVisible();
@@ -68,9 +84,13 @@ test('editing a legacy example device model preserves the saved name', async ({ 
   await page.goto('/');
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await page.getByRole('button', { name: /Right monitor Monitor/ }).click();
+  await page.getByRole('button', { name: 'Edit device details', exact: true }).click();
   await expect(page.getByLabel('Device name')).toHaveValue('Right monitor');
   await page.getByLabel('Model optional').fill('Display model');
   await page.getByRole('button', { name: 'Save device details' }).click();
+  await expect
+    .poll(async () => (await saved(page))?.devices.find((d) => d.id === 'monitor-right')?.model)
+    .toBe('Display model');
   const stored = await page.evaluate(
     (storageKey) => JSON.parse(localStorage.getItem(storageKey)!),
     key,
@@ -85,9 +105,17 @@ test('conversation proposals require confirmation and never verify operation', a
   await expect(
     page.getByText('I connected the right monitor to the dock with HDMI', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Confirm and apply' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit to review connection' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm and apply' })).toHaveCount(0);
+  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
+  await page.getByRole('button', { name: 'Edit to review connection' }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: 'Confirm and apply' }).click();
+  await expect(page.getByText('Applied after confirmation')).toBeVisible();
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(
     stored.connections.filter((c: { source: string }) => c.source === 'user-reported'),
@@ -98,6 +126,7 @@ test('conversation proposals require confirmation and never verify operation', a
 test('supports manual connections and undo', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Record a connection' });
   await modal.getByRole('combobox', { name: 'First device', exact: true }).selectOption('laptop');
@@ -106,9 +135,11 @@ test('supports manual connections and undo', async ({ page }) => {
     .selectOption('monitor-right');
   await modal.getByRole('combobox', { name: 'Connector', exact: true }).selectOption('HDMI');
   await modal.getByRole('button', { name: 'Save as user-reported' }).click();
+  await expect.poll(async () => (await saved(page))?.connections.length).toBe(8);
   let stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.connections).toHaveLength(8);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(async () => (await saved(page))?.connections.length).toBe(7);
   stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.connections).toHaveLength(7);
 });
@@ -117,6 +148,7 @@ test('rejects invalid import without replacing the workspace', async ({ page }) 
   await page.getByRole('button', { name: 'Open settings' }).click();
   await page.getByLabel('Workspace name').fill('Workspace to keep');
   await page.getByRole('dialog').getByLabel('Lighting').focus();
+  await expect.poll(async () => (await saved(page))?.name).toBe('Workspace to keep');
   const before = await page.evaluate((k) => localStorage.getItem(k), key);
   await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles({
     name: 'bad.json',
@@ -153,6 +185,9 @@ test('guided troubleshooting records only an explicit user test', async ({ page 
   await page.getByRole('button', { name: 'The screen works' }).click();
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: 'Save result as user-reported' }).click();
+  await expect
+    .poll(async () => (await saved(page))?.devices.find((d) => d.id === 'monitor-right')?.status)
+    .toBe('reported-working');
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   const monitor = stored.devices.find((d: { id: string }) => d.id === 'monitor-right');
   expect(monitor.status).toBe('reported-working');
@@ -212,6 +247,7 @@ test('photo selection alone never sends an image; applying a scene needs a secon
   expect(calls).toBe(1);
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
   await page.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  await expect.poll(async () => (await saved(page))?.devices.at(-1)?.source).toBe('photo-inferred');
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices.at(-1).source).toBe('photo-inferred');
   expect(stored.devices.at(-1).status).toBe('unknown');
@@ -261,10 +297,14 @@ test('position changes and deletes can be undone', async ({ page }) => {
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
   await page.getByRole('slider', { name: 'Device left / right position' }).fill('1.25');
+  await expect
+    .poll(async () => (await saved(page))?.devices.find((d) => d.id === 'dock')?.placement.x)
+    .toBe(1.25);
   let stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices.find((d: { id: string }) => d.id === 'dock').placement.x).toBe(1.25);
   await page.getByRole('button', { name: 'Delete device', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm deletion', exact: true }).click();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(7);
   stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices).toHaveLength(7);
   expect(
@@ -273,6 +313,7 @@ test('position changes and deletes can be undone', async ({ page }) => {
     ),
   ).toBe(false);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(8);
   stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices).toHaveLength(8);
 });

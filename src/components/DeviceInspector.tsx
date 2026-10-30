@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { TransformEditor } from './TransformEditor';
 import { ShapeEditor } from './ShapeEditor';
 import { PlacementControls } from './PlacementControls';
+import { ReportedStatus } from './WorkspaceOverview';
+import { deviceDetails, type useDeviceDrafts } from './useDeviceDrafts';
 import {
   kindLabels,
   sourceLabels,
@@ -21,6 +23,9 @@ interface Props {
   onClose: () => void;
   onConnect: () => void;
   onSelect: (id: string) => void;
+  onEdit: () => void;
+  hardwareDetails?: ReactNode;
+  drafts: ReturnType<typeof useDeviceDrafts>;
 }
 export function DeviceInspector({
   device: d,
@@ -30,18 +35,24 @@ export function DeviceInspector({
   onClose,
   onConnect,
   onSelect,
+  onEdit,
+  hardwareDetails,
+  drafts,
 }: Props) {
-  const [name, setName] = useState(d.name);
-  const [model, setModel] = useState(d.model);
-  const [status, setStatus] = useState(d.status);
-  const [note, setNote] = useState(d.statusNote);
+  const draft = drafts.drafts[d.id];
+  const { name, model, status, statusNote: note } = draft?.values ?? deviceDetails(d);
+  const saving = draft?.saving ?? false;
+  const needsReview = draft ? drafts.needsReview(draft) : false;
   const [deleting, setDeleting] = useState(false);
+  const [removingConnection, setRemovingConnection] = useState<string | null>(null);
+  const [removalPending, setRemovalPending] = useState(false);
+  const [removalError, setRemovalError] = useState('');
   useEffect(() => {
-    setName(d.name);
-    setModel(d.model);
-    setStatus(d.status);
-    setNote(d.statusNote);
-  }, [d.name, d.model, d.status, d.statusNote]);
+    if (mode !== 'edit') {
+      setRemovingConnection(null);
+      setRemovalError('');
+    }
+  }, [mode]);
   const links = workspace.connections.filter((c) => c.from === d.id || c.to === d.id);
   return (
     <aside className="floating-panel inspector" aria-label="Selected device">
@@ -62,40 +73,145 @@ export function DeviceInspector({
       <div className="panel-scroll">
         <div className="evidence-row">
           <span className={`source-badge ${d.source}`}>{sourceLabels[d.source]}</span>
-          <span className="muted">Not detected in real time</span>
+          <span className="muted">Record source</span>
+        </div>
+        <section className="panel-section" hidden={mode !== 'edit'}>
+          <h3>
+            <PencilSimple size={16} />
+            Edit placement
+          </h3>
+          <p className="muted">Drag in the scene or adjust position, size, and color below.</p>
+          <TransformEditor
+            placement={d.placement}
+            visual={d.visual}
+            prefix="Device"
+            onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
+          />
+          <PlacementControls item={d} workspace={workspace} onCommand={onCommand} prefix="Device" />
+          <ShapeEditor
+            item={d}
+            onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
+            onPartChange={(index, patch) =>
+              onCommand({
+                type: 'update-part',
+                id: d.id,
+                index,
+                expectedLength: d.parts?.length ?? 0,
+                patch,
+              })
+            }
+          />
+        </section>
+        <div className="device-evidence-summary">
+          <dl className="record-facts">
+            <div>
+              <dt>Model</dt>
+              <dd>{d.model || 'Not recorded'}</dd>
+            </div>
+            <div>
+              <dt>User report</dt>
+              <dd>
+                <ReportedStatus status={d.status} />
+              </dd>
+            </div>
+            <div>
+              <dt>Visual source</dt>
+              <dd>{sourceLabels[d.visual.source]}</dd>
+            </div>
+          </dl>
+          {d.statusNote && <p className="record-note">{d.statusNote}</p>}
+        </div>
+        {hardwareDetails}
+        {draft && (
+          <section className="device-draft-notice" aria-label="Unsaved device details">
+            <strong>{saving ? 'Saving device details...' : 'Unsaved device details'}</strong>
+            <p>
+              Your draft stays when you switch modes, devices, or panels. Only Save changes the
+              record.
+            </p>
+            {drafts.storageConflict && (
+              <p role="alert">Load the latest saved workspace before saving. Your draft is kept.</p>
+            )}
+            {needsReview && !drafts.storageConflict && (
+              <div className="draft-review" role="alert">
+                <strong>Saved details changed. Review before saving.</strong>
+                <dl className="record-facts">
+                  <div>
+                    <dt>Saved name</dt>
+                    <dd>{d.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Saved model</dt>
+                    <dd>{d.model || 'Not recorded'}</dd>
+                  </div>
+                  <div>
+                    <dt>Saved user report</dt>
+                    <dd>{statusLabels[d.status]}</dd>
+                  </div>
+                  <div>
+                    <dt>Saved note</dt>
+                    <dd>{d.statusNote || 'No note'}</dd>
+                  </div>
+                </dl>
+                {mode === 'edit' && (
+                  <button
+                    className="button secondary full"
+                    disabled={saving}
+                    onClick={() => drafts.reviewLatest(d.id)}
+                  >
+                    Keep my edited fields after review
+                  </button>
+                )}
+              </div>
+            )}
+            {draft.error && (
+              <p className="form-error" role="alert">
+                {draft.error}
+              </p>
+            )}
+          </section>
+        )}
+        <div hidden={mode === 'edit'}>
+          <button className="button secondary full" onClick={onEdit}>
+            <PencilSimple size={16} />
+            {draft ? 'Resume editing draft' : 'Edit device details'}
+          </button>
         </div>
         <form
-          onSubmit={(e) => {
+          hidden={mode !== 'edit'}
+          aria-busy={saving}
+          onSubmit={async (e) => {
             e.preventDefault();
-            onCommand({
-              type: 'update-device',
-              id: d.id,
-              patch: {
-                ...(name !== d.name ? { name } : {}),
-                model,
-                source: name !== d.name || model !== d.model ? 'user-reported' : d.source,
-                status,
-                statusNote: status === 'unknown' ? '' : note || 'The user reported this status.',
-              },
-            });
+            await drafts.save(d.id);
           }}
         >
           <label>
             Device name
-            <input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} required />
+            <input
+              value={name}
+              maxLength={60}
+              onChange={(e) => drafts.change(d, { name: e.target.value })}
+              disabled={saving}
+              required
+            />
           </label>
           <label>
             Model <span className="muted">optional</span>
             <input
               value={model}
+              disabled={saving}
               maxLength={100}
               placeholder="Do you know the exact model?"
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => drafts.change(d, { model: e.target.value })}
             />
           </label>
           <label>
             Operating status <span className="muted">user-reported</span>
-            <select value={status} onChange={(e) => setStatus(e.target.value as Device['status'])}>
+            <select
+              value={status}
+              disabled={saving}
+              onChange={(e) => drafts.change(d, { status: e.target.value as Device['status'] })}
+            >
               {Object.entries(statusLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
@@ -108,59 +224,40 @@ export function DeviceInspector({
               What did you check?
               <textarea
                 value={note}
+                disabled={saving}
                 maxLength={300}
                 placeholder="e.g. The screen worked after connecting it directly."
-                onChange={(e) => setNote(e.target.value)}
+                onChange={(e) => drafts.change(d, { statusNote: e.target.value })}
               />
             </label>
           )}
-          <button className="button secondary full" type="submit">
+          <button
+            className="button secondary full"
+            type="submit"
+            disabled={saving || needsReview || drafts.storageConflict}
+          >
             <Check size={17} />
             Save device details
           </button>
+          {draft && (
+            <button
+              className="text-button"
+              type="button"
+              disabled={saving}
+              onClick={() => drafts.discard(d.id)}
+            >
+              Discard draft
+            </button>
+          )}
         </form>
-        {mode === 'edit' && (
-          <section className="panel-section">
-            <h3>
-              <PencilSimple size={16} />
-              Edit placement
-            </h3>
-            <p className="muted">Drag in the scene or adjust position, size, and color below.</p>
-            <TransformEditor
-              placement={d.placement}
-              visual={d.visual}
-              prefix="Device"
-              onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
-            />
-            <PlacementControls
-              item={d}
-              workspace={workspace}
-              onCommand={onCommand}
-              prefix="Device"
-            />
-            <ShapeEditor
-              item={d}
-              onChange={(patch) => onCommand({ type: 'update-device', id: d.id, patch })}
-              onPartChange={(index, patch) =>
-                onCommand({
-                  type: 'update-part',
-                  id: d.id,
-                  index,
-                  expectedLength: d.parts?.length ?? 0,
-                  patch,
-                })
-              }
-            />
-          </section>
-        )}
         <section className="panel-section">
           <div className="section-heading">
             <h3>
               Connections <span className="count">{links.length}</span>
             </h3>
-            <button className="text-button" onClick={onConnect}>
+            <button className="text-button" onClick={mode === 'edit' ? onConnect : onEdit}>
               <Link size={15} />
-              Add
+              {mode === 'edit' ? 'Add' : 'Edit connections'}
             </button>
           </div>
           {links.length === 0 ? (
@@ -205,13 +302,67 @@ export function DeviceInspector({
                     </dl>
                     {c.note && <p className="connection-note">{c.note}</p>}
                   </div>
-                  <button
-                    className="icon-button small"
-                    aria-label={`Remove connection to ${other.name}`}
-                    onClick={() => onCommand({ type: 'remove-connection', id: c.id })}
-                  >
-                    <X size={15} />
-                  </button>
+                  {mode === 'edit' && (
+                    <button
+                      className="icon-button small"
+                      aria-label={`Remove connection to ${other.name}`}
+                      disabled={removalPending}
+                      onClick={() => {
+                        setRemovingConnection(c.id);
+                        setRemovalError('');
+                      }}
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
+                  {mode === 'edit' && removingConnection === c.id && (
+                    <div
+                      className="connection-remove-confirm"
+                      role="region"
+                      aria-label={`Confirm removing connection to ${other.name}`}
+                    >
+                      <p>
+                        Remove this recorded {c.connector} relationship with {other.name}?
+                      </p>
+                      <p className="micro-note">
+                        This only removes the saved record. It does not disconnect hardware.
+                      </p>
+                      {removalError && (
+                        <p className="form-error" role="alert">
+                          {removalError}
+                        </p>
+                      )}
+                      <div className="placement-actions">
+                        <button
+                          className="button danger"
+                          disabled={removalPending}
+                          onClick={async () => {
+                            if (removalPending || mode !== 'edit') return;
+                            setRemovalPending(true);
+                            try {
+                              if (await onCommand({ type: 'remove-connection', id: c.id }))
+                                setRemovingConnection(null);
+                              else
+                                setRemovalError(
+                                  'The connection was not removed. Check the storage notice and try again.',
+                                );
+                            } finally {
+                              setRemovalPending(false);
+                            }
+                          }}
+                        >
+                          Confirm removal
+                        </button>
+                        <button
+                          className="button secondary"
+                          disabled={removalPending}
+                          onClick={() => setRemovingConnection(null)}
+                        >
+                          Cancel removal
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -235,27 +386,29 @@ export function DeviceInspector({
             }}
           />
         )}
-        {deleting ? (
-          <div className="delete-confirm">
-            <p>Delete this device and its associated connections?</p>
-            <button
-              className="button danger"
-              onClick={async () => {
-                if ((await onCommand({ type: 'remove-device', id: d.id })) !== false) onClose();
-              }}
-            >
-              Confirm deletion
+        <div hidden={mode !== 'edit'}>
+          {deleting ? (
+            <div className="delete-confirm">
+              <p>Delete this device and its associated connections?</p>
+              <button
+                className="button danger"
+                onClick={async () => {
+                  if ((await onCommand({ type: 'remove-device', id: d.id })) !== false) onClose();
+                }}
+              >
+                Confirm deletion
+              </button>
+              <button className="text-button" onClick={() => setDeleting(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button className="text-button danger-text" onClick={() => setDeleting(true)}>
+              <Trash size={15} />
+              Delete device
             </button>
-            <button className="text-button" onClick={() => setDeleting(false)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button className="text-button danger-text" onClick={() => setDeleting(true)}>
-            <Trash size={15} />
-            Delete device
-          </button>
-        )}
+          )}
+        </div>
       </div>
     </aside>
   );

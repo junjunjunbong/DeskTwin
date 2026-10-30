@@ -377,6 +377,7 @@ test('device and connection dialogs retain entries after a failed save and close
     (window as typeof window & { blockWrites: boolean }).blockWrites = true;
   });
   await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const connection = page.getByRole('dialog', { name: 'Record a connection' });
   await connection.getByRole('combobox', { name: 'Connector', exact: true }).selectOption('HDMI');

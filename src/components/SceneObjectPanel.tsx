@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Cube, Plus, Trash, X } from '@phosphor-icons/react';
+import { Cube, Plus, Trash, X, PencilSimple } from '@phosphor-icons/react';
 import {
   createSceneObject,
   ObjectKindSchema,
@@ -83,7 +83,7 @@ export function SceneObjectList({
         </button>
       </div>
       <div className="panel-footnote">
-        Select an object to edit its shape, placement, size, and color.
+        Select an object to inspect it. Switch to Edit to change placement, size, color, and shape.
       </div>
     </aside>
   );
@@ -92,11 +92,15 @@ export function SceneObjectList({
 export function SceneObjectInspector({
   object,
   workspace,
+  mode,
   onCommand,
   onClose,
+  onEdit,
 }: {
   object: SceneObject;
   workspace: Workspace;
+  mode: string;
+  onEdit: () => void;
   onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
   onClose: () => void;
 }) {
@@ -120,77 +124,109 @@ export function SceneObjectInspector({
         </button>
       </div>
       <div className="panel-scroll">
-        <label>
-          Object name
-          <CommitTextInput
-            aria-label="Object name"
-            maxLength={60}
-            value={object.name}
-            onCommit={(name) => update({ name })}
-          />
-        </label>
-        <label>
-          Template
-          <select
-            aria-label="Object template"
-            value={object.kind}
-            onChange={(e) =>
-              update({
-                kind: e.target.value as ObjectKind,
-                parts: [],
-                shapeMode: 'template',
-                visual: { source: 'user-reported' },
+        <div hidden={mode === 'edit'}>
+          <dl className="record-facts">
+            <div>
+              <dt>Template</dt>
+              <dd>{objectKindLabels[object.kind]}</dd>
+            </div>
+            <div>
+              <dt>Visual source</dt>
+              <dd>{sourceLabels[object.visual.source]}</dd>
+            </div>
+            <div>
+              <dt>Attachment</dt>
+              <dd>
+                {object.attachment
+                  ? workspace.objects.find((item) => item.id === object.attachment?.parentId)
+                      ?.name || 'Desk'
+                  : 'Independent object'}
+              </dd>
+            </div>
+          </dl>
+          {object.visual.note && <p className="record-note">{object.visual.note}</p>}
+          <p className="micro-note">
+            Furniture and props have no operating status. Shape and placement are editable
+            approximations.
+          </p>
+          <button className="button secondary full" onClick={onEdit}>
+            <PencilSimple size={16} />
+            Edit selected object
+          </button>
+        </div>
+        <div hidden={mode !== 'edit'}>
+          <label>
+            Object name
+            <CommitTextInput
+              aria-label="Object name"
+              maxLength={60}
+              value={object.name}
+              onCommit={(name) => update({ name })}
+            />
+          </label>
+          <label>
+            Template
+            <select
+              aria-label="Object template"
+              value={object.kind}
+              onChange={(e) =>
+                update({
+                  kind: e.target.value as ObjectKind,
+                  parts: [],
+                  shapeMode: 'template',
+                  visual: { source: 'user-reported' },
+                })
+              }
+            >
+              {ObjectKindSchema.options.map((kind) => (
+                <option key={kind} value={kind}>
+                  {objectKindLabels[kind]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <TransformEditor placement={object.placement} visual={object.visual} onChange={update} />
+          <PlacementControls item={object} workspace={workspace} onCommand={onCommand} />
+          <ShapeEditor
+            item={object}
+            onChange={update}
+            onPartChange={(index, patch) =>
+              onCommand({
+                type: 'update-part',
+                id: object.id,
+                index,
+                expectedLength: object.parts.length,
+                patch,
               })
             }
-          >
-            {ObjectKindSchema.options.map((kind) => (
-              <option key={kind} value={kind}>
-                {objectKindLabels[kind]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <TransformEditor placement={object.placement} visual={object.visual} onChange={update} />
-        <PlacementControls item={object} workspace={workspace} onCommand={onCommand} />
-        <ShapeEditor
-          item={object}
-          onChange={update}
-          onPartChange={(index, patch) =>
-            onCommand({
-              type: 'update-part',
-              id: object.id,
-              index,
-              expectedLength: object.parts.length,
-              patch,
-            })
-          }
-        />
-        <p className="micro-note">
-          Furniture and props have no operating status. Templates and dimensions are editable
-          approximations.
-        </p>
-        {deleting ? (
-          <div className="delete-confirm">
-            <p>Delete this object? You can undo this change.</p>
-            <button
-              className="button danger"
-              onClick={async () => {
-                if ((await onCommand({ type: 'remove-object', id: object.id })) !== false)
-                  onClose();
-              }}
-            >
-              Confirm object deletion
+          />
+          <p className="micro-note">
+            Furniture and props have no operating status. Templates and dimensions are editable
+            approximations.
+          </p>
+          {deleting ? (
+            <div className="delete-confirm">
+              <p>Delete this object? You can undo this change.</p>
+              <button
+                className="button danger"
+                onClick={async () => {
+                  if ((await onCommand({ type: 'remove-object', id: object.id })) !== false)
+                    onClose();
+                }}
+              >
+                Confirm object deletion
+              </button>
+              <button className="text-button" onClick={() => setDeleting(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button className="text-button danger-text" onClick={() => setDeleting(true)}>
+              <Trash size={15} />
+              Delete object
             </button>
-            <button className="text-button" onClick={() => setDeleting(false)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button className="text-button danger-text" onClick={() => setDeleting(true)}>
-            <Trash size={15} />
-            Delete object
-          </button>
-        )}
+          )}
+        </div>
       </div>
     </aside>
   );
