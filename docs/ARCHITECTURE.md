@@ -1,5 +1,13 @@
 # Architecture
 
+## Guided setup and recorded checks
+
+`DeskSetupPanel` combines device evidence review, optional consented Mac matching, targeted connection questions, exact replacement review, and monitor handoff. `deskSetup.ts` only suggests a connection from a clear two-device report; missing or ambiguous information remains a question. Photo descriptions carry into setup in memory after scene approval, never as automatically confirmed topology.
+
+`diagnosis.ts` derives a bounded monitor-to-computer route from recorded connections and builds a deterministic check plan. It records route confirmation, distinct failed/skipped answers, and user-confirmed compatibility before a dock-bypass test. The workspace stores up to 30 schema-validated sessions. Queued saves preserve earlier answers and reject route changes; recording a working status is a separate guarded user-confirmed command.
+
+`useAssistant` retains an explicit conversation target. The server validates it and derives eligible check summaries from privacy-filtered current state. OS-only targets are blocked locally; generated prompts never interpolate hardware names. Pending requests are invalidated on import/reset/reload. `connectionView.ts` and `DeskCanvas.focusPath` highlight only explicitly named existing path devices/edges, while the connection visibility toggle remains independent. These features are tested with local rules and injected transports, not live Meta inference.
+
 React owns the validated workspace and contextual controls. Three.js renders that workspace. Model responses and browser interactions never become an independent source of device facts.
 
 ## View, Edit and the fixed inspector

@@ -16,8 +16,10 @@ People with several desk devices may not have a clear record of how they connect
 - Connection topology records user-reported or user-confirmed links and unknown details. It does not prove a link is currently functional.
 - Operational status requires a separately identified check, such as a user test or a future OS integration. Track the source of each claim and allow corrections.
 
-## Initial scope and open choices
+## Current bounded workflow
 
 The candidate MVP combines desk photo interpretation, a conversational connection graph, and one guided troubleshooting scenario. A possible first demo is a laptop, dock, and two monitors, with a reported issue on one monitor.
 
-Product design, platform, model selection, persistence, privacy behavior, and actual implementation are open decisions. OS-based discovery is a future possibility and is not required for the initial demo. Do not represent proposed functionality as working before it is implemented and tested.
+The web app now provides a contextual setup guide, reviewed photo scenes, explicit connection confirmation, optional local macOS display/USB matching, selected-device conversation, and graph-informed monitor checks with persisted answers. The local demo is deterministic; it is not a model. Live Meta authentication, model output compatibility, photo quality, latency, and cost remain to be evaluated separately.
+
+See [pre-Meta workflow](PRE_META_WORKFLOW.md) for the exact implemented behavior, verification record, and remaining boundaries. Windows/Linux helpers, Bluetooth discovery, precise room reconstruction, and cloud synchronization are outside this submission implementation.

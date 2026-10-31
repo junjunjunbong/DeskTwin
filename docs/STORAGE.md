@@ -1,5 +1,15 @@
 # Workspace storage and editing consistency
 
+## Setup and guided-check records
+
+Workspace v2 now accepts `diagnoses`, defaulting to an empty array when reading older saves. The newest 30 attempts are retained, with bounded original route snapshots and append-only answers. An attempt's route, plan, start time, and privacy provenance cannot be rewritten by a later answer. Import validation replays the saved answer sequence; invalid results, dangling device references, and duplicate attempt IDs are rejected. Deleting a referenced device removes its checks in the same undoable command. Removing or replacing an edge retains the earlier check and requires a fresh attempt before continuing on the changed route.
+
+Starting and answering a check writes only check history. `record-diagnosis-result` changes operating status only after explicit confirmation; inside the write lock it verifies the latest attempt, exact resolved session, current route, and current device report. Undoing the report makes the save action available again. Photo previews preserve diagnostic history and devices referenced by those checks.
+
+Connection replacements and hardware matches/removals carry the exact reviewed prior record (or an explicit absence). The command compares it again after acquiring the write lock. A queued change cannot silently replace a newer connection or matching approval. The unchanged legacy sample note has a narrowly defined display translation; it is treated as the same reviewed content, while other note changes still reject stale saves. Add-device and connection dialogs expose storage recovery inside the modal so failed saves do not require discarding entries.
+
+An edited operating status and its note are one report during stale-draft review and saving. Changing status clears the old observation note; unrelated name/model edits adopt the complete current report. Photo setup notes, conversation messages, and unsaved device drafts remain memory-only.
+
 ## Save format and compatibility
 
 DeskTwin continues to use the localStorage key `desktwin.workspace.v1`. The value is a plain workspace JSON document, not a new storage envelope. JSON import and export use that same document format, with installation-specific hardware bindings removed.

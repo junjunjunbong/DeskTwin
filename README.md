@@ -8,11 +8,11 @@ DeskTwin은 책상을 넓게 보여주는 **실제 3D voxel 작업실**과, 기�
 
 ![View 모드의 예시 책상과 오른쪽 고정 Workspace overview 패널](docs/screenshots/workspace-overview-desktop.png)
 
-> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. Meta API 연결 코드는 구현되어 있지만, 실제 키를 이용한 live 호출 및 모델 정확도 평가는 아직 완료하지 않았습니다. macOS의 실제 CoreGraphics/AppKit·IOKit API를 읽는 로컬 감지 경로를 추가했습니다. **이 Linux 작업 환경에서는 Swift 빌드와 실제 Mac 연결·해제를 직접 검증하지 못했습니다.** 사용자는 이전 `2de1813`에서 Mac 빌드와 production 감지가 성공했다고 보고했습니다. 이번 개발 proxy·식별 처리 수정은 fixture로 검증했으며, 수정 후 Mac 확인은 별도로 필요합니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다.
+> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 실제 Meta 호출과 사진 인식 품질 평가는 아직 완료하지 않았습니다. 이번 변경의 사진·Mac·대화 검증은 모의 응답을 사용하며 실제 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [모델 테스트 전 구현 범위와 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
 
 ## 빠르게 실행하기
 
-Node.js 22.12 이상이 필요합니다. 이번 검증 환경은 Node.js 24.22.1과 Chromium입니다. 의존성 버전은 `package-lock.json`에 고정되어 있습니다.
+Node.js 22.12 이상이 필요합니다. 이번 검증 환경은 Node.js 22.22.3과 Chromium입니다. 의존성 버전은 `package-lock.json`에 고정되어 있습니다.
 
 ```bash
 git clone https://github.com/junjunjunbong/DeskTwin.git
@@ -48,6 +48,17 @@ UI 포트가 이미 사용 중이면 실행이 실패합니다. 다른 포트로
 최신 저장본 불러오기·가져오기·초기화 또는 저장된 이름·모델·보고·메모 변경 후에는 초안을 유지하면서 검토를 요구합니다. **Keep my edited fields after review**는 최신 값과 비교한 뒤 편집을 계속하는 선택이며, 실제 적용에는 다시 **Save device details**가 필요합니다. 삭제된 기기의 초안은 참조하거나 명시적으로 폐기할 수 있습니다. 자세한 경계와 저장 충돌 처리는 [Storage](docs/STORAGE.md)에 설명했습니다.
 
 연결의 추가·제거는 **Edit**에서 수행합니다. View의 **Edit connections**는 모드만 전환하며, 연결 제거는 오른쪽 패널의 **Confirm removal / Cancel removal**로 확인합니다. Assistant의 연결 제안도 **Edit to review connection** 이후 별도의 **Confirm and apply**가 필요합니다.
+
+같은 두 기기의 기존 연결을 바꾸려면 현재 기록을 검토하고 **Confirm replacement**로 확인해야 합니다. 검토 후 다른 작업이 기록을 변경했다면 다시 검토합니다. 상태와 메모는 하나의 보고로 함께 저장하므로, 이전 편집 초안과 새 진단 결과가 서로 섞이지 않습니다.
+
+## 사진에서 문제 확인까지
+
+1. **Open setup guide**에서 사진을 사용하거나 기기를 수동으로 추가합니다. 사진은 별도 전송 동의와 장면 승인이 필요합니다.
+2. **Devices**에서 사진 추정·사용자 보고·샘플을 구분합니다. 필요한 경우 **Compare with this Mac**에서 로컬 감지에 동의하고 기존 기기와 관측을 직접 매칭합니다.
+3. **Connections**에서 누락된 연결 질문에 답하고, 실제 확인한 기기·케이블·포트를 저장합니다. 사진 설명은 메모로 이어지며 명시적인 두 기기 연결 보고만 제한적으로 제안합니다. 불분명한 케이블은 **Unknown**으로 남깁니다.
+4. **Try a check**에서 모니터를 선택합니다. 기록된 경로를 확인한 뒤 직접 연결과 도크 경유에 맞는 점검을 진행합니다. 건너뛴 검사는 실패나 성공으로 처리하지 않습니다.
+5. 각 답과 최근 30개 점검은 브라우저에 저장됩니다. 새로고침 후 이어갈 수 있고, 연결이 달라졌다면 이전 이력을 보존한 새 점검을 시작합니다. 작동 상태는 **Save result as user-reported**로 따로 확인해야 바뀝니다.
+6. **Ask about this device**로 대화 대상을 지정하고 기록 경로를 장면에서 강조할 수 있습니다. 로컬 데모는 저장된 점검을 참고하며, Meta 활성화 후에는 공유 가능한 기기의 점검 요약만 전송합니다. OS 관측과 OS에서 만든 기기·점검은 로컬에 남습니다.
 
 ## 지금 사용할 수 있는 기능
 
@@ -183,7 +194,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 4. 실제 Mac에서 helper 빌드와 수동 확인을 완료했다면 **Open Mac hardware → Start detection**을 시연합니다. 실제 OS 출처·시각을 보여주고 새 기기 연결/분리로 목록 갱신을 확인합니다. Linux나 helper 미설치 환경에서는 Unavailable을 그대로 보여줍니다.
 5. 관측 하나를 선택하고 기존 기기 또는 새 기기를 명시적으로 매칭합니다. 검토 전에는 저장되지 않고, 승인해도 사용자 작동 상태는 자동 변경되지 않음을 확인합니다.
 6. **Stop detection**으로 중지합니다. 상태가 Detection stopped가 되며 연결 해제로 표시되지 않는지 확인합니다.
-7. 문제가 보고된 모니터를 선택해 **Troubleshoot monitor step by step**을 엽니다. 직접 확인한 답만 입력하고 **Save result as user-reported**를 눌러야 저장됩니다.
+7. 문제가 보고된 모니터를 선택해 **Troubleshoot monitor step by step**을 엽니다. 각 답은 점검 이력에 저장됩니다. 작동 상태는 **Save result as user-reported**를 눌러야 별도로 저장됩니다.
 8. 사진 흐름은 선택 → 별도 전송 동의 → preview 수정 → **Confirm and apply scene** 순서입니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 사진 테스트는 mock 결과이며 실제 인식 성공으로 소개하지 않습니다.
 9. **Open settings → Export JSON**으로 구성을 내보냅니다. 승인한 장면과 출처는 남고 설치별 하드웨어 매칭은 제외됩니다.
 

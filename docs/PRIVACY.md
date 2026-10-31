@@ -6,6 +6,16 @@ Starting DeskTwin without a key does not call an external inference API. Even wh
 
 The local demo uses deterministic pattern matching, not a running language model. It remains visibly labelled as a demo. Photo analysis and local hardware detection have separate opt-in controls. Loading the page or checking bridge availability does not scan hardware.
 
+## Guided checks and conversation targets
+
+The setup guide keeps photo-description notes in memory and never turns them into confirmed cable records without explicit review. Matching a photo/manual record with an OS observation requires local consent and a separate matching approval. It does not establish a cable route or a working device.
+
+The workspace stores the latest 30 guided monitor checks, including bounded device/edge IDs, enum answers, timestamps, result, and original route. Sessions do not copy OS names, raw observations, or free-form step text. A session that involved OS-origin records remains `localOnly`. JSON exports include check history and approved device labels, but strip hardware bindings.
+
+When Meta is enabled, both client and server filter the workspace. OS-origin records, OS-sourced edges, and sessions involving those records are excluded. A selected OS-only target blocks that chat request with a local notice. App-generated example prompts contain no device labels; notices and local-demo replies are excluded from transmitted chat history. The provider receives only bounded eligible check summaries and an indication when the recorded graph has since changed. Explicitly typed messages remain intentional input under the existing chat consent.
+
+Import, reset, and loading another tab's workspace clear conversation targets/messages and invalidate pending replies. Photos still require their separate consent before transmission. None of these local checks establishes that a real Meta request succeeds.
+
 ## Read-only local hardware information
 
 After **Start detection** and the local metadata consent, the Mac helper reads display names/flags and registered USB product/vendor metadata and hierarchy. It does not capture screens, record keys, control devices, open storage contents, send USB transfers or change OS settings. Bluetooth collection is not implemented; the UI reports it unavailable while preserving manually recorded Bluetooth links.
