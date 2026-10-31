@@ -9,7 +9,11 @@ import {
 } from '../domain/workspace';
 import { getGeometryParts } from '../domain/geometry';
 import { resolveSpatialEdit } from '../domain/spatial';
-import { getConnectionView, type ConnectionEmphasis } from '../domain/connectionView';
+import {
+  getConnectionView,
+  type ConnectionEmphasis,
+  type ConnectionFocusPath,
+} from '../domain/connectionView';
 
 export type DeskMode = 'desk' | 'connections' | 'edit';
 export type Marker = { id: string; x: number; y: number };
@@ -76,6 +80,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   let hovered: string | null = null;
   let mode: DeskMode = 'desk';
   let showConnections = false;
+  let focusPath: ConnectionFocusPath | null = null;
   let dirty = true;
   let disposed = false;
 
@@ -355,11 +360,14 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
   (outline.material as THREE.LineBasicMaterial).opacity = 0.8;
   const counterpartOutlines = new Map<string, THREE.BoxHelper>();
   function updateHighlights() {
+    const view = workspace
+      ? getConnectionView(workspace, selected, showConnections, focusPath)
+      : null;
     const group = selected ? deviceGroups.get(selected) : null;
-    outline.visible = !!group?.visible;
-    if (group?.visible) outline.setFromObject(group);
+    outline.visible = !!group?.visible && !view?.hasFocusPath;
+    if (outline.visible && group) outline.setFromObject(group);
     const counterpartIds = new Set(
-      workspace ? getConnectionView(workspace, selected, showConnections).counterpartIds : [],
+      view?.hasFocusPath ? view.focusedDeviceIds : (view?.counterpartIds ?? []),
     );
     for (const [id, helper] of counterpartOutlines) {
       if (!counterpartIds.has(id) || !deviceGroups.get(id)?.visible) {
@@ -403,6 +411,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       workspace,
       selected,
       showConnections,
+      focusPath,
     ).lines) {
       const a = deviceGroups.get(c.from),
         b = deviceGroups.get(c.to);
@@ -460,7 +469,7 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
     const w = host.clientWidth,
       h = host.clientHeight;
     const counterpartIds = new Set(
-      getConnectionView(workspace, selected, showConnections).counterpartIds,
+      getConnectionView(workspace, selected, showConnections, focusPath).counterpartIds,
     );
     cb.onMarkers(
       [...workspace.devices, ...workspace.objects]
@@ -709,6 +718,14 @@ export function createDeskScene(host: HTMLDivElement, cb: SceneCallbacks) {
       dirty = true;
     },
     setSelected: select,
+    setFocusPath(value: ConnectionFocusPath | null) {
+      focusPath = value
+        ? { deviceIds: [...value.deviceIds], connectionIds: [...value.connectionIds] }
+        : null;
+      updateHighlights();
+      rebuildCables();
+      dirty = true;
+    },
     setMode(m: DeskMode) {
       if (mode !== m) onCancel();
       mode = m;

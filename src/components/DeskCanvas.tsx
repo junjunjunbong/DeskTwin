@@ -8,13 +8,14 @@ import {
   type ConnectionLine,
 } from '../scene/deskScene';
 import { sourceLabels, type Placement, type Workspace } from '../domain/workspace';
-import { getConnectionView } from '../domain/connectionView';
+import { getConnectionView, type ConnectionFocusPath } from '../domain/connectionView';
 export type CanvasHandle = Pick<DeskScene, 'reset' | 'zoom' | 'capture'>;
 interface Props {
   workspace: Workspace;
   selected: string | null;
   mode: DeskMode;
   showConnections?: boolean;
+  focusPath?: ConnectionFocusPath | null;
   onSelect: (id: string | null) => void;
   onMove: (id: string, placement: Placement, path: Placement[]) => void;
   onFeedback?: (message: string) => void;
@@ -32,6 +33,7 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
     props.workspace,
     props.selected,
     props.showConnections ?? false,
+    props.focusPath,
   );
   useImperativeHandle(
     ref,
@@ -60,6 +62,7 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
       scene.setSelected(latest.current.selected);
       scene.setMode(latest.current.mode);
       scene.setShowConnections(latest.current.showConnections ?? false);
+      scene.setFocusPath(latest.current.focusPath ?? null);
       return () => {
         scene.dispose();
         engine.current = null;
@@ -71,6 +74,7 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
   useEffect(() => engine.current?.setWorkspace(props.workspace), [props.workspace]);
   useEffect(() => engine.current?.setSelected(props.selected), [props.selected]);
   useEffect(() => engine.current?.setMode(props.mode), [props.mode]);
+  useEffect(() => engine.current?.setFocusPath(props.focusPath ?? null), [props.focusPath]);
   useEffect(
     () => engine.current?.setShowConnections(props.showConnections ?? false),
     [props.showConnections],
@@ -90,12 +94,17 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
                 key={line.id}
                 data-connection-id={line.id}
                 data-emphasis={line.emphasis}
+                data-path-record={connectionView.focusedConnectionIds.includes(line.id)}
                 data-from-position={line.from.join(',')}
                 data-to-position={line.to.join(',')}
               >
                 {from?.name} to {to?.name}: {connection.connector}. Source:{' '}
                 {sourceLabels[connection.source]}.{' '}
-                {line.emphasis === 'highlighted' ? 'Highlighted recorded relationship.' : ''}
+                {line.emphasis === 'highlighted'
+                  ? connectionView.hasFocusPath
+                    ? 'Part of the focused recorded path. Operation is unverified.'
+                    : 'Highlighted recorded relationship.'
+                  : ''}
               </li>
             );
           })}
@@ -124,18 +133,33 @@ const DeskCanvas = forwardRef<CanvasHandle, Props>(function DeskCanvas(props, re
           if (!item) return null;
           const isSelected = item.id === props.selected;
           const isCounterpart = connectionView.counterpartIds.includes(item.id);
+          const isPathDevice = connectionView.focusedDeviceIds.includes(item.id);
+          const isMuted = connectionView.hasFocusPath && !isPathDevice;
           return (
             <button
               key={item.id}
               className={`device-marker ${d?.status === 'reported-issue' ? 'has-issue' : ''} ${isSelected ? 'is-selected' : ''} ${isCounterpart ? 'is-connected' : ''}`}
-              style={{ left: marker.x, top: marker.y }}
+              style={{ left: marker.x, top: marker.y, opacity: isMuted ? 0.5 : undefined }}
               onClick={() => props.onSelect(item.id)}
               aria-label={`Select ${item.name}`}
               aria-pressed={isSelected}
-              aria-description={isCounterpart ? 'Recorded connection counterpart' : undefined}
-              data-connection-role={
-                isSelected ? 'selected' : isCounterpart ? 'counterpart' : 'unrelated'
+              aria-description={
+                isPathDevice
+                  ? 'Part of the focused recorded path. Operation is unverified.'
+                  : isCounterpart
+                    ? 'Recorded connection counterpart'
+                    : undefined
               }
+              data-connection-role={
+                isPathDevice
+                  ? 'path'
+                  : isSelected
+                    ? 'selected'
+                    : isCounterpart
+                      ? 'counterpart'
+                      : 'unrelated'
+              }
+              data-focus-muted={isMuted}
             >
               {d ? <Monitor size={20} /> : <Cube size={20} />}
               <span>

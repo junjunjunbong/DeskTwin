@@ -51,4 +51,77 @@ describe('recorded connection visibility', () => {
       expect(view.lines.every((line) => line.emphasis === 'normal')).toBe(true);
     }
   });
+
+  it('highlights only the requested path instead of every branch at the selected dock', () => {
+    const workspace = createDemoWorkspace();
+    const original = structuredClone(workspace);
+    const view = getConnectionView(workspace, 'dock', true, {
+      deviceIds: ['monitor-right', 'dock', 'laptop'],
+      connectionIds: ['dock-monitor-right', 'laptop-dock'],
+    });
+    expect(view.hasFocusPath).toBe(true);
+    expect(view.focusedDeviceIds).toEqual(['monitor-right', 'dock', 'laptop']);
+    expect(view.counterpartIds).toEqual(['monitor-right', 'laptop']);
+    expect(
+      view.lines
+        .filter((line) => line.emphasis === 'highlighted')
+        .map((line) => line.connection.id),
+    ).toEqual(['laptop-dock', 'dock-monitor-right']);
+    expect(view.lines.find((line) => line.connection.id === 'dock-monitor-left')?.emphasis).toBe(
+      'muted',
+    );
+    expect(view.lines.find((line) => line.connection.id === 'dock-ssd')?.emphasis).toBe('muted');
+    expect(workspace).toEqual(original);
+  });
+
+  it('ignores unknown IDs and edges whose endpoints are outside the explicit path', () => {
+    const workspace = createDemoWorkspace();
+    const view = getConnectionView(workspace, null, true, {
+      deviceIds: ['monitor-right', 'dock', 'dock', 'gone', workspace.objects[0].id],
+      connectionIds: ['dock-monitor-right', 'laptop-dock', 'gone'],
+    });
+    expect(view.focusedDeviceIds).toEqual(['monitor-right', 'dock']);
+    expect(view.focusedConnectionIds).toEqual(['dock-monitor-right']);
+    expect(
+      view.lines
+        .filter((line) => line.emphasis === 'highlighted')
+        .map((line) => line.connection.id),
+    ).toEqual(['dock-monitor-right']);
+    // After deletion, stale IDs cannot leave an invented highlighted connection.
+    workspace.connections = workspace.connections.filter(
+      (link) => link.id !== 'dock-monitor-right',
+    );
+    const updated = getConnectionView(workspace, null, true, {
+      deviceIds: ['monitor-right', 'dock'],
+      connectionIds: ['dock-monitor-right'],
+    });
+    expect(updated.focusedConnectionIds).toEqual([]);
+    expect(updated.lines.every((line) => line.emphasis === 'muted')).toBe(true);
+  });
+
+  it('keeps focused devices while hiding all path lines with the connection toggle', () => {
+    const workspace = createDemoWorkspace();
+    const focus = {
+      deviceIds: ['monitor-right', 'dock', 'laptop'],
+      connectionIds: ['dock-monitor-right', 'laptop-dock'],
+    };
+    const shown = getConnectionView(workspace, 'monitor-right', true, focus);
+    const hidden = getConnectionView(workspace, 'monitor-right', false, focus);
+    expect(hidden.lines).toEqual([]);
+    expect(hidden.focusedDeviceIds).toEqual(shown.focusedDeviceIds);
+    expect(hidden.focusedConnectionIds).toEqual(shown.focusedConnectionIds);
+    expect(hidden.counterpartIds).toEqual(shown.counterpartIds);
+  });
+
+  it('restores selection emphasis after clearing focus or when all focused devices are gone', () => {
+    const workspace = createDemoWorkspace();
+    const normalSelection = getConnectionView(workspace, 'dock', true);
+    expect(getConnectionView(workspace, 'dock', true, null)).toEqual(normalSelection);
+    expect(
+      getConnectionView(workspace, 'dock', true, {
+        deviceIds: ['gone'],
+        connectionIds: ['gone'],
+      }),
+    ).toEqual(normalSelection);
+  });
 });
