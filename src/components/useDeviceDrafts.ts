@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type {
-  Device,
-  DeviceDetails,
-  DevicePatch,
-  Workspace,
-  WorkspaceCommand,
-} from '../domain/workspace';
+import type { Device, DeviceDetails, Workspace, WorkspaceCommand } from '../domain/workspace';
+import {
+  changeDeviceDetails,
+  deviceDetailsPatch,
+  mergeReviewedDeviceDetails,
+} from '../domain/deviceDraftMerge';
 
 const fields = ['name', 'model', 'status', 'statusNote'] as const;
 export function deviceDetails(device: Device): DeviceDetails {
@@ -65,7 +64,7 @@ export function useDeviceDrafts(
       error: '',
       token: ++sequence.current,
     };
-    const next = { ...draft, values: { ...draft.values, ...patch }, error: '' };
+    const next = { ...draft, values: changeDeviceDetails(draft.values, patch), error: '' };
     if (
       !next.reviewRequired &&
       detailsEqual(next.values, next.base) &&
@@ -84,14 +83,7 @@ export function useDeviceDrafts(
     const raw = stored.devices.find((item) => item.id === id);
     if (!draft || draft.saving || !device || !raw || storageConflict) return;
     const latest = deviceDetails(device);
-    // Retain only fields the user edited; other fields adopt the reviewed saved record.
-    const values = { ...latest };
-    for (const field of fields) {
-      if (draft.values[field] !== draft.base[field]) {
-        if (field === 'status') values.status = draft.values.status;
-        else values[field] = draft.values[field];
-      }
-    }
+    const values = mergeReviewedDeviceDetails(draft.base, draft.values, latest);
     update({
       ...current.current,
       [id]: {
@@ -127,23 +119,10 @@ export function useDeviceDrafts(
   async function save(id: string) {
     const draft = current.current[id];
     if (!draft || draft.saving || storageConflict || needsReview(draft)) return false;
-    const patch: DevicePatch = {};
-    for (const field of fields) {
-      if (draft.values[field] !== draft.base[field]) {
-        if (field === 'status') patch.status = draft.values.status;
-        else patch[field] = draft.values[field];
-      }
-    }
+    const patch = deviceDetailsPatch(draft.base, draft.values);
     if (!Object.keys(patch).length) {
       discard(id);
       return true;
-    }
-    if (patch.name !== undefined || patch.model !== undefined) patch.source = 'user-reported';
-    if (patch.status !== undefined || patch.statusNote !== undefined) {
-      patch.statusNote =
-        draft.values.status === 'unknown'
-          ? ''
-          : draft.values.statusNote || 'The user reported this status.';
     }
     const token = ++sequence.current;
     update({ ...current.current, [id]: { ...draft, saving: true, error: '', token } });
