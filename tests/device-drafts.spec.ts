@@ -12,8 +12,7 @@ test.beforeEach(async ({ page }) => {
 async function saved(page: Page): Promise<Workspace> {
   return page.evaluate((name) => JSON.parse(localStorage.getItem(name)!), key);
 }
-async function seed(page: Page) {
-  const workspace = createDemoWorkspace();
+async function seed(page: Page, workspace = createDemoWorkspace()) {
   await page.addInitScript(
     ({ name, value }) => {
       if (!sessionStorage.getItem('device-drafts-seeded')) {
@@ -262,16 +261,24 @@ test('a pending save survives inspector unmount and leaves another device draft 
 test('a queued detail save cannot overwrite a diagnostic report committed ahead of it', async ({
   page,
 }) => {
-  const initial = await seed(page);
+  await seed(page);
   await selectDevice(page, 'Right monitor');
   await edit(page);
   await page.getByLabel('Device name', { exact: true }).fill('Draft waiting behind a diagnosis');
   await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
   await page.getByRole('button', { name: 'The screen works', exact: true }).click();
+  await expect
+    .poll(async () =>
+      (await saved(page)).diagnoses.some(
+        (session) => session.deviceId === 'monitor-right' && session.result === 'resolved',
+      ),
+    )
+    .toBe(true);
+  const beforeStatusSave = await saved(page);
   await holdWrites(page);
   await page.getByRole('button', { name: 'Save result as user-reported' }).click();
   await page.getByRole('button', { name: 'Save device details', exact: true }).click();
-  expect(await saved(page)).toEqual(initial);
+  expect(await saved(page)).toEqual(beforeStatusSave);
   await releaseWrites(page);
   await expect
     .poll(
@@ -287,8 +294,76 @@ test('a queued detail save cannot overwrite a diagnostic report committed ahead 
   const result = await saved(page);
   expect(result.devices.find((item) => item.id === 'monitor-right')!.name).toBe('Right monitor');
   expect(result.devices.find((item) => item.id === 'monitor-right')!.statusNote).not.toBe('');
-  expect(result.history).toHaveLength(1);
+  expect(result.history).toHaveLength(beforeStatusSave.history.length + 1);
   await expect(
     page.getByRole('button', { name: 'Save device details', exact: true }),
   ).toBeDisabled();
+});
+
+test('a status-only draft cannot inherit a newer diagnostic success note during review', async ({
+  page,
+}) => {
+  await seed(page);
+  await selectDevice(page, 'Right monitor');
+  await edit(page);
+  await page.getByLabel('Operating status user-reported').selectOption('reported-issue');
+  await expect(page.getByLabel('What did you check?')).toHaveValue('');
+
+  await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
+  await page.getByRole('button', { name: 'The screen works', exact: true }).click();
+  await page.getByRole('button', { name: 'Save result as user-reported' }).click();
+  await expect
+    .poll(
+      async () => (await saved(page)).devices.find((item) => item.id === 'monitor-right')?.status,
+    )
+    .toBe('reported-working');
+  await expect(inspector(page)).toContainText('Saved details changed. Review before saving.');
+  await expect(
+    page.getByRole('button', { name: 'Save device details', exact: true }),
+  ).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Keep my edited fields after review' }).click();
+  await expect(page.getByLabel('Operating status user-reported')).toHaveValue('reported-issue');
+  await expect(page.getByLabel('What did you check?')).toHaveValue('');
+  await page.getByRole('button', { name: 'Save device details', exact: true }).click();
+  await expect
+    .poll(async () => {
+      const monitor = (await saved(page)).devices.find((item) => item.id === 'monitor-right')!;
+      return { status: monitor.status, note: monitor.statusNote };
+    })
+    .toEqual({ status: 'reported-issue', note: 'The user reported this status.' });
+});
+
+test('a note-only draft keeps its original issue status when reviewed after a diagnostic success', async ({
+  page,
+}) => {
+  const initial = createDemoWorkspace();
+  const monitor = initial.devices.find((item) => item.id === 'monitor-right')!;
+  monitor.status = 'reported-issue';
+  monitor.statusNote = 'No display before checking.';
+  await seed(page, initial);
+  await selectDevice(page, 'Right monitor');
+  await edit(page);
+  await page.getByLabel('What did you check?').fill('My earlier check still showed no display.');
+  await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
+  await page.getByRole('button', { name: 'The screen works', exact: true }).click();
+  await page.getByRole('button', { name: 'Save result as user-reported' }).click();
+  await expect
+    .poll(
+      async () => (await saved(page)).devices.find((item) => item.id === 'monitor-right')?.status,
+    )
+    .toBe('reported-working');
+
+  await page.getByRole('button', { name: 'Keep my edited fields after review' }).click();
+  await expect(page.getByLabel('Operating status user-reported')).toHaveValue('reported-issue');
+  await expect(page.getByLabel('What did you check?')).toHaveValue(
+    'My earlier check still showed no display.',
+  );
+  await page.getByRole('button', { name: 'Save device details', exact: true }).click();
+  await expect
+    .poll(async () => {
+      const current = (await saved(page)).devices.find((item) => item.id === 'monitor-right')!;
+      return { status: current.status, note: current.statusNote };
+    })
+    .toEqual({ status: 'reported-issue', note: 'My earlier check still showed no display.' });
 });

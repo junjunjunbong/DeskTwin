@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { z } from 'zod';
-import { WorkspaceSchema } from '../src/domain/workspace';
+import { IdSchema, WorkspaceSchema } from '../src/domain/workspace';
 import { demoReply } from '../src/domain/demoAssistant';
 import { ApiError, callMeta, callMetaScene, HistorySchema, type MetaConfig } from './meta';
 import { HardwareRequestError, HardwareService } from './hardware';
@@ -11,6 +11,7 @@ const ChatRequest = z.object({
   message: z.string().trim().min(1).max(2000),
   workspace: WorkspaceSchema,
   history: HistorySchema.default([]),
+  focusDeviceId: IdSchema.nullable().optional(),
   consent: z.literal(true).optional(),
 });
 const PhotoRequest = z.object({
@@ -203,8 +204,16 @@ export function createApp(config: ServerConfig) {
       const body = await readJSON(req);
       if (path === '/api/chat') {
         const data = ChatRequest.parse(body);
+        if (
+          data.focusDeviceId &&
+          !data.workspace.devices.some((device) => device.id === data.focusDeviceId)
+        )
+          throw new ApiError(
+            400,
+            'The conversation target is no longer in this workspace. Choose a current device.',
+          );
         if (!config.apiKey) {
-          json(res, 200, demoReply(data.message, data.workspace));
+          json(res, 200, demoReply(data.message, data.workspace, data.focusDeviceId));
           return;
         }
         if (!data.consent)
@@ -217,6 +226,7 @@ export function createApp(config: ServerConfig) {
             await callMeta(config, data.workspace, {
               message: data.message,
               history: data.history,
+              focusDeviceId: data.focusDeviceId,
             }),
           );
         } finally {

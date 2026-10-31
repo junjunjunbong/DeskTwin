@@ -100,7 +100,18 @@ test('a reported issue opens its fixed inspector and existing checks without an 
     inspector.getByRole('button', { name: 'Still no display', exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  expect(await saved(page)).toEqual(initial);
+  await expect.poll(async () => (await saved(page)).diagnoses.length).toBe(1);
+  const started = await saved(page);
+  expect(started.devices).toEqual(initial.devices);
+  expect(started.connections).toEqual(initial.connections);
+  expect(started.objects).toEqual(initial.objects);
+  expect(started.diagnoses[0]).toMatchObject({
+    deviceId: 'monitor-right',
+    result: 'active',
+    step: 0,
+    answers: [],
+  });
+  expect(started.history).toHaveLength(initial.history.length + 1);
 });
 
 test('the mobile details area collapses to give the canvas room without changing the workspace', async ({

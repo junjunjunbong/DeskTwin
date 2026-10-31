@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { diagnosisDeviceIds } from './diagnosis';
 import {
   fitSceneProposal,
   findFreePlacement,
@@ -77,6 +78,7 @@ export function retainedDevices(base: Workspace): Device[] {
       .filter((connection) => connection.source !== 'demo')
       .flatMap((connection) => [connection.from, connection.to]),
   );
+  const checkedDevices = new Set(base.diagnoses.flatMap(diagnosisDeviceIds));
   return base.devices.filter(
     (device) =>
       device.source !== 'demo' ||
@@ -85,6 +87,7 @@ export function retainedDevices(base: Workspace): Device[] {
       device.statusNote !== '' ||
       device.visual.source !== 'demo' ||
       !!device.attachment ||
+      checkedDevices.has(device.id) ||
       reportedEndpoints.has(device.id),
   );
 }
@@ -408,6 +411,8 @@ export function applySceneDraft(
   );
   if (JSON.stringify(next.connections) !== JSON.stringify(expectedConnections))
     throw new Error('A scene preview cannot change reported connections.');
+  if (JSON.stringify(next.diagnoses) !== JSON.stringify(baseValidated.diagnoses))
+    throw new Error('A scene preview cannot change guided-check history.');
   const collisions = validateSceneCollisions(next, baseValidated);
   if (collisions.length)
     throw new Error(`Resolve the scene placement before applying: ${collisions[0]}`);

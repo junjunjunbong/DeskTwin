@@ -1,0 +1,228 @@
+.desk-setup-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 10px 12px;
+  gap: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.desk-setup-steps button {
+  border: 1px solid #e0e6e5;
+  background: #f5f7f6;
+  border-radius: 7px;
+  padding: 9px 3px;
+  font-size: 11px;
+  color: #64736d;
+}
+.desk-setup-steps button[aria-current='step'] {
+  background: #e6eee9;
+  color: #345d4b;
+  border-color: #b6ccbf;
+  font-weight: 700;
+}
+.desk-setup-panel .panel-scroll > h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.desk-setup-panel p {
+  line-height: 1.6;
+}
+.desk-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.desk-setup-actions .button {
+  flex: 1;
+  white-space: normal;
+}
+.desk-setup-note {
+  background: #f6f1e7;
+  border: 1px solid #e7ddc8;
+  border-radius: 9px;
+  padding: 11px;
+  font-size: 12px;
+  color: #756449;
+}
+.desk-setup-local,
+.desk-setup-notes,
+.desk-setup-records {
+  margin: 15px 0;
+  padding: 12px;
+  border: 1px solid #dfe6e1;
+  border-radius: 10px;
+  background: #f6f9f7;
+  font-size: 12px;
+}
+.desk-setup-panel summary {
+  cursor: pointer;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.desk-setup-local summary > svg {
+  vertical-align: middle;
+  margin-right: 5px;
+}
+.desk-setup-local summary > span {
+  display: block;
+  color: #748277;
+  font-weight: 400;
+  font-size: 10px;
+}
+.desk-setup-local small,
+.desk-setup-notes small,
+.desk-setup-questions small {
+  display: block;
+  color: #748078;
+  line-height: 1.5;
+}
+.desk-setup-panel .desk-setup-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 13px 0;
+  line-height: 1.6;
+}
+.desk-setup-check input {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+}
+.desk-setup-devices {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.desk-setup-device {
+  border: 1px solid #e2e7e5;
+  border-radius: 10px;
+  padding: 12px;
+}
+.desk-setup-device-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.desk-setup-device-title > strong {
+  overflow-wrap: anywhere;
+}
+.desk-setup-device dl {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+  font-size: 11px;
+}
+.desk-setup-device dl > div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 6px;
+}
+.desk-setup-device dt {
+  color: #7c8981;
+}
+.desk-setup-device dd {
+  margin: 0;
+}
+.desk-setup-device > .text-button {
+  display: flex;
+  margin-top: 8px;
+}
+.desk-setup-match {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px dashed #d7e0da;
+}
+.desk-setup-notes > p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.desk-setup-notes .button {
+  margin-top: 12px;
+}
+.desk-setup-questions {
+  margin: 16px 0;
+}
+.desk-setup-questions h4 {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.desk-setup-questions > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  text-align: left;
+  border: 1px solid #e1e6e2;
+  border-radius: 8px;
+  background: #fafcfa;
+  padding: 10px;
+  margin: 5px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.desk-setup-questions > button.active {
+  border-color: #b9cfc1;
+  background: #eff5f0;
+}
+.desk-setup-questions > button svg {
+  flex-shrink: 0;
+}
+.desk-setup-questions > small {
+  margin-top: 8px;
+}
+.desk-setup-connection-form {
+  margin: 18px 0 10px;
+}
+.desk-setup-confirm {
+  padding: 13px;
+  border: 1px solid #b9cfc1;
+  background: #f0f6f2;
+  border-radius: 10px;
+  margin-top: 12px;
+}
+.desk-setup-confirm h4 {
+  margin: 0 0 8px;
+}
+.desk-setup-confirm > p {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.desk-setup-edge {
+  padding: 12px 0;
+  border-bottom: 1px solid #dde5df;
+}
+.desk-setup-edge > strong,
+.desk-setup-edge > span {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.desk-setup-edge > span {
+  font-size: 11px;
+  color: #748078;
+}
+.desk-setup-edge > .text-button {
+  margin-top: 6px;
+}
+.desk-setup-checks {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+.desk-setup-checks button {
+  justify-content: space-between;
+  text-align: left;
+}
+.desk-setup-checks button span {
+  overflow-wrap: anywhere;
+}
+.desk-setup-checks small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 400;
+}

@@ -4,6 +4,7 @@ import {
   createDemoWorkspace,
   parseWorkspace,
   type Proposal,
+  type ProposalReview,
   type Source,
   type Workspace,
   type WorkspaceCommand,
@@ -195,8 +196,8 @@ export function useWorkspace() {
     canRedo: future.current.length > 0,
     command: (command: WorkspaceCommand) =>
       mutate(() => applyQueuedCommand(current.current, workspace, command), 'replace'),
-    proposal: (proposal: Proposal, source?: Source) =>
-      mutate(() => applyProposal(current.current, proposal, source), 'replace'),
+    proposal: (proposal: Proposal, source?: Source, review?: ProposalReview) =>
+      mutate(() => applyProposal(current.current, proposal, source, review), 'replace'),
     replace,
     undo: () => mutate(() => past.current.at(-1), 'undo'),
     redo: () => mutate(() => future.current.at(-1), 'redo'),

@@ -425,6 +425,7 @@ describe('photo scene draft isolation and evidence', () => {
     base = applyCommand(base, {
       type: 'connect',
       connection: { ...base.connections[0], source: 'user-reported' },
+      expectedConnection: base.connections[0],
     });
     base = applyCommand(base, {
       type: 'update-device',

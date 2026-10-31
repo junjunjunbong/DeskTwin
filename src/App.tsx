@@ -57,18 +57,28 @@ import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs
 import { DeviceIcon, Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
 import { PhotoPanel } from './components/PhotoPanel';
+import { DeskSetupPanel } from './components/DeskSetupPanel';
+import type { ConnectionFocusPath } from './domain/connectionView';
 import {
   AddObjectDialog,
   SceneObjectInspector,
   SceneObjectList,
 } from './components/SceneObjectPanel';
-import { applySceneDraft } from './domain/sceneProposal';
+import { applySceneDraft, retainedDevices } from './domain/sceneProposal';
 import { CommitTextInput } from './components/CommitInput';
 import { useDeviceDrafts } from './components/useDeviceDrafts';
 import './styles/app.css';
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel =
-  'objects' | 'devices' | 'assistant' | 'history' | 'settings' | 'photo' | 'hardware' | null;
+  | 'objects'
+  | 'devices'
+  | 'assistant'
+  | 'history'
+  | 'settings'
+  | 'photo'
+  | 'hardware'
+  | 'setup'
+  | null;
 export default function App() {
   const store = useWorkspace();
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
@@ -85,6 +95,8 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
+  const [photoContext, setPhotoContext] = useState('');
+  const [focusPath, setFocusPath] = useState<ConnectionFocusPath | null>(null);
   const scene = useRef<CanvasHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -108,12 +120,14 @@ export default function App() {
   const deviceDrafts = useDeviceDrafts(workspace, store.workspace, command, store.conflict);
   function select(id: string | null, revealDetails = true) {
     setSelected(id);
+    setFocusPath(null);
     if (id) {
       setPanel(null);
       if (revealDetails) setDetailsExpanded(true);
     }
   }
   function openPanel(next: Panel) {
+    if (next === 'assistant' && device) assistant.setTarget(device.id);
     setSelected(null);
     setPanel((p) => (p === next ? null : next));
     setDetailsExpanded(true);
@@ -124,7 +138,16 @@ export default function App() {
     setDetailsExpanded(true);
     setSelected(null);
     setPrompt('');
-    void assistant.send(text);
+    void assistant.send(text, device?.id ?? assistant.targetDeviceId);
+  }
+  function showPath(path: ConnectionFocusPath) {
+    setFocusPath(path);
+    setShowConnections(true);
+  }
+  function openSetup() {
+    setSelected(null);
+    setPanel('setup');
+    setDetailsExpanded(true);
   }
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -248,6 +271,9 @@ export default function App() {
               onClick={async () => {
                 if (await store.reloadLatest()) {
                   deviceDrafts.invalidate();
+                  assistant.resetConversation();
+                  setFocusPath(null);
+                  setPhotoContext('');
                   setSelected(null);
                   setToast(
                     'Loaded the latest saved workspace. Undo history was reset for this tab.',
@@ -399,6 +425,14 @@ export default function App() {
               <ImageIcon size={22} />
             </button>
             <button
+              className={`nav-button ${panel === 'setup' ? 'active' : ''}`}
+              aria-label="Setup guide"
+              title="Setup guide"
+              onClick={openSetup}
+            >
+              <Check size={22} />
+            </button>
+            <button
               className={`nav-button ${panel === 'history' ? 'active' : ''}`}
               aria-label="Change history"
               title="Change history"
@@ -447,6 +481,7 @@ export default function App() {
               selected={selected}
               mode={mode}
               showConnections={showConnections}
+              focusPath={focusPath}
               onSelect={(id) => select(id, mode !== 'edit')}
               onMove={(id, placement, dragPath) => {
                 void command({ type: 'move-object', id, placement, dragPath });
@@ -550,8 +585,26 @@ export default function App() {
               </button>
             </div>
           </div>
-          {showConnections && (
+          {(showConnections || focusPath) && (
             <div className="connection-legend" role="note" aria-label="Connection display guide">
+              {focusPath && (
+                <div
+                  className="focused-path-banner"
+                  role="region"
+                  aria-label="Focused connection path"
+                >
+                  <span>
+                    Focus:{' '}
+                    {focusPath.deviceIds
+                      .map((id) => workspace.devices.find((item) => item.id === id)?.name)
+                      .filter(Boolean)
+                      .join(' → ') || 'No remaining devices'}
+                  </span>
+                  <button className="text-button" onClick={() => setFocusPath(null)}>
+                    Clear path
+                  </button>
+                </div>
+              )}
               <span className="connection-legend-copy">
                 Recorded relationships · Physical cable routes are unverified
               </span>
@@ -605,6 +658,7 @@ export default function App() {
                 onAdd={() => setDialog('device')}
                 onAddObject={() => setDialog('object')}
                 onConnect={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
+                onSetup={openSetup}
                 hardwareSummary={
                   <HardwareSummary
                     hardware={hardware}
@@ -630,6 +684,12 @@ export default function App() {
                 onClose={() => setSelected(null)}
                 onConnect={() => mode === 'edit' && setDialog('connection')}
                 onSelect={select}
+                onAsk={() => {
+                  assistant.setTarget(device.id);
+                  openPanel('assistant');
+                }}
+                onFocusPath={showPath}
+                onReviewConnections={openSetup}
                 hardwareDetails={
                   <DeviceHardwareStatus
                     device={device}
@@ -666,6 +726,21 @@ export default function App() {
                 onCommand={command}
                 onSelect={select}
                 onClose={() => setPanel(null)}
+              />
+            )}
+            {panel === 'setup' && (
+              <DeskSetupPanel
+                workspace={workspace}
+                hardware={hardware}
+                onCommand={command}
+                onPhoto={() => openPanel('photo')}
+                onAddDevice={() => setDialog('device')}
+                onSelect={select}
+                onTroubleshoot={(id) => select(id)}
+                onClose={() => setPanel(null)}
+                editing={mode === 'edit'}
+                onEditConnections={() => setMode('edit')}
+                photoContext={photoContext}
               />
             )}
             {panel === 'devices' && (
@@ -738,14 +813,17 @@ export default function App() {
                 mode={assistant.mode}
                 decisions={assistant.decisions}
                 editing={mode === 'edit'}
+                targetDeviceId={assistant.targetDeviceId}
+                onTargetChange={assistant.setTarget}
+                onFocusPath={showPath}
                 onEditConnections={() => setMode('edit')}
                 onClose={() => setPanel(null)}
                 onSend={send}
                 onDismiss={(key) => assistant.decide(key, 'dismissed')}
-                onApply={(p, key) =>
+                onApply={(p, key, review) =>
                   safe(async () => {
                     if (p.type === 'connect' && mode !== 'edit') return false;
-                    if (!(await store.proposal(p))) return false;
+                    if (!(await store.proposal(p, undefined, review))) return false;
                     assistant.decide(key, 'applied');
                     setToast('Applied to your workspace after confirmation.');
                   })
@@ -799,6 +877,10 @@ export default function App() {
                 available={assistant.available}
                 onClose={() => setPanel(null)}
                 onAdd={() => setDialog('device')}
+                onContinue={(context) => {
+                  setPhotoContext(context);
+                  openSetup();
+                }}
                 onApply={async (draft, base) => {
                   if (!(await store.replace(applySceneDraft(store.workspace, base, draft), base)))
                     throw new Error(
@@ -809,20 +891,7 @@ export default function App() {
                 onRefresh={assistant.refreshHealth}
                 onClearDemo={() =>
                   safe(async () => {
-                    const reportedEndpoints = new Set(
-                      store.workspace.connections
-                        .filter((c) => c.source !== 'demo')
-                        .flatMap((c) => [c.from, c.to]),
-                    );
-                    const devices = store.workspace.devices.filter(
-                      (d) =>
-                        d.source !== 'demo' ||
-                        !!d.hardwareBinding ||
-                        d.status !== 'unknown' ||
-                        d.statusNote ||
-                        d.visual.source !== 'demo' ||
-                        reportedEndpoints.has(d.id),
-                    );
+                    const devices = retainedDevices(store.workspace);
                     const ids = new Set(devices.map((d) => d.id));
                     const saved = await store.replace({
                       ...store.workspace,
@@ -839,7 +908,7 @@ export default function App() {
                 }
               />
             )}
-            {panel !== 'settings' && notices}
+            {panel !== 'settings' && dialog !== 'connection' && dialog !== 'device' && notices}
           </div>
         </section>
       </div>
@@ -854,7 +923,11 @@ export default function App() {
             maxLength={2000}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Tell me about your desk. For example: I connected the right monitor to the dock with HDMI."
+            placeholder={
+              assistant.targetDevice
+                ? `Ask about ${assistant.targetDevice.name}, or describe what you checked.`
+                : 'Describe your devices, connections, or a problem you observed.'
+            }
           />
           <button
             className="send-button"
@@ -876,10 +949,14 @@ export default function App() {
             <button className="provider-toggle" onClick={() => setDialog('cloud')}>
               {assistant.mode === 'meta' ? 'Meta connection settings' : 'Connect Meta API'}
             </button>
-            <button onClick={() => send('I connected the right monitor to the dock with HDMI')}>
-              Describe a connection
-            </button>
-            <button onClick={() => send('The right monitor is not displaying')}>
+            <button onClick={openSetup}>Describe a connection</button>
+            <button
+              onClick={() => {
+                const target = device ?? assistant.targetDevice;
+                if (target?.kind === 'monitor') select(target.id);
+                else openSetup();
+              }}
+            >
               Troubleshoot a monitor
             </button>
           </div>
@@ -889,11 +966,12 @@ export default function App() {
         <AddObjectDialog onClose={() => setDialog(null)} onCommand={command} />
       )}
       {dialog === 'device' && (
-        <AddDeviceDialog onClose={() => setDialog(null)} onCommand={command} />
+        <AddDeviceDialog notices={notices} onClose={() => setDialog(null)} onCommand={command} />
       )}
       {dialog === 'connection' && mode === 'edit' && (
         <ConnectionDialog
           workspace={workspace}
+          notices={notices}
           selected={selected}
           onClose={() => setDialog(null)}
           onCommand={command}
@@ -961,8 +1039,8 @@ export default function App() {
             </button>
           </div>
           <p className="micro-note">
-            Scene objects, devices, and connections are stored in your browser. Photos,
-            conversations, and API keys are not included in the JSON export.
+            Scene objects, devices, connections, and the last 30 guided checks are stored in your
+            browser. Photos, conversations, and API keys are not included in the JSON export.
           </p>
           <hr />
           {resetConfirm ? (
@@ -973,6 +1051,10 @@ export default function App() {
                 onClick={async () => {
                   if (!(await store.replace(createDemoWorkspace()))) return;
                   deviceDrafts.invalidate();
+                  assistant.resetConversation();
+                  setFocusPath(null);
+                  setPhotoContext('');
+                  setReferencePhoto(null);
                   setResetConfirm(false);
                   setPanel(null);
                 }}
@@ -1005,6 +1087,10 @@ export default function App() {
             const next = portableWorkspace(parseWorkspace(JSON.parse(await f.text())));
             if (!(await store.replace(next))) return;
             deviceDrafts.invalidate();
+            assistant.resetConversation();
+            setFocusPath(null);
+            setPhotoContext('');
+            setReferencePhoto(null);
             setSelected(null);
             setToast('Workspace imported. Undo to restore the previous state.');
           } catch {
@@ -1033,10 +1119,10 @@ export default function App() {
           </div>
           <p className="muted">
             Once enabled, messages you send, your last 12 Meta conversation messages, and your
-            manually recorded device and connection setup are sent to the Meta API. Local-demo
-            history, OS observations, local matching identifiers and records created from Mac
-            detection are excluded. Photos are only sent with separate consent. API usage may incur
-            charges.
+            photo-inferred or manually recorded device and connection setup, selected device, and
+            eligible guided-check answers are sent to the Meta API. Local-demo history, OS
+            observations, local matching identifiers and records created from Mac detection are
+            excluded. Photos are only sent with separate consent. API usage may incur charges.
           </p>
           <p className="micro-note">
             The local demo uses limited rules and is not an LLM. Meta responses do not verify

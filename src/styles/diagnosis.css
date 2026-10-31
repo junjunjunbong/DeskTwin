@@ -1,0 +1,59 @@
+.diagnostic-entry .micro-note {
+  margin-top: 0.6rem;
+}
+.diagnostic-route {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: rgba(112, 126, 148, 0.06);
+  overflow-wrap: anywhere;
+}
+.diagnostic-route strong {
+  font-size: 0.75rem;
+}
+.diagnostic-route p {
+  margin: 0.35rem 0;
+}
+.diagnostic-route small {
+  display: block;
+  margin: 0.4rem 0;
+  line-height: 1.5;
+}
+.diagnostic-route-change {
+  padding: 0.7rem 0;
+}
+.diagnostic-card .diagnostic-actions {
+  align-items: stretch;
+}
+.diagnostic-card .diagnostic-actions .button {
+  white-space: normal;
+  min-width: 0;
+}
+.diagnostic-answer-history,
+.diagnostic-attempt-history {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+.diagnostic-answer-history summary,
+.diagnostic-attempt-history summary {
+  cursor: pointer;
+}
+.diagnostic-answer-history ol,
+.diagnostic-attempt-history ol {
+  padding-left: 1.2rem;
+}
+.diagnostic-answer-history li {
+  margin: 0.5rem 0;
+}
+.diagnostic-answer-history li span {
+  display: block;
+}
+.diagnostic-attempt-history article + article {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}

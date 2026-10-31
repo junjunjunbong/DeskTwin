@@ -14,7 +14,9 @@ import {
   parseWorkspace,
   type Device,
   type Workspace,
+  type WorkspaceCommand,
 } from './workspace';
+import { applyQueuedCommand } from './queuedCommand';
 import { modelWorkspace, portableWorkspace } from './workspacePrivacy';
 import { applySceneDraft, buildSceneDraft, type SceneProposal } from './sceneProposal';
 
@@ -243,6 +245,7 @@ describe('explicit hardware matching preserves existing desk evidence', () => {
     });
     expect(base).toEqual(before);
     expect(command.type).toBe('bind-hardware');
+    expect(command).toMatchObject({ expectedBinding: null });
     const saved = applyCommand(base, command);
     const { hardwareBinding: savedBinding, ...record } = saved.devices[2];
     expect(savedBinding?.identity).toEqual(observation().identity);
@@ -329,11 +332,93 @@ describe('explicit hardware matching preserves existing desk evidence', () => {
     base.devices[2].hardwareBinding = binding();
     base.devices[2].hardwareOrigin = 'macos';
     base.devices[2].status = 'reported-issue';
-    const saved = applyCommand(base, { type: 'unbind-hardware', id: 'monitor-right' });
+    const saved = applyCommand(base, {
+      type: 'unbind-hardware',
+      id: 'monitor-right',
+      expectedBinding: base.devices[2].hardwareBinding,
+    });
     const { hardwareBinding: _removed, ...expected } = base.devices[2];
     expect(saved.devices[2]).toEqual(expected);
     expect(saved.connections).toEqual(base.connections);
     expect(base.devices[2].hardwareBinding).toBeDefined();
+  });
+
+  it('captures the reviewed prior binding without retaining a mutable reference', () => {
+    const base = createDemoWorkspace();
+    base.devices[2].hardwareBinding = binding();
+    const previous = structuredClone(base.devices[2].hardwareBinding);
+    const replacement = observation({
+      id: 'replacement_observation',
+      identity: { key: 'replacement_identity', scope, stability: 'persistent' },
+    });
+    const command = hardwareMatchCommand(base, snapshot([replacement]), replacement, {
+      existingId: 'monitor-right',
+    });
+    expect(command).toMatchObject({ type: 'bind-hardware', expectedBinding: previous });
+    base.devices[2].hardwareBinding.identity.key = 'changed_after_review';
+    expect(command).toMatchObject({ expectedBinding: previous });
+  });
+
+  it('rejects a queued match when another approved match was saved first', () => {
+    const base = createDemoWorkspace();
+    const first = observation();
+    const second = observation({
+      id: 'second_observation',
+      identity: { key: 'second_identity', scope, stability: 'persistent' },
+    });
+    const current = snapshot([first, second]);
+    const waiting = hardwareMatchCommand(base, current, first, { existingId: 'monitor-right' });
+    const changed = applyCommand(
+      base,
+      hardwareMatchCommand(base, current, second, { existingId: 'monitor-right' }),
+    );
+    const before = structuredClone(changed);
+    expect(() => applyQueuedCommand(changed, base, waiting)).toThrow(/match.*changed|review/i);
+    expect(changed).toEqual(before);
+    expect(changed.devices[2].hardwareBinding?.identity).toEqual(second.identity);
+  });
+
+  it('rejects a queued removal when the reviewed match was replaced', () => {
+    const base = createDemoWorkspace();
+    base.devices[2].hardwareBinding = binding();
+    const waiting: WorkspaceCommand = {
+      type: 'unbind-hardware',
+      id: 'monitor-right',
+      expectedBinding: structuredClone(base.devices[2].hardwareBinding),
+    };
+    const replacement = observation({
+      id: 'replacement_observation',
+      identity: { key: 'replacement_identity', scope, stability: 'persistent' },
+    });
+    const changed = applyCommand(
+      base,
+      hardwareMatchCommand(base, snapshot([replacement]), replacement, {
+        existingId: 'monitor-right',
+      }),
+    );
+    const before = structuredClone(changed);
+    expect(() => applyQueuedCommand(changed, base, waiting)).toThrow(/match.*changed|review/i);
+    expect(changed).toEqual(before);
+    expect(changed.devices[2].hardwareBinding?.identity).toEqual(replacement.identity);
+  });
+
+  it('allows a reviewed removal after an unrelated name edit without losing that edit', () => {
+    const base = createDemoWorkspace();
+    base.devices[2].hardwareBinding = binding();
+    const waiting: WorkspaceCommand = {
+      type: 'unbind-hardware',
+      id: 'monitor-right',
+      expectedBinding: structuredClone(base.devices[2].hardwareBinding),
+    };
+    const changed = applyCommand(base, {
+      type: 'update-device',
+      id: 'monitor-right',
+      patch: { name: 'Renamed while removal was queued' },
+    });
+    const result = applyQueuedCommand(changed, base, waiting);
+    expect(result.devices[2].hardwareBinding).toBeUndefined();
+    expect(result.devices[2].name).toBe('Renamed while removal was queued');
+    expect(result.connections).toEqual(base.connections);
   });
 });
 
@@ -375,7 +460,11 @@ describe('local hardware privacy and photo retention', () => {
       name: 'Private OS label renamed',
       reason: 'User renamed the visual record.',
     });
-    base = applyCommand(base, { type: 'unbind-hardware', id: 'monitor-right' });
+    base = applyCommand(base, {
+      type: 'unbind-hardware',
+      id: 'monitor-right',
+      expectedBinding: base.devices[2].hardwareBinding,
+    });
     const before = structuredClone(base);
     const context = modelWorkspace(base);
     expect(context.devices.some((device) => device.id === 'monitor-right')).toBe(false);

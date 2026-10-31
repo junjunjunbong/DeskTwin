@@ -101,7 +101,10 @@ test('editing a legacy example device model preserves the saved name', async ({ 
 });
 test('conversation proposals require confirmation and never verify operation', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Describe a connection' }).click();
+  await page
+    .getByRole('textbox', { name: 'Message DeskTwin' })
+    .fill('I connected the right monitor to the dock with HDMI');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(
     page.getByText('I connected the right monitor to the dock with HDMI', { exact: true }),
   ).toBeVisible();
@@ -114,7 +117,11 @@ test('conversation proposals require confirmation and never verify operation', a
     'true',
   );
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
-  await page.getByRole('button', { name: 'Confirm and apply' }).click();
+  await expect(page.getByRole('button', { name: 'Confirm replacement' })).toBeDisabled();
+  await page
+    .getByRole('checkbox', { name: 'I reviewed the saved connection and want to replace it.' })
+    .check();
+  await page.getByRole('button', { name: 'Confirm replacement' }).click();
   await expect(page.getByText('Applied after confirmation')).toBeVisible();
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(
@@ -180,10 +187,17 @@ test('guided troubleshooting records only an explicit user test', async ({ page 
   await expect(page.getByRole('heading', { name: 'Check power and input source' })).toBeVisible();
   await page.getByRole('button', { name: 'Still no display' }).click();
   await expect(
+    page.getByRole('heading', { name: 'Confirm the recorded display route' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'This matches my checked connections' }).click();
+  await expect(
     page.getByRole('heading', { name: 'Check the current cable connection' }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'The screen works' }).click();
-  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
+  await expect.poll(async () => (await saved(page))?.diagnoses[0]?.result).toBe('resolved');
+  expect((await saved(page))?.devices.find((device) => device.id === 'monitor-right')?.status).toBe(
+    'unknown',
+  );
   await page.getByRole('button', { name: 'Save result as user-reported' }).click();
   await expect
     .poll(async () => (await saved(page))?.devices.find((d) => d.id === 'monitor-right')?.status)

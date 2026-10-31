@@ -1,4 +1,5 @@
 import type { Workspace } from './workspace';
+import { diagnosisDeviceIds } from './diagnosis';
 
 /** Portable records keep approved labels, but never installation-specific matching identities. */
 export function portableWorkspace(workspace: Workspace): Workspace {
@@ -22,7 +23,15 @@ export function modelWorkspace(workspace: Workspace): Workspace {
     if (item.attachment && !retainedObjectIds.has(item.attachment.parentId)) delete item.attachment;
   const ids = new Set(context.devices.map((device) => device.id));
   context.connections = context.connections.filter(
-    (link) => ids.has(link.from) && ids.has(link.to),
+    (link) => link.source !== 'os-detected' && ids.has(link.from) && ids.has(link.to),
+  );
+  // Sessions contain only bounded IDs and enum answers, but provenance is permanent.
+  // Keep an OS-derived session local even if an observation is later renamed or removed.
+  context.diagnoses = (context.diagnoses ?? []).filter(
+    (session) =>
+      !session.localOnly &&
+      diagnosisDeviceIds(session).every((id) => ids.has(id)) &&
+      session.path.connections.every((connection) => connection.source !== 'os-detected'),
   );
   // Event summaries may contain an OS-derived name after a user edit.
   context.history = [];

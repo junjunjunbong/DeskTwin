@@ -14,6 +14,7 @@ import {
 import {
   hardwareCategoryLabels,
   sameHardwareIdentity,
+  type HardwareBinding,
   type HardwareDevice,
   type HardwareSnapshot,
 } from '../domain/hardware';
@@ -179,8 +180,11 @@ export function DeviceHardwareStatus({
   onCommand: CommandHandler;
 }) {
   const [removing, setRemoving] = useState(false);
+  const [reviewedRemoval, setReviewedRemoval] = useState<HardwareBinding | null>(null);
   const [saving, setSaving] = useState(false);
   const presence = hardwarePresence(device, snapshot);
+  const removalIsCurrent =
+    JSON.stringify(device.hardwareBinding ?? null) === JSON.stringify(reviewedRemoval);
   return (
     <section
       className="panel-section device-hardware"
@@ -210,7 +214,13 @@ export function DeviceHardwareStatus({
       </button>
       {device.hardwareBinding &&
         (!removing ? (
-          <button className="text-button danger-text" onClick={() => setRemoving(true)}>
+          <button
+            className="text-button danger-text"
+            onClick={() => {
+              setReviewedRemoval(structuredClone(device.hardwareBinding ?? null));
+              setRemoving(true);
+            }}
+          >
             Remove OS match
           </button>
         ) : (
@@ -219,6 +229,11 @@ export function DeviceHardwareStatus({
               Remove only this local match? Your device, layout, connections and user reports stay
               saved.
             </p>
+            {!removalIsCurrent && (
+              <p role="alert">
+                The OS match changed. Keep the current match, then review removal again.
+              </p>
+            )}
             <button
               className="button secondary"
               disabled={saving}
@@ -228,11 +243,18 @@ export function DeviceHardwareStatus({
             </button>
             <button
               className="button secondary"
-              disabled={saving}
+              disabled={saving || !removalIsCurrent}
               onClick={async () => {
+                if (!removalIsCurrent) return;
                 setSaving(true);
                 try {
-                  if ((await onCommand({ type: 'unbind-hardware', id: device.id })) !== false)
+                  if (
+                    (await onCommand({
+                      type: 'unbind-hardware',
+                      id: device.id,
+                      expectedBinding: reviewedRemoval,
+                    })) !== false
+                  )
                     setRemoving(false);
                 } finally {
                   setSaving(false);
@@ -266,6 +288,7 @@ export function HardwarePanel({
   const [name, setName] = useState('');
   const [kind, setKind] = useState<DeviceKind>('monitor');
   const [reviewing, setReviewing] = useState(false);
+  const [reviewedBinding, setReviewedBinding] = useState<HardwareBinding | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const { snapshot } = hardware;
@@ -280,6 +303,10 @@ export function HardwarePanel({
       : undefined;
   const linked = observation ? linkedDevice(workspace, observation) : undefined;
   const existing = workspace.devices.find((device) => device.id === target);
+  const matchIsCurrent =
+    target === 'new' ||
+    (!!existing &&
+      JSON.stringify(existing.hardwareBinding ?? null) === JSON.stringify(reviewedBinding));
   function choose(value: HardwareDevice) {
     setSelected(value);
     setTarget('');
@@ -514,6 +541,7 @@ export function HardwarePanel({
                     className="button secondary full"
                     disabled={!target || (target === 'new' && !name.trim())}
                     onClick={() => {
+                      setReviewedBinding(structuredClone(existing?.hardwareBinding ?? null));
                       setReviewing(true);
                       setError('');
                     }}
@@ -542,6 +570,12 @@ export function HardwarePanel({
                     {existing?.hardwareBinding && (
                       <p>This replaces the previously approved OS match for this desk device.</p>
                     )}
+                    {!matchIsCurrent && (
+                      <p role="alert">
+                        The OS match changed while you were reviewing. Cancel and review the current
+                        match again.
+                      </p>
+                    )}
                     <p className="micro-note">
                       Recognition does not prove a device works. No connection record will be
                       created.
@@ -556,8 +590,9 @@ export function HardwarePanel({
                       </button>
                       <button
                         className="button primary"
-                        disabled={saving || (!existing && target !== 'new')}
+                        disabled={saving || !matchIsCurrent}
                         onClick={async () => {
+                          if (!matchIsCurrent) return;
                           setSaving(true);
                           setError('');
                           try {

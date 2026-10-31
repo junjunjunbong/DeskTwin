@@ -243,6 +243,116 @@ test('overview and connection guide enter Edit before offering an add dialog', a
   });
 });
 
+test('replacing a recorded connection requires reviewing the old and new records and confirming', async ({
+  page,
+}) => {
+  const initial = createDemoWorkspace();
+  const previous = initial.connections.find((connection) => connection.id === 'laptop-dock')!;
+  previous.source = 'user-reported';
+  previous.fromPort = 'Left USB-C';
+  previous.toPort = 'Upstream host';
+  previous.note = 'I checked this earlier cable.';
+  await seed(page, initial);
+  await selectDevice(page, 'USB-C Dock');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Selected device', exact: true })
+    .getByRole('button', { name: 'Add', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog', { name: 'Record a connection', exact: true });
+  await dialog.getByRole('combobox', { name: 'First device', exact: true }).selectOption('laptop');
+  await dialog.getByRole('combobox', { name: 'Second device', exact: true }).selectOption('dock');
+  await dialog.getByRole('combobox', { name: 'Connector', exact: true }).selectOption('Unknown');
+  await dialog.getByLabel(/First device port/).fill('Right side');
+  await dialog.getByLabel(/Second device port/).fill('Port label not known');
+  await expect(dialog).toContainText('already have a recorded USB-C connection');
+  expect(await saved(page)).toEqual(initial);
+  await dialog.getByRole('button', { name: 'Review replacement', exact: true }).click();
+  const review = dialog.getByRole('region', { name: 'Connection replacement review' });
+  await expect(review).toContainText('Left USB-C');
+  await expect(review).toContainText('Upstream host');
+  await expect(review).toContainText('I checked this earlier cable.');
+  await expect(review).toContainText('Right side');
+  await expect(review).toContainText('Port label not known');
+  await expect(dialog.getByRole('combobox', { name: 'Connector', exact: true })).toBeDisabled();
+  expect(await saved(page)).toEqual(initial);
+  await review.getByRole('button', { name: 'Cancel replacement and edit' }).click();
+  await expect(review).toHaveCount(0);
+  await expect(dialog.getByLabel(/First device port/)).toHaveValue('Right side');
+  expect(await saved(page)).toEqual(initial);
+
+  await dialog.getByRole('button', { name: 'Review replacement', exact: true }).click();
+  await review.getByRole('button', { name: 'Confirm replacement', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const result = await saved(page);
+  expect(result.connections).toHaveLength(initial.connections.length);
+  expect(result.connections.some((connection) => connection.id === previous.id)).toBe(false);
+  expect(result.connections.at(-1)).toMatchObject({
+    from: 'laptop',
+    to: 'dock',
+    connector: 'Unknown',
+    fromPort: 'Right side',
+    toPort: 'Port label not known',
+    source: 'user-reported',
+  });
+  expect(result.devices).toEqual(initial.devices);
+  expect(result.history).toHaveLength(initial.history.length + 1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => saved(page)).toEqual(initial);
+});
+
+test('a rejected replacement keeps its entries and requires a fresh review of another tab’s connection', async ({
+  page,
+  context,
+}) => {
+  const initial = createDemoWorkspace();
+  await seed(page, initial);
+  async function openDialog(target: Page) {
+    await selectDevice(target, 'USB-C Dock');
+    await target.getByRole('button', { name: 'Edit', exact: true }).click();
+    await target
+      .getByRole('complementary', { name: 'Selected device', exact: true })
+      .getByRole('button', { name: 'Add', exact: true })
+      .click();
+    const dialog = target.getByRole('dialog', { name: 'Record a connection', exact: true });
+    await dialog
+      .getByRole('combobox', { name: 'First device', exact: true })
+      .selectOption('laptop');
+    await dialog.getByRole('combobox', { name: 'Second device', exact: true }).selectOption('dock');
+    return dialog;
+  }
+  const first = await openDialog(page);
+  await first.getByLabel(/First device port/).fill('My replacement port');
+  await first.getByRole('button', { name: 'Review replacement', exact: true }).click();
+  const second = await context.newPage();
+  await second.goto('/');
+  const other = await openDialog(second);
+  await other.getByRole('combobox', { name: 'Connector', exact: true }).selectOption('Unknown');
+  await other.getByLabel(/First device port/).fill('Saved in another tab');
+  await other.getByRole('button', { name: 'Review replacement', exact: true }).click();
+  await other.getByRole('button', { name: 'Confirm replacement', exact: true }).click();
+  await expect(other).toHaveCount(0);
+  const changed = await saved(page);
+
+  await expect(page.getByRole('alert', { name: 'Storage conflict' })).toBeVisible();
+  await first.getByRole('button', { name: 'Confirm replacement', exact: true }).click();
+  await expect(first).toContainText('The connection was not saved.');
+  await expect(first.getByRole('region', { name: 'Connection replacement review' })).toHaveCount(0);
+  expect(await saved(page)).toEqual(changed);
+  await page.getByRole('button', { name: 'Load latest saved workspace', exact: true }).click();
+  await expect(first.getByLabel(/First device port/)).toHaveValue('My replacement port');
+  await first.getByRole('button', { name: 'Review replacement', exact: true }).click();
+  const review = first.getByRole('region', { name: 'Connection replacement review' });
+  await expect(review).toContainText('Saved in another tab');
+  expect(await saved(page)).toEqual(changed);
+  await review.getByRole('button', { name: 'Confirm replacement', exact: true }).click();
+  await expect(first).toHaveCount(0);
+  const result = await saved(page);
+  expect(result.connections).toHaveLength(initial.connections.length);
+  expect(result.connections.at(-1)?.fromPort).toBe('My replacement port');
+  expect(result.history).toHaveLength(changed.history.length + 1);
+});
+
 function dragWorkspace(): Workspace {
   const sample = createDemoWorkspace();
   const device = (id: string, x: number): Device => ({

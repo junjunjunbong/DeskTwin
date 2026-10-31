@@ -38,6 +38,7 @@ export function WorkspaceOverview({
   onAdd,
   onAddObject,
   onConnect,
+  onSetup,
   hardwareSummary,
   renderHardwareStatus,
 }: {
@@ -47,6 +48,7 @@ export function WorkspaceOverview({
   onAdd: () => void;
   onAddObject: () => void;
   onConnect: () => void;
+  onSetup?: () => void;
   hardwareSummary?: ReactNode;
   renderHardwareStatus?: (device: Device) => ReactNode;
 }) {
@@ -70,6 +72,15 @@ export function WorkspaceOverview({
             ? 'Select an object to move it, adjust its shape, or change its color. Drag directly in the scene.'
             : 'Select a device to inspect its evidence, recorded connections, and user reports.'}
         </p>
+        {onSetup && (
+          <section className="setup-intro" aria-label="Get started with your desk">
+            <strong>Make this your desk</strong>
+            <p>Review devices, confirm connections, then work through a display issue.</p>
+            <button className="button primary full" onClick={onSetup}>
+              Open setup guide <ArrowRight size={16} />
+            </button>
+          </section>
+        )}
         <div className="overview-totals" aria-label="Workspace counts">
           <div>
             <Desktop size={19} aria-hidden="true" />

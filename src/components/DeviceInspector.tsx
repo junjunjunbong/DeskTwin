@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { X, Link, Trash, Check, PencilSimple } from '@phosphor-icons/react';
+import { X, Link, Trash, Check, PencilSimple, ChatCircleDots } from '@phosphor-icons/react';
+import type { ConnectionFocusPath } from '../domain/connectionView';
 import { DeviceIcon } from './ui';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { TransformEditor } from './TransformEditor';
@@ -24,6 +25,9 @@ interface Props {
   onConnect: () => void;
   onSelect: (id: string) => void;
   onEdit: () => void;
+  onAsk?: () => void;
+  onFocusPath?: (path: ConnectionFocusPath) => void;
+  onReviewConnections?: () => void;
   hardwareDetails?: ReactNode;
   drafts: ReturnType<typeof useDeviceDrafts>;
 }
@@ -36,6 +40,9 @@ export function DeviceInspector({
   onConnect,
   onSelect,
   onEdit,
+  onAsk,
+  onFocusPath,
+  onReviewConnections,
   hardwareDetails,
   drafts,
 }: Props) {
@@ -135,6 +142,7 @@ export function DeviceInspector({
             {needsReview && !drafts.storageConflict && (
               <div className="draft-review" role="alert">
                 <strong>Saved details changed. Review before saving.</strong>
+                <p>Your edited operating status and its note are kept together when you review.</p>
                 <dl className="record-facts">
                   <div>
                     <dt>Saved name</dt>
@@ -372,18 +380,19 @@ export function DeviceInspector({
             not been verified. Photo estimates do not establish hidden wiring.
           </p>
         </section>
+        {onAsk && (
+          <button className="button secondary full" onClick={onAsk}>
+            <ChatCircleDots size={17} /> Ask about this device
+          </button>
+        )}
         {d.kind === 'monitor' && (
           <DiagnosticPanel
             key={d.id}
             device={d}
-            onPropose={(p) => {
-              if (p.type === 'set-status')
-                return onCommand({
-                  type: 'update-device',
-                  id: d.id,
-                  patch: { status: p.status, statusNote: p.note },
-                });
-            }}
+            workspace={workspace}
+            onCommand={async (c) => (await onCommand(c)) !== false}
+            onFocusPath={onFocusPath}
+            onReviewConnections={onReviewConnections}
           />
         )}
         <div hidden={mode !== 'edit'}>

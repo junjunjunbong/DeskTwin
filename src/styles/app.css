@@ -2124,6 +2124,33 @@ hr {
   line-height: 1.7;
   margin-bottom: 18px;
 }
+.setup-intro {
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid var(--line, #ded9ce);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+}
+.setup-intro p {
+  margin: 6px 0 12px;
+  color: var(--muted, #756f63);
+  line-height: 1.5;
+  font-size: 12px;
+}
+.focused-path-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line, #ded9ce);
+}
+.focused-path-banner > span {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
 .overview-totals {
   display: grid;
   grid-template-columns: 1fr 1fr;

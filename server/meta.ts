@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { modelWorkspace } from '../src/domain/workspacePrivacy';
+import { assistantDiagnosticContext, assistantSceneFocus } from '../src/domain/assistantContext';
 import {
   AssistantResponseSchema,
   type AssistantResponse,
@@ -81,6 +82,8 @@ EVIDENCE RULES:
 - Never say you scanned, detected live hardware, ran commands, changed settings, or verified operation. You have NO operating-system tools.
 - Do not invent device specifications or recommend a purchase without reliable provided specifications. USB-C is not proof of Thunderbolt or video capability.
 - Ask only the most useful missing question. State uncertainty and the basis for a suggestion.
+- focusDeviceId is the user's selected conversation target. Use it to resolve 'this monitor' or similar references; a different device explicitly named by the user takes precedence. recordedReferencePath is a deterministic route through saved records, not a verified signal path or your own observation.
+- guidedChecks contains prior user answers, not automated observations. Distinguish fixed, not-fixed, skipped, confirmed prerequisites, and unsupported prerequisites. Use the current unanswered step; do not repeat completed checks unless the user requests it or graphChanged is true. If graphChanged, explain that the previous path is historical and ask the user to review current connections. An unresolved or skipped check is not proof of a faulty device.
 - No destructive operations, formatting drives, electrical repairs, shell commands, or automatic changes.
 PROPOSALS:
 - Changes are proposals only; the user confirms them in a separate UI. Never say they are already applied.
@@ -121,13 +124,24 @@ export function validateModelReply(
 export async function callMeta(
   config: MetaConfig,
   workspace: Workspace,
-  input: { message: string; history?: History; image?: string },
+  input: { message: string; history?: History; image?: string; focusDeviceId?: string | null },
 ): Promise<AssistantResponse> {
   const sharedWorkspace = modelWorkspace(workspace);
+  if (
+    input.focusDeviceId &&
+    !sharedWorkspace.devices.some((device) => device.id === input.focusDeviceId)
+  )
+    throw new ApiError(
+      400,
+      'This conversation target is unavailable for Meta. Choose a current, shareable device or use the local demo.',
+    );
   // Do not send change history or unrelated UI preferences to the model.
   const context = {
     devices: sharedWorkspace.devices.map(modelContextItem),
     connections: sharedWorkspace.connections,
+    focusDeviceId: input.focusDeviceId ?? null,
+    recordedReferencePath: assistantSceneFocus(sharedWorkspace, input.focusDeviceId),
+    guidedChecks: assistantDiagnosticContext(sharedWorkspace, input.focusDeviceId),
   };
   const messages: unknown[] = [{ role: 'developer', content: instructions }];
   if (input.history) messages.push(...input.history);

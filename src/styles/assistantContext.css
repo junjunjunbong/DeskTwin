@@ -1,0 +1,46 @@
+.assistant-target {
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.6rem;
+  border-bottom: 1px solid var(--border, #dce4df);
+  background: var(--surface-soft, #f4f7f4);
+}
+.assistant-target label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.assistant-target select {
+  min-width: 0;
+  width: 100%;
+}
+.assistant-target p {
+  margin: 0.45rem 0;
+}
+.assistant-target small,
+.message-target {
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--muted, #66766f);
+}
+.connection-replacement-review {
+  margin: 0.7rem 0;
+  padding: 0.7rem;
+  border: 1px solid #c1cdbd;
+  border-radius: 0.6rem;
+  background: #f6f8ef;
+}
+.connection-replacement-review .replacement-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.replacement-confirmation input {
+  width: auto;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}

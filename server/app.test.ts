@@ -7,6 +7,7 @@ import {
   validateSceneReply,
 } from './meta';
 import { createDemoWorkspace } from '../src/domain/workspace';
+import { answerDiagnosis, startDiagnosis } from '../src/domain/diagnosis';
 import type { Server } from 'node:http';
 const servers: Server[] = [];
 afterEach(async () => {
@@ -449,5 +450,101 @@ describe('local API and Meta boundary', () => {
       expect(text).not.toContain('"allOf"');
       expect(text).toContain('"additionalProperties":false');
     }
+  });
+});
+
+describe('selected conversation target API boundary', () => {
+  it('passes only a validated selected target and its current recorded route to the provider', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(upstream({ message: 'Review this target.', proposals: [] }));
+    const url = await app({ apiKey: 'test-key', fetchImpl });
+    const response = await post(url, '/api/chat', {
+      ...request(),
+      message: 'This monitor has no signal.',
+      focusDeviceId: 'monitor-right',
+    });
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    const entry = sent.messages.find(
+      (message: { content: unknown }) =>
+        typeof message.content === 'string' && message.content.startsWith('CURRENT WORKSPACE'),
+    );
+    const context = JSON.parse(entry.content.slice(entry.content.indexOf('\n') + 1));
+    expect(context.focusDeviceId).toBe('monitor-right');
+    expect(context.recordedReferencePath.deviceIds).toEqual(['monitor-right', 'dock', 'laptop']);
+    expect(context.recordedReferencePath.connectionIds).toHaveLength(2);
+  });
+  it('rejects removed, malformed and local-only targets before any provider request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const url = await app({ apiKey: 'test-key', fetchImpl });
+    const workspace = createDemoWorkspace();
+    const target = workspace.devices.find((device) => device.id === 'monitor-right')!;
+    target.hardwareOrigin = 'macos';
+    target.source = 'user-reported';
+    for (const focusDeviceId of ['missing-device', '../bad-target', 'monitor-right']) {
+      const response = await post(url, '/api/chat', { ...request(), workspace, focusDeviceId });
+      expect(response.status).toBe(400);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it('uses the selected target locally without consent or any network transport', async () => {
+    const fetchImpl = vi.fn();
+    const url = await app({ fetchImpl });
+    const response = await post(url, '/api/chat', {
+      ...request(),
+      message: 'This monitor is not displaying',
+      focusDeviceId: 'monitor-right',
+      consent: undefined,
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).proposals[0]).toMatchObject({
+      type: 'set-status',
+      deviceId: 'monitor-right',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('guided-check provider summaries', () => {
+  it('sends enum answers and changed-graph context while dropping local checks and OS-sourced links', async () => {
+    const workspace = createDemoWorkspace();
+    const safeSession = answerDiagnosis(startDiagnosis('monitor-right', workspace), 'not-fixed');
+    const localSession = startDiagnosis('monitor-left', workspace);
+    localSession.localOnly = true;
+    workspace.diagnoses = [safeSession, localSession];
+    workspace.connections.find(
+      (edge) => edge.id === safeSession.path.connections[0].id,
+    )!.connector = 'Unknown';
+    const osEdge = workspace.connections.find((edge) => edge.to === 'ssd' || edge.from === 'ssd')!;
+    osEdge.source = 'os-detected';
+    osEdge.note = 'Private OS-only link note';
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(upstream({ message: 'Review the changed path.', proposals: [] }));
+    const url = await app({ apiKey: 'test-key', fetchImpl });
+    const response = await post(url, '/api/chat', {
+      ...request(),
+      workspace,
+      focusDeviceId: 'monitor-right',
+    });
+    expect(response.status).toBe(200);
+    const raw = String(fetchImpl.mock.calls[0][1]?.body);
+    const sent = JSON.parse(raw);
+    const entry = sent.messages.find(
+      (message: { content: unknown }) =>
+        typeof message.content === 'string' && message.content.startsWith('CURRENT WORKSPACE'),
+    );
+    const context = JSON.parse(entry.content.slice(entry.content.indexOf('\n') + 1));
+    expect(context.guidedChecks).toHaveLength(1);
+    expect(context.guidedChecks[0]).toMatchObject({
+      sessionId: safeSession.id,
+      deviceId: 'monitor-right',
+      graphChanged: true,
+      answers: [{ check: 'power', answer: 'not-fixed' }],
+    });
+    expect(raw).not.toContain(localSession.id);
+    expect(raw).not.toContain('Private OS-only link note');
+    expect(context.connections.some((edge: { id: string }) => edge.id === osEdge.id)).toBe(false);
   });
 });

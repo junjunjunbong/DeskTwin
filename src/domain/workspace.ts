@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { findFreePlacement, resolveSpatialEdit, snapToSurface } from './spatial';
 import { HardwareBindingSchema, type HardwareBinding } from './hardware';
+import {
+  DiagnosticSessionSchema,
+  diagnosticContextMatches,
+  diagnosisNote,
+  diagnosisDeviceIds,
+  type DiagnosticSession,
+} from './diagnosis';
 
 export const DeviceKindSchema = z.enum([
   'laptop',
@@ -181,6 +188,7 @@ export const WorkspaceSchema = z
     devices: z.array(DeviceSchema).max(40),
     objects: z.array(SceneObjectSchema).max(60),
     connections: z.array(ConnectionSchema).max(100),
+    diagnoses: z.array(DiagnosticSessionSchema).max(30).default([]),
     history: z.array(EventSchema).max(100),
     appearance: z.object({
       lighting: z.enum(['day', 'sunset', 'night']),
@@ -190,6 +198,15 @@ export const WorkspaceSchema = z
   })
   .superRefine((workspace, ctx) => {
     const ids = workspace.devices.map((d) => d.id);
+    const diagnosisIds = workspace.diagnoses.map((session) => session.id);
+    if (new Set(diagnosisIds).size !== diagnosisIds.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate diagnostic session IDs' });
+    for (const session of workspace.diagnoses) {
+      if (diagnosisDeviceIds(session).some((id) => !ids.includes(id)))
+        ctx.addIssue({ code: 'custom', message: 'Diagnostic session references a missing device' });
+      if (workspace.devices.find((device) => device.id === session.deviceId)?.kind !== 'monitor')
+        ctx.addIssue({ code: 'custom', message: 'Guided display checks require a monitor' });
+    }
     const hardwareKeys = workspace.devices.flatMap((device) =>
       device.hardwareBinding
         ? [JSON.stringify([device.hardwareBinding.category, device.hardwareBinding.identity])]
@@ -452,10 +469,35 @@ export function localizeLegacyDemoForDisplay(workspace: Workspace): Workspace {
 
 export type DeviceDetails = Pick<Device, 'name' | 'model' | 'status' | 'statusNote'>;
 
+export interface ProposalReview {
+  /** Exact connection reviewed by the user; null records a reviewed absence. */
+  expectedConnection?: Connection | null;
+}
+
+export function connectionBetween(workspace: Workspace, from: string, to: string) {
+  return workspace.connections.find(
+    (edge) => (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from),
+  );
+}
+
+/** Only the unchanged v1 example note has a display translation; it is the same reviewed record. */
+function connectionReviewValue(connection: Connection | null) {
+  if (!connection) return null;
+  const value = ConnectionSchema.parse(connection);
+  if (value.source === 'demo' && value.note === '체험용 예시입니다. 실제 연결이 아닙니다.')
+    value.note = 'Example only. This is not a confirmed connection.';
+  return value;
+}
+
 export type WorkspaceCommand =
   | { type: 'add-device'; device: z.input<typeof DeviceSchema> }
-  | { type: 'bind-hardware'; id: string; binding: HardwareBinding }
-  | { type: 'unbind-hardware'; id: string }
+  | {
+      type: 'bind-hardware';
+      id: string;
+      binding: HardwareBinding;
+      expectedBinding?: HardwareBinding | null;
+    }
+  | { type: 'unbind-hardware'; id: string; expectedBinding?: HardwareBinding | null }
   | {
       type: 'update-device';
       id: string;
@@ -477,8 +519,18 @@ export type WorkspaceCommand =
       dragPath?: Placement[];
     }
   | { type: 'remove-device'; id: string }
-  | { type: 'connect'; connection: Connection }
+  | ({ type: 'connect'; connection: Connection } & ProposalReview)
   | { type: 'remove-connection'; id: string }
+  | {
+      type: 'save-diagnosis';
+      session: DiagnosticSession;
+      expectedSession?: DiagnosticSession | null;
+    }
+  | {
+      type: 'record-diagnosis-result';
+      session: DiagnosticSession;
+      expectedDetails: DeviceDetails;
+    }
   | { type: 'appearance'; patch: Partial<Workspace['appearance']> }
   | { type: 'rename'; name: string };
 
@@ -494,6 +546,21 @@ export function applyCommand(
     case 'bind-hardware': {
       const device = next.devices.find((item) => item.id === command.id);
       if (!device) throw new Error('Device not found. Review the latest workspace.');
+      if (
+        (device.hardwareBinding && command.expectedBinding === undefined) ||
+        (command.expectedBinding !== undefined &&
+          JSON.stringify(
+            device.hardwareBinding ? HardwareBindingSchema.parse(device.hardwareBinding) : null,
+          ) !==
+            JSON.stringify(
+              command.expectedBinding === null
+                ? null
+                : HardwareBindingSchema.parse(command.expectedBinding),
+            ))
+      )
+        throw new Error(
+          'The local hardware match changed. Review its current binding before replacing it.',
+        );
       device.hardwareBinding = HardwareBindingSchema.parse(command.binding);
       summary = 'Approved a local OS observation match';
       break;
@@ -501,6 +568,21 @@ export function applyCommand(
     case 'unbind-hardware': {
       const device = next.devices.find((item) => item.id === command.id);
       if (!device) throw new Error('Device not found. Review the latest workspace.');
+      if (
+        (device.hardwareBinding && command.expectedBinding === undefined) ||
+        (command.expectedBinding !== undefined &&
+          JSON.stringify(
+            device.hardwareBinding ? HardwareBindingSchema.parse(device.hardwareBinding) : null,
+          ) !==
+            JSON.stringify(
+              command.expectedBinding === null
+                ? null
+                : HardwareBindingSchema.parse(command.expectedBinding),
+            ))
+      )
+        throw new Error(
+          'The local hardware match changed. Review its current binding before removing it.',
+        );
       delete device.hardwareBinding;
       summary = 'Removed a local OS observation match';
       break;
@@ -643,9 +725,22 @@ export function applyCommand(
       next.connections = next.connections.filter(
         (c) => c.from !== command.id && c.to !== command.id,
       );
+      next.diagnoses = next.diagnoses.filter(
+        (session) => !diagnosisDeviceIds(session).includes(command.id),
+      );
       break;
     case 'connect': {
       const c = ConnectionSchema.parse(command.connection);
+      const existing = connectionBetween(next, c.from, c.to) ?? null;
+      const expected = command.expectedConnection;
+      if (existing && expected === undefined)
+        throw new Error('This pair already has a connection. Review and confirm its replacement.');
+      if (
+        expected !== undefined &&
+        JSON.stringify(connectionReviewValue(existing)) !==
+          JSON.stringify(connectionReviewValue(expected))
+      )
+        throw new Error('The connection changed. Review the current record before saving.');
       next.connections = next.connections.filter(
         (e) => !((e.from === c.from && e.to === c.to) || (e.from === c.to && e.to === c.from)),
       );
@@ -657,6 +752,94 @@ export function applyCommand(
       next.connections = next.connections.filter((c) => c.id !== command.id);
       summary = 'Removed connection';
       break;
+    case 'save-diagnosis': {
+      const session = DiagnosticSessionSchema.parse(command.session);
+      const existing = next.diagnoses.find((item) => item.id === session.id) ?? null;
+      if (
+        (existing && command.expectedSession === undefined) ||
+        (command.expectedSession !== undefined &&
+          JSON.stringify(existing) !==
+            JSON.stringify(
+              command.expectedSession === null
+                ? null
+                : DiagnosticSessionSchema.parse(command.expectedSession),
+            ))
+      )
+        throw new Error('This guided check changed. Review the saved attempt before continuing.');
+      if (
+        existing &&
+        (existing.deviceId !== session.deviceId ||
+          existing.startedAt !== session.startedAt ||
+          existing.localOnly !== session.localOnly ||
+          JSON.stringify(existing.path) !== JSON.stringify(session.path) ||
+          JSON.stringify(existing.plan) !== JSON.stringify(session.plan))
+      )
+        throw new Error(
+          'A saved guided check cannot change its original route, plan, or privacy boundary.',
+        );
+      if (existing && JSON.stringify(existing) === JSON.stringify(session)) return current;
+      if (existing) {
+        const closesChangedRoute = session.stopReason === 'graph-changed';
+        if (
+          existing.result !== 'active' ||
+          Date.parse(session.updatedAt) < Date.parse(existing.updatedAt) ||
+          session.answers.length !== existing.answers.length + (closesChangedRoute ? 0 : 1) ||
+          JSON.stringify(session.answers.slice(0, existing.answers.length)) !==
+            JSON.stringify(existing.answers)
+        )
+          throw new Error(
+            'A guided check must preserve earlier answers and record one next answer.',
+          );
+        if (closesChangedRoute && diagnosticContextMatches(existing, next))
+          throw new Error('The recorded route has not changed. Continue the current check.');
+      } else if (session.answers.length || session.result !== 'active' || session.step !== 0) {
+        throw new Error('Start a guided check before recording its answers.');
+      }
+      if (session.stopReason !== 'graph-changed' && !diagnosticContextMatches(session, next))
+        throw new Error(
+          'The recorded route changed. Start a new guided check with the current connections.',
+        );
+      next.diagnoses = [session, ...next.diagnoses.filter((item) => item.id !== session.id)].slice(
+        0,
+        30,
+      );
+      summary = existing
+        ? 'Saved a user-guided check answer'
+        : 'Started a user-guided display check';
+      break;
+    }
+    case 'record-diagnosis-result': {
+      const session = DiagnosticSessionSchema.parse(command.session);
+      const recorded = next.diagnoses.find((item) => item.id === session.id);
+      const latest = next.diagnoses.find((item) => item.deviceId === session.deviceId);
+      if (
+        !recorded ||
+        latest?.id !== session.id ||
+        session.result !== 'resolved' ||
+        JSON.stringify(recorded) !== JSON.stringify(session) ||
+        !diagnosticContextMatches(session, next)
+      )
+        throw new Error(
+          'The guided check or its route changed. Review the current attempt before saving its result.',
+        );
+      const device = next.devices.find((item) => item.id === session.deviceId);
+      const displayed = localizeLegacyDemoForDisplay(next).devices.find(
+        (item) => item.id === session.deviceId,
+      );
+      const matchesDetails = (value: Device | undefined) =>
+        value &&
+        (['name', 'model', 'status', 'statusNote'] as const).every(
+          (field) => value[field] === command.expectedDetails[field],
+        );
+      if (!device || (!matchesDetails(device) && !matchesDetails(displayed)))
+        throw new Error(
+          'The device report changed. Review the current report before saving this result.',
+        );
+      device.status = 'reported-working';
+      device.statusNote = diagnosisNote(session);
+      summary = 'Saved a user-reported display test result · Cause not determined';
+      break;
+    }
     case 'attach-object': {
       const item = [...next.devices, ...next.objects].find((object) => object.id === command.id);
       if (!item) throw new Error('Object not found.');
@@ -805,11 +988,13 @@ export function applyProposal(
   workspace: Workspace,
   raw: Proposal,
   source: Source = 'user-reported',
+  review: ProposalReview = {},
 ): Workspace {
   const p = ProposalSchema.parse(raw);
   if (p.type === 'connect')
     return applyCommand(workspace, {
       type: 'connect',
+      expectedConnection: review.expectedConnection,
       connection: {
         id: crypto.randomUUID(),
         from: p.from,

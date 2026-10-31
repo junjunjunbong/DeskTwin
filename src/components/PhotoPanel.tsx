@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, X, Sparkle, Plus, Check } from '@phosphor-icons/react';
+import { Image as ImageIcon, X, Sparkle, Plus, Check, ArrowRight } from '@phosphor-icons/react';
 import { modelWorkspace } from '../domain/workspacePrivacy';
 import { type Workspace } from '../domain/workspace';
 import {
@@ -44,6 +44,7 @@ interface Props {
   storageConflict?: boolean;
   onClearDemo: () => unknown | Promise<unknown>;
   onRefresh: () => void;
+  onContinue?: (context: string) => void;
 }
 export function PhotoPanel({
   workspace,
@@ -56,6 +57,7 @@ export function PhotoPanel({
   onClearDemo,
   onRefresh,
   storageConflict = false,
+  onContinue,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const request = useRef<AbortController | null>(null);
@@ -214,8 +216,8 @@ export function PhotoPanel({
           </label>
           <p className="micro-note">
             Your saved device and connection records are included. These notes guide the visual
-            proposal; save connections separately with Record a connection. A photo cannot confirm
-            hidden wiring or device activity.
+            proposal. After reviewing the scene, continue to desk setup to confirm the connections
+            you described. A photo cannot confirm hidden wiring or device activity.
           </p>
           {available ? (
             <>
@@ -260,10 +262,18 @@ export function PhotoPanel({
             </p>
           )}
           {applied && (
-            <p className="applied-note">
-              <Check size={16} />
-              Scene applied. You can edit any object or undo this change.
-            </p>
+            <>
+              <p className="applied-note">
+                <Check size={16} />
+                Scene applied. You can edit any object or undo this change.
+              </p>
+              {onContinue && (
+                <button className="button primary full" onClick={() => onContinue(context)}>
+                  Continue to device and connection review
+                  <ArrowRight size={16} />
+                </button>
+              )}
+            </>
           )}
           <button
             className="button secondary full"

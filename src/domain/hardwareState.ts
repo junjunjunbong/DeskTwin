@@ -131,9 +131,14 @@ export function hardwareMatchCommand(
     approvedAt: new Date().toISOString(),
   };
   if ('existingId' in choice) {
-    if (!workspace.devices.some((device) => device.id === choice.existingId))
-      throw new Error('The selected desk record no longer exists. Choose it again.');
-    return { type: 'bind-hardware', id: choice.existingId, binding };
+    const target = workspace.devices.find((device) => device.id === choice.existingId);
+    if (!target) throw new Error('The selected desk record no longer exists. Choose it again.');
+    return {
+      type: 'bind-hardware',
+      id: choice.existingId,
+      binding,
+      expectedBinding: structuredClone(target.hardwareBinding ?? null),
+    };
   }
   const name = choice.newDevice.name.trim();
   if (!name || name.length > 60) throw new Error('Use a device name between 1 and 60 characters.');

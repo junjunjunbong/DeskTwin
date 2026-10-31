@@ -97,15 +97,20 @@ describe('evidence-aware workspace', () => {
       }),
     ).toThrow();
   });
-  it('upserts reported topology without claiming operational verification', () => {
+  it('replaces reviewed topology without claiming operational verification', () => {
     const w = createDemoWorkspace();
-    const next = applyProposal(w, {
-      type: 'connect',
-      from: 'dock',
-      to: 'monitor-right',
-      connector: 'HDMI',
-      reason: '사용자가 연결을 설명했습니다.',
-    });
+    const next = applyProposal(
+      w,
+      {
+        type: 'connect',
+        from: 'dock',
+        to: 'monitor-right',
+        connector: 'HDMI',
+        reason: '사용자가 연결을 설명했습니다.',
+      },
+      'user-reported',
+      { expectedConnection: w.connections.find((edge) => edge.id === 'dock-monitor-right') },
+    );
     expect(next.connections).toHaveLength(w.connections.length);
     expect(next.connections.at(-1)?.source).toBe('user-reported');
     expect(next.devices.every((d) => d.status === 'unknown')).toBe(true);

@@ -411,6 +411,12 @@ test('a failed diagnostic save never claims the user-reported result was saved',
   });
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
+  await page.getByRole('button', { name: 'Device list', exact: true }).click();
+  await page.getByRole('button', { name: /^Left monitor Monitor/ }).click();
+  await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
+  await page.getByRole('button', { name: 'The screen works', exact: true }).click();
+  await expect.poll(async () => (await saved(page)).diagnoses[0]?.result).toBe('resolved');
+  const beforeResultSave = await saved(page);
   await page.evaluate((name) => {
     const original = Storage.prototype.setItem;
     const controls = window as typeof window & { blockWrites?: boolean };
@@ -421,16 +427,12 @@ test('a failed diagnostic save never claims the user-reported result was saved',
       return original.call(this, entry, value);
     };
   }, key);
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /^Left monitor Monitor/ }).click();
-  await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
-  await page.getByRole('button', { name: 'The screen works', exact: true }).click();
   await page.getByRole('button', { name: 'Save result as user-reported' }).click();
   await expect(page.getByText(/The test result was not saved/)).toBeVisible();
   await expect(
     page.getByText('Saved as a user-reported test result', { exact: true }),
   ).not.toBeVisible();
-  expect((await saved(page)).devices[0].status).toBe(fixture.devices[0].status);
+  expect(await saved(page)).toEqual(beforeResultSave);
   await page.evaluate(() => {
     (window as typeof window & { blockWrites: boolean }).blockWrites = false;
   });
