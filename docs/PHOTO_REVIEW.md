@@ -8,7 +8,7 @@ At source commit `61bbc0b`, two separately authorized live requests succeeded wi
 
 The photo exposed several gaps. The wrist rest appeared only in the keyboard's description, not as a separate object. Trackpad, tablet, light bars and the laptop stand were omitted. The monitor riser used the old thin shelf template. Most importantly, the model placed the mat on the desk, but the application's device-first fitting pass moved it to the floor to avoid collisions. The original response and verdict are preserved in ignored local test artifacts; no personal photo is included in the repository.
 
-This change addresses the application behavior and revises the model's requested output. No additional live model request is part of this implementation. Replaying the earlier response or passing synthetic tests does not establish the quality of the revised prompt on a new photo.
+This change addresses the application behavior and revises the model's requested output. Implementation checks used no additional live model request. Separately authorized follow-up calls subsequently evaluated the revised prompt on the same photo; their timeout and unresolved layout failures are recorded in [PHOTO_EVALUATION.md](PHOTO_EVALUATION.md). Replaying the earlier response or passing synthetic tests does not establish the quality of the revised prompt on a new photo.
 
 ## Review workflow
 
@@ -50,4 +50,4 @@ Automated tests use an explicitly empty `MODEL_API_KEY`, synthetic scene inputs 
 
 The build emits browser-externalization notices for the decoder package's unused Node `fs`, `path` and `crypto` branches. The built production worker was exercised successfully under the unchanged script policy; these notices are not live API evidence.
 
-Remaining validation: the revised model prompt has not been sent to Meta. New-photo recognition, real-photo relative-size accuracy, Safari/Firefox behavior and broader HEIF codec/camera coverage remain unverified. The local checks establish the review and conversion behavior, not automatic fidelity to a photographed desk.
+Follow-up live validation: the revised model prompt returned 19 objects in a separately authorized 90-second harness run, after an earlier request timed out under the unchanged 35-second default. Placement issues blocked apply. See [PHOTO_EVALUATION.md](PHOTO_EVALUATION.md) for observations and offline reproductions. General new-photo recognition and relative-size accuracy, Safari/Firefox behavior and broader HEIF codec/camera coverage remain unverified. The local checks establish the review and conversion behavior, not automatic fidelity to a photographed desk.
