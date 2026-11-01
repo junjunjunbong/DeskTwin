@@ -1,7 +1,21 @@
 import { z } from 'zod';
 import { diagnosisDeviceIds } from './diagnosis';
 import {
+  photoPlacementSeed,
+  photoPlacementSupports,
+  repairPhotoLayout,
+  type PhotoPlacementAdjustment,
+  type PhotoPlacementLocks,
+  type PhotoPlacementSeed,
+  type PhotoRepairSummary,
+  type PhotoSupportSource,
+} from './photoPlacement';
+import {
   fitSceneProposalForReview,
+  DEFAULT_SCENE_HEIGHT_ADJUSTMENT,
+  evaluateSceneSupport,
+  getSurfaceTargets,
+  getUnambiguousCoveringSupport,
   getScenePlacementIssues,
   rebaseAttachedPlacement,
   validateSceneCollisions,
@@ -98,6 +112,10 @@ export type SceneReviewCandidate = {
   imageRegion: z.infer<typeof SceneImageRegionSchema> | null;
   /** A proposal ID, existing scene ID, floor, or null for inferred support. */
   supportId: string | null;
+  supportSource?: PhotoSupportSource;
+  locks?: Partial<PhotoPlacementLocks>;
+  /** Never replaced by automatic fitting or a later user edit. Review-only metadata. */
+  seed?: PhotoPlacementSeed;
   /** Unsaved edited geometry retained while this candidate is excluded. */
   excludedItem?: Device | SceneObject;
   excludedIndex?: number;
@@ -119,27 +137,56 @@ export type ScenePreview = {
   observations: SceneDeviceObservation[];
   candidates: SceneReviewCandidate[];
   issues: ScenePlacementIssue[];
+  /** The parsed proposal before geometry correction, never persisted into Workspace. */
+  originalDraft?: Workspace;
+  adjustments?: PhotoPlacementAdjustment[];
+  repairSummary?: PhotoRepairSummary;
 };
 export type SceneReviewMetadata = Pick<ScenePreview, 'candidates' | 'observations'>;
 
 /** Proposal references follow a candidate even when its saved-record association changes. */
 export function sceneReviewSupports(candidates: SceneReviewCandidate[]): SceneSupportRelation[] {
-  return candidates.flatMap((candidate) => {
-    if (!candidate.included || !candidate.supportId) return [];
-    const support =
-      candidate.supportId === 'floor'
-        ? undefined
-        : candidates.find((entry) => entry.proposalId === candidate.supportId);
-    return [
-      {
-        itemId: candidate.sceneId,
-        surfaceId: support
-          ? support.included
-            ? support.sceneId
-            : `excluded-${support.sceneId}`
-          : candidate.supportId,
-      },
-    ];
+  return photoPlacementSupports(candidates);
+}
+
+/** Promote only a uniquely supported thin covering. A model support is a hypothesis;
+ * a user's chosen or locked support is never silently replaced. */
+export function inferSceneCoveringSupports(
+  draft: Workspace,
+  candidates: SceneReviewCandidate[],
+): SceneReviewCandidate[] {
+  const relations = new Map(
+    sceneReviewSupports(candidates).map((relation) => [relation.itemId, relation.surfaceId]),
+  );
+  return candidates.map((candidate) => {
+    if (!candidate.included || candidate.locks?.support || candidate.supportSource === 'user')
+      return candidate;
+    const current = relations.get(candidate.sceneId);
+    if (!current) {
+      const resting = getSurfaceTargets(draft, candidate.sceneId).filter((target) => {
+        const contact = evaluateSceneSupport(draft, candidate.sceneId, target.id);
+        return contact.available && contact.footprintValid && contact.resting;
+      });
+      if (resting.length !== 1) return candidate;
+      const surfaceId = resting[0].id;
+      const target =
+        surfaceId === 'floor'
+          ? undefined
+          : candidates.find((entry) => entry.included && entry.sceneId === surfaceId);
+      return {
+        ...candidate,
+        supportId: target?.proposalId ?? surfaceId,
+        supportSource: 'geometry' as const,
+      };
+    }
+    const covering = getUnambiguousCoveringSupport(draft, candidate.sceneId, current);
+    if (!covering) return candidate;
+    const target = candidates.find((entry) => entry.included && entry.sceneId === covering);
+    return {
+      ...candidate,
+      supportId: target?.proposalId ?? covering,
+      supportSource: 'geometry' as const,
+    };
   });
 }
 
@@ -168,7 +215,33 @@ export function sceneReviewPlacementIssues(
     if (!original || JSON.stringify(geometry(original)) !== JSON.stringify(geometry(item)))
       changed.add(item.id);
   }
-  return getScenePlacementIssues(base, draft, changed, sceneReviewSupports(review.candidates));
+  return getScenePlacementIssues(base, draft, changed, sceneReviewSupports(review.candidates)).map(
+    (issue) => {
+      const candidate = review.candidates.find(
+        (entry) => entry.included && entry.sceneId === issue.itemId,
+      );
+      if (candidate?.locks?.position)
+        return {
+          ...issue,
+          message: `${issue.message} Position is locked; unlock it or adjust the other object.`,
+        };
+      if (
+        candidate &&
+        candidate.supportSource !== 'user' &&
+        issue.rootCause === 'height' &&
+        issue.relatedItemId
+      ) {
+        const contact = evaluateSceneSupport(draft, issue.itemId, issue.relatedItemId);
+        if (Math.abs(contact.heightDelta) > DEFAULT_SCENE_HEIGHT_ADJUSTMENT)
+          return {
+            ...issue,
+            rootCause: 'height-budget' as const,
+            message: `${issue.message} A larger height adjustment needs your support confirmation.`,
+          };
+      }
+      return issue;
+    },
+  );
 }
 
 /** The final confirmation rechecks the full review rather than trusting rendered warning state. */
@@ -260,10 +333,15 @@ function suggestedMatch<T extends Device | SceneObject>(
 
 /** Pure draft creation: no persistence, history event, provider call, or mutation of base. */
 export function buildSceneDraft(base: Workspace, value: unknown): Workspace {
-  return buildScenePreview(base, value).draft;
+  // Server semantic validation shares this path but must not repeat browser repair search.
+  return buildScenePreview(base, value, { repair: false }).draft;
 }
 
-export function buildScenePreview(base: Workspace, value: unknown): ScenePreview {
+export function buildScenePreview(
+  base: Workspace,
+  value: unknown,
+  options: { repair?: boolean } = {},
+): ScenePreview {
   const source = parseWorkspace(base);
   const proposal = SceneProposalSchema.parse(value);
   const next = structuredClone(source);
@@ -391,17 +469,62 @@ export function buildScenePreview(base: Workspace, value: unknown): ScenePreview
       source: 'photo-inferred',
       matchedSceneId,
       supportId: object.supportId ?? null,
+      supportSource: 'model',
+      locks: {},
+      seed: photoPlacementSeed(
+        [...next.objects, ...next.devices].find((item) => item.id === sceneId)!,
+        object.supportId ?? null,
+      ),
       imageRegion: object.imageRegion ?? null,
     });
   }
   const bounded = WorkspaceSchema.parse(next);
   const supports = sceneReviewSupports(candidates);
   const fitted = fitSceneProposalForReview(source, bounded, changedIds, supports);
+  if (options.repair !== false) {
+    const resolvedCandidates = inferSceneCoveringSupports(fitted.draft, candidates);
+    const repaired = repairPhotoLayout(source, fitted.draft, resolvedCandidates);
+    const issues = sceneReviewPlacementIssues(source, repaired.draft, {
+      candidates: resolvedCandidates,
+      observations,
+    });
+    const supportAdjustments = resolvedCandidates.flatMap(
+      (candidate): PhotoPlacementAdjustment[] =>
+        candidate.supportSource === 'geometry' && candidate.supportId !== candidate.seed?.supportId
+          ? [
+              {
+                itemId: candidate.sceneId,
+                field: 'support',
+                before: candidate.seed?.supportId ?? null,
+                after: candidate.supportId,
+                source: 'geometry',
+                reason: candidate.seed?.supportId
+                  ? 'Selected the unique thin mat covering the original support.'
+                  : 'Resolved the unique resting surface from geometry.',
+              },
+            ]
+          : [],
+    );
+    return {
+      draft: WorkspaceSchema.parse(repaired.draft),
+      observations,
+      candidates: resolvedCandidates,
+      issues,
+      originalDraft: structuredClone(bounded),
+      adjustments: [...supportAdjustments, ...repaired.adjustments],
+      repairSummary: {
+        ...repaired.summary,
+        unresolved: issues,
+        status: issues.length ? 'needs-review' : 'ready',
+      },
+    };
+  }
   return {
     draft: WorkspaceSchema.parse(fitted.draft),
     observations,
     candidates,
     issues: fitted.issues,
+    originalDraft: structuredClone(bounded),
   };
 }
 

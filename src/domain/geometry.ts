@@ -45,7 +45,8 @@ function createTemplate(kind: Kind): BoxPart[] {
   switch (kind) {
     case 'desk':
       box([7.4, 0.22, 3.15], [0, 2.33, 0], '#c99b69');
-      box([7.42, 0.035, 3.16], [0, 2.46, 0], '#d8ae7c');
+      // The full tabletop reaches the same height as its shallow grain trim.
+      box([7.42, 0.047, 3.16], [0, 2.46, 0], '#d8ae7c');
       for (let i = 0; i < 5; i++)
         box([7.37, 0.005, 0.008], [0, 2.481, -1.27 + i * 0.63], '#c69b6e');
       for (const x of [-3.14, 3.14])
@@ -268,4 +269,92 @@ export function getGeometryParts(item: {
     // in-memory shape visible and gives the placement solver finite bounds.
     return item.parts?.length ? item.parts : template('generic');
   return template(item.kind);
+}
+
+/** Contact patches describe the stylized template, not a physical stability guarantee.
+ * Keeping them separate from decorative boxes avoids using a screen as a monitor foot
+ * or a light bar's full width as its mounting clip. Custom geometry never inherits them. */
+export type GeometryContactPatch = {
+  center: { x: number; y: number; z: number };
+  size: { x: number; z: number };
+};
+export type TemplateContactProfile = {
+  contactMode: 'base' | 'covering' | 'mount';
+  contactPatches: GeometryContactPatch[];
+  supportPatches: GeometryContactPatch[];
+  /** Maximum extension per edge, as a fraction of the support's full width/depth. */
+  maxOverhangFraction?: number;
+  overhangKinds?: Kind[];
+};
+const patch = (
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  depth: number,
+): GeometryContactPatch => ({
+  center: { x, y, z },
+  size: { x: width, z: depth },
+});
+const contactProfiles: Partial<Record<Kind, TemplateContactProfile>> = {
+  desk: {
+    contactMode: 'base',
+    contactPatches: [],
+    // The broad tabletop and its trim share this actual horizontal surface.
+    supportPatches: [patch(0, 2.4835, 0, 7.42, 3.16)],
+  },
+  mat: {
+    contactMode: 'covering',
+    contactPatches: [patch(0, 0, 0, 3.06, 1.04)],
+    supportPatches: [patch(0, 0.012, 0, 3.06, 1.04), patch(0, 0.0275, 0, 3, 1)],
+  },
+  'monitor-riser': {
+    contactMode: 'base',
+    contactPatches: [patch(-1.08, 0, 0, 0.12, 0.74), patch(1.08, 0, 0, 0.12, 0.74)],
+    supportPatches: [patch(0, 0.5, 0, 2.4, 0.8)],
+  },
+  'laptop-stand': {
+    contactMode: 'base',
+    contactPatches: [patch(-0.5, 0, 0, 0.18, 0.85), patch(0.5, 0, 0, 0.18, 0.85)],
+    supportPatches: [patch(0, 0.42, 0, 1.5, 1.05)],
+    // An explicit visual policy for a rigid laptop base. It does not apply to custom shapes.
+    maxOverhangFraction: 0.05,
+    overhangKinds: ['laptop'],
+  },
+  shelf: {
+    contactMode: 'base',
+    contactPatches: [patch(0, 0, 0, 2.1, 0.5)],
+    supportPatches: [patch(0, 0.13, 0, 2.1, 0.5)],
+  },
+  monitor: {
+    contactMode: 'base',
+    contactPatches: [patch(0, 0.0025, 0, 0.65, 0.4)],
+    supportPatches: [patch(0, 1.5, 0, 1.85, 0.11)],
+  },
+  laptop: {
+    contactMode: 'base',
+    contactPatches: [patch(0, 0.0075, 0, 1.35, 0.93)],
+    supportPatches: [],
+  },
+  keyboard: {
+    contactMode: 'base',
+    contactPatches: [patch(0, 0.01, 0, 1.35, 0.44)],
+    supportPatches: [],
+  },
+  'light-bar': {
+    contactMode: 'mount',
+    // The central mounting region rests on the bezel; the lamp and diffuser may overhang it.
+    contactPatches: [patch(0, 0, 0, 0.18, 0.06)],
+    supportPatches: [],
+  },
+};
+
+export function getTemplateContactProfile(kind: Kind): TemplateContactProfile | null {
+  const profile = contactProfiles[kind];
+  return profile ? structuredClone(profile) : null;
+}
+
+export function getTemplateSupportTop(kind: Kind): number | null {
+  const patches = contactProfiles[kind]?.supportPatches;
+  return patches?.length ? Math.max(...patches.map((entry) => entry.center.y)) : null;
 }

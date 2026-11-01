@@ -12,6 +12,7 @@ import {
 } from './workspace';
 import {
   retainedDevices,
+  inferSceneCoveringSupports,
   sceneReviewPlacementIssues,
   sceneReviewSupports,
   type ScenePreview,
@@ -20,6 +21,13 @@ import {
 } from './sceneProposal';
 import { fitSceneProposalForReview, rebaseAttachedPlacement } from './spatial';
 import { getPhotoReviewPreset } from './photoPresets';
+import {
+  photoPlacementSeed,
+  repairPhotoLayout,
+  type PhotoPlacementAdjustment,
+  type PhotoPlacementLocks,
+  type PhotoRepairPolicy,
+} from './photoPlacement';
 
 export type SceneReviewState = ScenePreview;
 export { sceneReviewSupports, validateSceneReviewForApply } from './sceneProposal';
@@ -63,15 +71,31 @@ export function refreshSceneReview(
   state: SceneReviewState,
   base: Workspace,
   editedDraft: Workspace = state.draft,
+  options: { origin?: 'user' | 'geometry' } = {},
 ): SceneReviewState {
   const draft = WorkspaceSchema.parse(editedDraft);
   const candidates = state.candidates.map((candidate) => {
     const item = candidate.included ? itemIn(draft, candidate.sceneId) : undefined;
+    const previous = candidate.included ? itemIn(state.draft, candidate.sceneId) : undefined;
+    const locks = { ...candidate.locks };
+    if (item && previous && options.origin !== 'geometry' && editedDraft !== state.draft) {
+      if (
+        ['x', 'y', 'z'].some(
+          (axis) =>
+            item.placement[axis as 'x' | 'y' | 'z'] !== previous.placement[axis as 'x' | 'y' | 'z'],
+        )
+      )
+        locks.position = true;
+      if (item.placement.rotation !== previous.placement.rotation) locks.rotation = true;
+      if (!same(item.visual.scale, previous.visual.scale)) locks.scale = true;
+    }
     return item
       ? {
           ...candidate,
           kind: item.kind,
           proposedName: candidate.matchedSceneId ? candidate.proposedName : item.name,
+          locks,
+          seed: candidate.seed ?? photoPlacementSeed(previous ?? item, candidate.supportId),
         }
       : candidate;
   });
@@ -92,7 +116,167 @@ export function refreshSceneReview(
     };
   });
   const issues = sceneReviewPlacementIssues(base, draft, { candidates, observations });
-  return { ...state, draft, candidates, observations, issues };
+  return {
+    ...state,
+    draft,
+    candidates,
+    observations,
+    issues,
+    adjustments: state.adjustments?.filter((adjustment) => {
+      const candidate = candidates.find((entry) => entry.sceneId === adjustment.itemId);
+      return (
+        !(adjustment.field === 'position' && candidate?.locks?.position) &&
+        !(
+          adjustment.field === 'support' &&
+          (candidate?.locks?.support || candidate?.supportSource === 'user')
+        )
+      );
+    }),
+    repairSummary: state.repairSummary
+      ? {
+          ...state.repairSummary,
+          status: issues.length ? 'needs-review' : 'ready',
+          unresolved: issues,
+        }
+      : undefined,
+  };
+}
+
+/** Explicit locks are review-only constraints. Unlocking never changes geometry by itself. */
+export function setSceneCandidateLocks(
+  state: SceneReviewState,
+  base: Workspace,
+  proposalId: string,
+  patch: Partial<PhotoPlacementLocks>,
+): SceneReviewState {
+  if (!state.candidates.some((candidate) => candidate.proposalId === proposalId))
+    throw new Error('Review candidate not found.');
+  const candidates = state.candidates.map((candidate) =>
+    candidate.proposalId === proposalId
+      ? { ...candidate, locks: { ...candidate.locks, ...patch } }
+      : candidate,
+  );
+  return refreshSceneReview({ ...state, candidates }, base);
+}
+
+/** Repair the current review while retaining immutable photo seeds and user constraints. */
+export function repairSceneReview(
+  state: SceneReviewState,
+  base: Workspace,
+  policy: Partial<PhotoRepairPolicy> = {},
+): SceneReviewState {
+  const seeded = state.candidates.map((candidate) => {
+    const item = candidate.included
+      ? itemIn(state.draft, candidate.sceneId)
+      : candidate.excludedItem;
+    return item && !candidate.seed
+      ? { ...candidate, seed: photoPlacementSeed(item, candidate.supportId) }
+      : candidate;
+  });
+  const candidates = inferSceneCoveringSupports(state.draft, seeded);
+  const repaired = repairPhotoLayout(base, state.draft, candidates, policy);
+  const supportAdjustments = candidates.flatMap((candidate): PhotoPlacementAdjustment[] =>
+    candidate.included &&
+    candidate.supportSource === 'geometry' &&
+    candidate.supportId !== candidate.seed?.supportId
+      ? [
+          {
+            itemId: candidate.sceneId,
+            field: 'support',
+            before: candidate.seed?.supportId ?? null,
+            after: candidate.supportId,
+            source: 'geometry',
+            reason: candidate.seed?.supportId
+              ? 'Selected the unique thin mat covering the original support.'
+              : 'Resolved the unique resting surface from geometry.',
+          },
+        ]
+      : [],
+  );
+  return refreshSceneReview(
+    {
+      ...state,
+      candidates,
+      originalDraft: state.originalDraft ?? structuredClone(state.draft),
+      adjustments: [...supportAdjustments, ...repaired.adjustments],
+      repairSummary: repaired.summary,
+    },
+    base,
+    repaired.draft,
+    { origin: 'geometry' },
+  );
+}
+
+/** Undo automatic changes only. User-locked edits and saved evidence remain intact. */
+export function revertSceneRepair(state: SceneReviewState, base: Workspace): SceneReviewState {
+  let draft = structuredClone(state.draft);
+  const candidates = state.candidates.map((candidate) => {
+    if (!candidate.included || !candidate.seed) return candidate;
+    const item = itemIn(draft, candidate.sceneId);
+    if (item && !candidate.locks?.position) {
+      item.placement.x = candidate.seed.placement.x;
+      item.placement.y = candidate.seed.placement.y;
+      item.placement.z = candidate.seed.placement.z;
+    }
+    const seedSupport = candidate.seed.supportId;
+    const originalSupport =
+      seedSupport === 'floor'
+        ? undefined
+        : state.candidates.find(
+            (entry) => entry.proposalId === seedSupport || entry.seed?.sceneId === seedSupport,
+          );
+    return candidate.locks?.support || candidate.supportSource === 'user'
+      ? candidate
+      : {
+          ...candidate,
+          supportId: originalSupport?.proposalId ?? seedSupport,
+          supportSource: 'model' as const,
+        };
+  });
+  const relations = sceneReviewSupports(candidates);
+  const affected = new Set(
+    candidates
+      .filter(
+        (candidate) =>
+          candidate.included && candidate.supportSource === 'user' && candidate.supportId,
+      )
+      .map((candidate) => candidate.sceneId),
+  );
+  let added = true;
+  while (added) {
+    added = false;
+    for (const relation of relations)
+      if (affected.has(relation.surfaceId) && !affected.has(relation.itemId)) {
+        affected.add(relation.itemId);
+        added = true;
+      }
+  }
+  if (affected.size)
+    draft = fitSceneProposalForReview(
+      base,
+      draft,
+      affected,
+      relations.map((relation) =>
+        affected.has(relation.itemId) ? { ...relation, source: 'user' as const } : relation,
+      ),
+      {
+        carryFrom: draft,
+        lockedIds: candidates
+          .filter((candidate) => candidate.locks?.position)
+          .map((candidate) => candidate.sceneId),
+      },
+    ).draft;
+  return refreshSceneReview(
+    { ...state, candidates, adjustments: [], repairSummary: undefined },
+    base,
+    draft,
+    { origin: 'geometry' },
+  );
+}
+
+/** Read-only comparison; callers must not use it as the editable or applicable draft. */
+export function originalSceneReviewDraft(state: SceneReviewState): Workspace {
+  return structuredClone(state.originalDraft ?? state.draft);
 }
 
 function restoreOriginal(draft: Workspace, base: Workspace, id: string) {
@@ -250,6 +434,8 @@ export function setSceneCandidateSupport(
     entry.proposalId === proposalId
       ? {
           ...entry,
+          supportSource: 'user' as const,
+          locks: { ...entry.locks, support: true },
           supportId:
             supportId === 'floor'
               ? supportId
@@ -259,14 +445,31 @@ export function setSceneCandidateSupport(
         }
       : entry,
   );
+  const relations = sceneReviewSupports(candidates);
+  const affected = new Set([candidate.sceneId]);
+  // Include the full support subtree, independent of proposal/storage order.
+  let added = true;
+  while (added) {
+    added = false;
+    for (const relation of relations)
+      if (affected.has(relation.surfaceId) && !affected.has(relation.itemId)) {
+        affected.add(relation.itemId);
+        added = true;
+      }
+  }
   const fitted = fitSceneProposalForReview(
     base,
     state.draft,
-    [candidate.sceneId],
-    sceneReviewSupports(candidates),
-    { carryFrom: state.draft },
+    [...affected],
+    relations.map((relation) =>
+      affected.has(relation.itemId) ? { ...relation, source: 'user' as const } : relation,
+    ),
+    {
+      carryFrom: state.draft,
+      lockedIds: candidates.filter((entry) => entry.locks?.position).map((entry) => entry.sceneId),
+    },
   );
-  return refreshSceneReview({ ...state, candidates }, base, fitted.draft);
+  return refreshSceneReview({ ...state, candidates }, base, fitted.draft, { origin: 'geometry' });
 }
 
 /** Manual additions are user reports with unknown status, never model detections or working claims. */
@@ -318,6 +521,9 @@ export function addSceneReviewCandidate(
     matchedSceneId: null,
     imageRegion: null,
     supportId: null,
+    supportSource: 'user',
+    locks: { rotation: true, scale: true },
+    seed: photoPlacementSeed(item, null),
   };
   next.candidates.push(candidate);
   if (kind.success)
@@ -332,7 +538,7 @@ export function addSceneReviewCandidate(
   const fitted = fitSceneProposalForReview(base, WorkspaceSchema.parse(next.draft), [id], [], {
     carryFrom: next.draft,
   });
-  return refreshSceneReview(next, base, fitted.draft);
+  return refreshSceneReview(next, base, fitted.draft, { origin: 'geometry' });
 }
 
 /** Change only this observation's association, preserving both original reports and review edits. */

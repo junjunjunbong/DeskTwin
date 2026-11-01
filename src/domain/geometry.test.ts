@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getGeometryParts, getTemplateParts } from './geometry';
+import {
+  getGeometryParts,
+  getTemplateParts,
+  getTemplateContactProfile,
+  getTemplateSupportTop,
+} from './geometry';
 import {
   BoxPartSchema,
   DeviceKindSchema,
@@ -31,6 +36,46 @@ describe('editable voxel templates', () => {
     expect(getGeometryParts({ kind: 'monitor', shapeMode: 'custom', parts: [] })).toEqual(
       getTemplateParts('generic'),
     );
+  });
+
+  it('shares explicit template support heights with callers without exposing mutable profiles', () => {
+    for (const kind of ['desk', 'mat', 'monitor-riser', 'laptop-stand', 'shelf'] as const) {
+      const object = createSceneObject(kind);
+      object.placement = { x: 0, y: 0, z: 0, rotation: 0 };
+      object.visual.scale = { x: 1, y: 1, z: 1 };
+      expect(getTemplateSupportTop(kind)).toBeCloseTo(getItemBounds(object).max.y, 8);
+    }
+    expect(getTemplateSupportTop('generic')).toBeNull();
+    const profile = getTemplateContactProfile('monitor')!;
+    expect(profile.contactPatches[0].size.x).toBeLessThan(profile.supportPatches[0].size.x);
+    profile.supportPatches[0].center.y = 50;
+    expect(getTemplateSupportTop('monitor')).toBe(1.5);
+    expect(getTemplateContactProfile('monitor')!.supportPatches[0].center.y).toBe(1.5);
+  });
+
+  it('gives every explicit support patch a matching real horizontal template face', () => {
+    for (const kind of [
+      'desk',
+      'mat',
+      'monitor-riser',
+      'laptop-stand',
+      'shelf',
+      'monitor',
+    ] as const) {
+      const parts = getTemplateParts(kind);
+      for (const patch of getTemplateContactProfile(kind)!.supportPatches) {
+        const matchingFace = parts.some(
+          (part) =>
+            Math.abs(part.position.y + part.size.y / 2 - patch.center.y) < 1e-9 &&
+            Math.abs(part.position.x - patch.center.x) < 1e-9 &&
+            Math.abs(part.position.z - patch.center.z) < 1e-9 &&
+            Math.abs(part.size.x - patch.size.x) < 1e-9 &&
+            Math.abs(part.size.z - patch.size.z) < 1e-9 &&
+            (!part.rotation || Object.values(part.rotation).every((angle) => angle === 0)),
+        );
+        expect(matchingFace, `${kind} support patch must be an actual face`).toBe(true);
+      }
+    }
   });
 
   it('gives independent supports real clearance and leaves the legacy shelf unchanged', () => {

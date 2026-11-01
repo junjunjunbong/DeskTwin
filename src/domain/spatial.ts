@@ -1,4 +1,4 @@
-import { getGeometryParts } from './geometry';
+import { getGeometryParts, getTemplateContactProfile, type GeometryContactPatch } from './geometry';
 import type { Device, Placement, SceneObject, Workspace } from './workspace';
 
 type Item = Device | SceneObject;
@@ -9,6 +9,7 @@ type Body = { item: Item; boxes: Box[]; bounds: Bounds };
 const EPS = 0.00001;
 const GAP = 0.001;
 const REST_TOLERANCE = 0.005;
+export const DEFAULT_SCENE_HEIGHT_ADJUSTMENT = 0.12;
 const radians = (n: number) => (n * Math.PI) / 180;
 const add = (a: V, b: V): V => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
 const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
@@ -174,57 +175,74 @@ function sweptCollision(a0: Box, a1: Box, b0: Box, b1: Box, padding: number): bo
   return true;
 }
 
-type Surface = { id: string; name: string; height: number; box: Box | null; covering?: boolean };
+type Surface = {
+  id: string;
+  name: string;
+  height: number;
+  box: Box | null;
+  covering?: boolean;
+  maxOverhangFraction?: number;
+  overhangKinds?: Item['kind'][];
+};
 const solidSupportKinds = new Set(['desk', 'shelf', 'monitor-riser', 'laptop-stand']);
-function surface(item: Item): Surface {
+function hasTemplateGeometry(item: Item): boolean {
+  return (
+    item.shapeMode !== 'custom' &&
+    !(!item.shapeMode && item.kind === 'generic' && item.parts?.length)
+  );
+}
+function patchBox(item: Item, patch: GeometryContactPatch): Box {
+  const transform = (v: V) => yaw(scale(v, item.visual.scale), item.placement.rotation);
+  const center = add(item.placement, transform(patch.center));
+  const edges: [V, V, V] = [
+    transform({ x: patch.size.x / 2, y: 0, z: 0 }),
+    { x: 0, y: 0, z: 0 },
+    transform({ x: 0, y: 0, z: patch.size.z / 2 }),
+  ];
+  return { center, edges, bounds: boxBounds(center, edges) };
+}
+function contactBoxes(b: Body): Box[] {
+  const patches = hasTemplateGeometry(b.item)
+    ? getTemplateContactProfile(b.item.kind)?.contactPatches
+    : undefined;
+  if (patches?.length) return patches.map((patch) => patchBox(b.item, patch));
+  return b.boxes.filter((box) => box.bounds.min.y <= b.bounds.min.y + 0.035);
+}
+function contactPoints(b: Body): V[] {
+  const explicit =
+    hasTemplateGeometry(b.item) && !!getTemplateContactProfile(b.item.kind)?.contactPatches.length;
+  return contactBoxes(b).flatMap((box) =>
+    corners(box).filter((point) => explicit || point.y <= b.bounds.min.y + 0.035),
+  );
+}
+function supportSurfaces(item: Item): Surface[] {
+  const profile = hasTemplateGeometry(item) ? getTemplateContactProfile(item.kind) : null;
+  if (profile?.supportPatches.length)
+    return profile.supportPatches.map((patch) => {
+      const box = patchBox(item, patch);
+      return {
+        id: item.id,
+        name: item.name,
+        height: box.center.y,
+        box,
+        maxOverhangFraction: profile.maxOverhangFraction,
+        overhangKinds: profile.overhangKinds,
+      };
+    });
   const b = body(item);
   const horizontal = b.boxes.filter((box) =>
-    box.edges.some((edge) => Math.abs(edge.x) < EPS && Math.abs(edge.z) < EPS),
+    box.edges.some(
+      (edge) => Math.abs(edge.x) < EPS && Math.abs(edge.z) < EPS && Math.abs(edge.y) > EPS,
+    ),
   );
-  const byArea = horizontal.sort(
-    (a, b) =>
-      (b.bounds.max.x - b.bounds.min.x) * (b.bounds.max.z - b.bounds.min.z) -
-      (a.bounds.max.x - a.bounds.min.x) * (a.bounds.max.z - a.bounds.min.z),
-  );
-  // A stand's upper platform, rather than its wider feet, supports the device.
-  // Tiny trim pieces must not invent a broad supporting plane above the actual top.
-  const largestArea = byArea[0]
-    ? (byArea[0].bounds.max.x - byArea[0].bounds.min.x) *
-      (byArea[0].bounds.max.z - byArea[0].bounds.min.z)
-    : 0;
-  const top =
-    item.kind === 'desk'
-      ? byArea[0]
-      : byArea
-          .filter(
-            (box) =>
-              (box.bounds.max.x - box.bounds.min.x) * (box.bounds.max.z - box.bounds.min.z) >=
-              largestArea * 0.4,
-          )
-          .sort((a, b) => b.bounds.max.y - a.bounds.max.y)[0];
-  if (!top)
-    throw new Error(
-      'This object has no flat top. Add a horizontal box before placing objects on it.',
-    );
-  const nearbyTop = Math.max(
-    ...b.boxes
-      .filter((box) => box.bounds.max.y <= top.bounds.max.y + 0.06)
-      .map((box) => box.bounds.max.y),
-  );
-  return { id: item.id, name: item.name, height: Math.max(top.bounds.max.y, nearbyTop), box: top };
+  // Custom shapes use actual faces. A tiny, remote protrusion must never raise a
+  // broad, imaginary supporting plane over the rest of an object.
+  return horizontal.map((box) => ({ id: item.id, name: item.name, height: box.bounds.max.y, box }));
 }
 function surfaces(w: Workspace): Surface[] {
   return [
     { id: 'floor', name: 'Floor', height: 0, box: null },
-    ...w.objects
-      .filter((o) => solidSupportKinds.has(o.kind))
-      .flatMap((o) => {
-        try {
-          return [surface(o)];
-        } catch {
-          return [];
-        }
-      }),
+    ...w.objects.filter((o) => solidSupportKinds.has(o.kind)).flatMap(supportSurfaces),
   ];
 }
 
@@ -232,15 +250,7 @@ function surfaces(w: Workspace): Surface[] {
 function placementSurfaces(w: Workspace, item: Item): Surface[] {
   const monitors =
     item.kind === 'light-bar'
-      ? w.devices
-          .filter((candidate) => candidate.kind === 'monitor')
-          .flatMap((candidate) => {
-            try {
-              return [surface(candidate)];
-            } catch {
-              return [];
-            }
-          })
+      ? w.devices.filter((candidate) => candidate.kind === 'monitor').flatMap(supportSurfaces)
       : [];
   return [...surfaces(w), ...coveringSurfaces(w), ...monitors].filter(
     (target) =>
@@ -264,13 +274,7 @@ function coveringSurfaces(w: Workspace, excluded: Set<string> = new Set()): Surf
     if (!horizontal) return [];
     // Each box retains its real height/footprint: a thin border or disconnected
     // custom part cannot lend the rest of the mat an invented support surface.
-    return b.boxes.map((box) => ({
-      id: item.id,
-      name: item.name,
-      height: box.bounds.max.y,
-      box,
-      covering: true,
-    }));
+    return supportSurfaces(item).map((target) => ({ ...target, covering: true }));
   });
 }
 
@@ -288,23 +292,21 @@ function boundsOverlapXZ(bounds: Bounds, target: Surface): boolean {
 function footprintContact(b: Body, target: Surface): boolean {
   if (!target.box) return true;
   const layer = target.box;
-  return b.boxes
-    .filter((box) => box.bounds.min.y <= b.bounds.min.y + 0.035)
-    .some((box) => {
-      // The projection of a transformed box is a convex polygon whose edge
-      // directions are its projected box edges. SAT uses their horizontal normals.
-      const normals = [...box.edges, ...layer.edges]
-        .map((edge) => ({ x: -edge.z, y: 0, z: edge.x }))
-        .filter((axis) => length(axis) > 1e-10)
-        .map((axis) => mul(axis, 1 / length(axis)));
-      return normals.every(
-        (axis) =>
-          radius(box, axis) +
-            radius(layer, axis) -
-            Math.abs(dot(sub(box.center, layer.center), axis)) >
-          EPS,
-      );
-    });
+  return contactBoxes(b).some((box) => {
+    // The projection of a transformed box is a convex polygon whose edge
+    // directions are its projected box edges. SAT uses their horizontal normals.
+    const normals = [...box.edges, ...layer.edges]
+      .map((edge) => ({ x: -edge.z, y: 0, z: edge.x }))
+      .filter((axis) => length(axis) > 1e-10)
+      .map((axis) => mul(axis, 1 / length(axis)));
+    return normals.every(
+      (axis) =>
+        radius(box, axis) +
+          radius(layer, axis) -
+          Math.abs(dot(sub(box.center, layer.center), axis)) >
+        EPS,
+    );
+  });
 }
 
 /** A drag across a thin covering lifts, translates, then rests. Each segment is
@@ -338,15 +340,23 @@ function resolveCoveringMove(
   // waives a collision: all three movements below use the normal swept solver.
   const crossed = coverings.filter((target) => boundsOverlapXZ(union([start, end]), target));
   if (!crossed.length) return null;
-  const supports = surfaces(proposed).filter((target) => target.id !== id && fits(wanted, target));
+  const supports = surfaces(proposed)
+    .filter((target) => target.id !== id && fits(wanted, target))
+    .sort((a, b) => b.height - a.height);
   const attached = wanted.attachment
-    ? supports.find((target) => target.id === wanted.attachment?.parentId)
+    ? selectSupportSurface(
+        proposed,
+        wanted,
+        supports.filter((target) => target.id === wanted.attachment?.parentId),
+      )
     : undefined;
   const base =
     attached ??
-    supports
-      .filter((target) => Math.abs(target.height - start.min.y) < 0.18)
-      .sort((a, b) => b.height - a.height)[0];
+    selectSupportSurface(
+      proposed,
+      wanted,
+      supports.filter((target) => Math.abs(target.height - start.min.y) < 0.18),
+    );
   const resting = coverings
     .filter(
       (target) =>
@@ -414,6 +424,76 @@ export function getRestingSurfaceId(workspace: Workspace, id: string): string | 
       .sort((a, b) => b.height - a.height)[0]?.id ?? null
   );
 }
+
+export type SceneSupportEvaluation = {
+  available: boolean;
+  footprintValid: boolean;
+  resting: boolean;
+  heightDelta: number;
+  issue?: string;
+};
+
+/** The same contact policy is used by fitting, review, manual snapping and search. */
+export function evaluateSceneSupport(
+  workspace: Workspace,
+  itemId: string,
+  surfaceId: string,
+): SceneSupportEvaluation {
+  const item = find(workspace, itemId);
+  const target = intendedSupport(workspace, item, new Map([[itemId, surfaceId]]));
+  if (!target)
+    return {
+      available: false,
+      footprintValid: false,
+      resting: false,
+      heightDelta: 0,
+      issue: 'The selected support is unavailable.',
+    };
+  const b = body(item);
+  const footprintValid = supportedFootprint(b, target);
+  const resting = restingOn(b, target);
+  return {
+    available: true,
+    footprintValid,
+    resting,
+    heightDelta: target.height + GAP - b.bounds.min.y,
+    ...(!footprintValid
+      ? { issue: `${item.name} exceeds the contact allowance on ${target.name}.` }
+      : !resting
+        ? { issue: `${item.name} is not resting on ${target.name}.` }
+        : {}),
+  };
+}
+
+/** A conservative direct-support correction: one thin mat must fully contain the
+ * contact base and itself rest on the originally selected solid surface. Partial
+ * mat contact is valid for manual placement but is not enough to infer a relation. */
+export function getUnambiguousCoveringSupport(
+  workspace: Workspace,
+  itemId: string,
+  currentSupportId: string,
+): string | null {
+  const item = find(workspace, itemId);
+  if (item.kind === 'desk' || item.kind === 'chair' || item.kind === 'mat') return null;
+  const current = intendedSupport(workspace, item, new Map([[itemId, currentSupportId]]));
+  if (!current || current.covering || current.id === 'floor') return null;
+  const b = body(item);
+  const candidates = new Set(
+    coveringSurfaces(workspace, new Set([itemId]))
+      .filter((target) => {
+        const mat = body(find(workspace, target.id));
+        return (
+          fitsBody(b, target) &&
+          fitsBody(mat, current) &&
+          restingOn(mat, current) &&
+          target.height >= current.height - EPS &&
+          target.height <= current.height + 0.06 + GAP + REST_TOLERANCE
+        );
+      })
+      .map((target) => target.id),
+  );
+  return candidates.size === 1 ? [...candidates][0] : null;
+}
 function corners(box: Box): V[] {
   return [-1, 1].flatMap((a) =>
     [-1, 1].flatMap((b) =>
@@ -423,8 +503,8 @@ function corners(box: Box): V[] {
     ),
   );
 }
-function containsXZ(box: Box, point: V): boolean {
-  const edges = box.edges.filter((edge) => Math.abs(edge.y) < EPS);
+function containsXZ(box: Box, point: V, overhangFraction = 0): boolean {
+  const edges = box.edges.filter((edge) => Math.abs(edge.y) < EPS && length(edge) > EPS);
   if (edges.length !== 2) return false;
   const [a, b] = edges;
   const p = sub(point, box.center);
@@ -432,26 +512,36 @@ function containsXZ(box: Box, point: V): boolean {
   if (Math.abs(det) < 1e-10) return false;
   const u = (p.x * b.z - p.z * b.x) / det;
   const v = (a.x * p.z - a.z * p.x) / det;
-  return Math.abs(u) <= 1 + EPS && Math.abs(v) <= 1 + EPS;
+  // u/v use half-extents; the policy is expressed in full support dimensions.
+  return (
+    Math.abs(u) <= 1 + 2 * overhangFraction + EPS && Math.abs(v) <= 1 + 2 * overhangFraction + EPS
+  );
 }
 function fits(item: Item, target: Surface): boolean {
-  return fitsBody(body(item), target);
+  return supportedFootprint(body(item), target);
 }
 function fitsBody(b: Body, target: Surface): boolean {
   if (!target.box) return true;
-  // A light bar's front diffuser may overhang a narrow monitor bezel. Its real
-  // lowest mounting face, rather than nearby decorative parts, needs support.
-  const contactTolerance = b.item.kind === 'light-bar' ? EPS : 0.035;
-  const contact = b.boxes.filter((box) => box.bounds.min.y <= b.bounds.min.y + contactTolerance);
-  return contact.every((box) =>
-    corners(box)
-      .filter((p) => p.y <= b.bounds.min.y + contactTolerance)
-      .every((p) => containsXZ(target.box!, p)),
-  );
+  const points = contactPoints(b);
+  const overhang =
+    hasTemplateGeometry(b.item) && target.overhangKinds?.includes(b.item.kind)
+      ? (target.maxOverhangFraction ?? 0)
+      : 0;
+  if (!points.length || !points.every((point) => containsXZ(target.box!, point, overhang)))
+    return false;
+  if (overhang > 0) {
+    // A bounded edge allowance is not permission to support an off-centre object.
+    const center = mul(
+      points.reduce((sum, point) => add(sum, point), origin),
+      1 / points.length,
+    );
+    if (!containsXZ(target.box, center)) return false;
+  }
+  return true;
 }
 function supportedFootprint(b: Body, target: Surface): boolean {
-  // Thin coverings can support a partially overlapping foot, as in ordinary
-  // dragging over a mat. Solid stands and desks require the whole contact base.
+  // Thin coverings permit partial contact. Solid surfaces use their explicit,
+  // kind-specific contact policy, including only a bounded laptop/stand overhang.
   return target.covering ? footprintContact(b, target) : fitsBody(b, target);
 }
 function restingOn(b: Body, target: Surface): boolean {
@@ -651,17 +741,23 @@ export function resolveSpatialEdit(
   }
   if (options.snap === 'auto') {
     const bottom = getItemBounds(oldItem).min.y;
-    const candidates = surfaces(candidate).filter(
-      (s) => s.id !== id && (item.kind !== 'desk' || s.id === 'floor') && fits(item, s),
-    );
+    const candidates = surfaces(candidate)
+      .filter((s) => s.id !== id && (item.kind !== 'desk' || s.id === 'floor') && fits(item, s))
+      .sort((a, b) => b.height - a.height);
     const attached = item.attachment
-      ? candidates.find((s) => s.id === item.attachment?.parentId)
+      ? selectSupportSurface(
+          candidate,
+          item,
+          candidates.filter((s) => s.id === item.attachment?.parentId),
+        )
       : undefined;
     const nearby =
       attached ??
-      candidates
-        .filter((s) => Math.abs(s.height - bottom) < 0.18)
-        .sort((a, b) => b.height - a.height)[0];
+      selectSupportSurface(
+        candidate,
+        item,
+        candidates.filter((s) => Math.abs(s.height - bottom) < 0.18),
+      );
     if (nearby) {
       try {
         setHeight(item, nearby);
@@ -674,7 +770,7 @@ export function resolveSpatialEdit(
       }
     }
   } else if (options.snap) {
-    const target = surfaces(candidate).find((s) => s.id === options.snap);
+    const target = intendedSupport(candidate, item, new Map([[id, options.snap]]));
     if (!target || target.id === id || !fits(item, target))
       return {
         workspace: before,
@@ -768,7 +864,8 @@ export function resolveSpatialEdit(
         return `${b.item.name} would go through the floor.`;
       if (b.item.attachment) {
         const desk = next.objects.find((o) => o.id === b.item.attachment?.parentId);
-        if (!desk || !fits(b.item, surface(desk)))
+        const target = desk && intendedSupport(next, b.item, new Map([[b.item.id, desk.id]]));
+        if (!target || !supportedFootprint(b, target))
           return `${b.item.name} must stay over its attached desk. Detach it to move elsewhere.`;
       }
     }
@@ -844,7 +941,7 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
   const targets = placementSurfaces(candidate, item)
     .filter((s) => s.id === surfaceId)
     .sort((a, b) => b.height - a.height);
-  const target = targets.find((s) => fits(item, s)) ?? targets[0];
+  const target = selectSupportSurface(candidate, item, targets);
   if (!target) throw new Error('Choose a valid support surface.');
   if (!fits(item, target)) {
     if (!target.box) throw new Error('This shape does not fit on the selected surface.');
@@ -869,12 +966,15 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
   const selectedDesk = candidate.objects.some(
     (object) => object.id === surfaceId && object.kind === 'desk',
   );
+  const attachedSurface = attachedDesk
+    ? intendedSupport(candidate, item, new Map([[id, attachedDesk.id]]))
+    : undefined;
   const keepsDeskAttachment =
-    attachedDesk &&
+    attachedSurface &&
     !selectedDesk &&
     surfaceId !== 'floor' &&
-    target.height >= surface(attachedDesk).height - EPS &&
-    fits(item, surface(attachedDesk));
+    target.height >= attachedSurface.height - EPS &&
+    fits(item, attachedSurface);
   if (item.attachment?.parentId !== surfaceId && !keepsDeskAttachment) item.attachment = null;
   const result = resolveSpatialEdit(workspace, candidate, id, { sweep: false });
   if (result.blocked) throw new Error(result.reason);
@@ -950,7 +1050,7 @@ export function findFreePlacement(
       };
       if (!validPlacement(candidate)) continue;
       const b = translatedBody(sourceBody, candidate);
-      if (!fitsBody(b, target)) continue;
+      if (!supportedFootprint(b, target)) continue;
       if (rest.some((other) => pairCollisions(b, other).length > 0)) continue;
       const next = structuredClone(workspace);
       Object.assign(find(next, id), candidate);
@@ -962,12 +1062,107 @@ export function findFreePlacement(
   );
 }
 
-export type SceneSupportRelation = { itemId: string; surfaceId: string };
+export type SceneSupportRelation = {
+  itemId: string;
+  surfaceId: string;
+  source?: 'model' | 'user' | 'geometry';
+  maxHeightAdjustment?: number;
+};
+export type SceneCollisionPair = { itemIds: [string, string]; penetration: number };
+
+/** Exact transformed-box collisions, grouped by stable object IDs rather than
+ * one warning per object or per decorative box. A baseline keeps old contacts
+ * from becoming new failures while still reporting worsened penetration. */
+export function getSceneCollisionPairs(
+  workspace: Workspace,
+  baseline?: Workspace,
+): SceneCollisionPair[] {
+  const all = items(workspace).map(body);
+  const changed = new Set(all.map((entry) => entry.item.id));
+  const initial = new Map(
+    baseline
+      ? collisionPairs(items(baseline).map(body), changed)
+          .flatMap(([a, b]) => pairCollisions(a, b))
+          .map((hit) => [hit.key, hit])
+      : [],
+  );
+  return collisionPairs(all, changed)
+    .flatMap(([a, b]): SceneCollisionPair[] => {
+      const hits = pairCollisions(a, b).filter((hit) => !allowedExisting(hit, initial));
+      if (!hits.length) return [];
+      const itemIds = [a.item.id, b.item.id].sort() as [string, string];
+      return [{ itemIds, penetration: Math.max(...hits.map((hit) => hit.depth)) }];
+    })
+    .sort(
+      (a, b) =>
+        a.itemIds[0].localeCompare(b.itemIds[0]) || a.itemIds[1].localeCompare(b.itemIds[1]),
+    );
+}
 export type ScenePlacementIssue = {
   itemId: string;
   code: 'support' | 'collision' | 'retained-placement';
   message: string;
+  relatedItemId?: string;
+  rootCause?:
+    | 'missing-support'
+    | 'support-cycle'
+    | 'overhang'
+    | 'height'
+    | 'height-budget'
+    | 'collision'
+    | 'scene-bounds'
+    | 'retained-placement';
 };
+
+/** A surface ID can expose several real faces. Preserve a valid resting face,
+ * then prefer the nearest feasible face. A face buried under another part of
+ * the same support is not a usable rest plane (for example a mat's lower layer). */
+function selectSupportSurface(
+  workspace: Workspace,
+  item: Item,
+  possible: Surface[],
+): Surface | undefined {
+  const b = body(item);
+  const parentBodies = new Map<string, Body>();
+  return possible
+    .map((target) => {
+      const footprint = supportedFootprint(b, target);
+      let clear = footprint;
+      if (footprint && target.id !== 'floor') {
+        let parent = parentBodies.get(target.id);
+        if (!parent) {
+          const owner = items(workspace).find((entry) => entry.id === target.id);
+          if (owner) {
+            parent = body(owner);
+            parentBodies.set(target.id, parent);
+          }
+        }
+        const projected = {
+          ...item,
+          placement: {
+            ...item.placement,
+            y: item.placement.y + target.height + GAP - b.bounds.min.y,
+          },
+        };
+        clear = !!parent && pairCollisions(translatedBody(b, projected), parent).length === 0;
+      }
+      return {
+        target,
+        footprint,
+        clear,
+        resting: footprint && clear && restingOn(b, target),
+        distance: Math.abs(target.height + GAP - b.bounds.min.y),
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.footprint && b.clear) - Number(a.footprint && a.clear) ||
+        Number(b.footprint) - Number(a.footprint) ||
+        Number(b.resting) - Number(a.resting) ||
+        a.distance - b.distance ||
+        b.target.height - a.target.height,
+    )[0]?.target;
+}
 
 function intendedSupport(
   workspace: Workspace,
@@ -977,27 +1172,21 @@ function intendedSupport(
   const possible = placementSurfaces(workspace, item);
   const required = supports.get(item.id) ?? item.attachment?.parentId;
   if (required) {
-    const matching = possible
-      .filter((target) => target.id === required)
-      .sort((a, b) => b.height - a.height);
-    return matching.find((target) => supportedFootprint(body(item), target)) ?? matching[0];
+    return selectSupportSurface(
+      workspace,
+      item,
+      possible.filter((target) => target.id === required),
+    );
   }
   const b = body(item);
   // A tabletop observation cannot acquire an unrelated floor position when its
   // intended desk or stand is crowded, too small, missing, or unsupported.
-  const nearby = possible
-    .filter(
-      (target) =>
-        Math.abs(target.height - b.bounds.min.y) <= 0.22 &&
-        (target.id === 'floor' || footprintContact(b, target)),
-    )
-    .sort(
-      (one, two) =>
-        Number(supportedFootprint(b, two)) - Number(supportedFootprint(b, one)) ||
-        Math.abs(one.height - b.bounds.min.y) - Math.abs(two.height - b.bounds.min.y) ||
-        two.height - one.height,
-    );
-  return nearby[0];
+  const nearby = possible.filter(
+    (target) =>
+      Math.abs(target.height - b.bounds.min.y) <= 0.22 &&
+      (target.id === 'floor' || footprintContact(b, target)),
+  );
+  return selectSupportSurface(workspace, item, nearby);
 }
 
 function reviewScope(base: Workspace, draft: Workspace, changedIds: Iterable<string>): Set<string> {
@@ -1020,9 +1209,21 @@ export function getScenePlacementIssues(
   const explicitChanges = new Set(changedIds);
   const changed = reviewScope(base, draft, explicitChanges);
   const issues: ScenePlacementIssue[] = [];
-  const append = (itemId: string, code: ScenePlacementIssue['code'], message: string) => {
+  const append = (
+    itemId: string,
+    code: ScenePlacementIssue['code'],
+    message: string,
+    rootCause?: ScenePlacementIssue['rootCause'],
+    relatedItemId?: string,
+  ) => {
     if (!issues.some((issue) => issue.itemId === itemId && issue.message === message))
-      issues.push({ itemId, code, message });
+      issues.push({
+        itemId,
+        code,
+        message,
+        ...(rootCause ? { rootCause } : {}),
+        ...(relatedItemId ? { relatedItemId } : {}),
+      });
   };
   for (const item of items(draft).filter((candidate) => changed.has(candidate.id))) {
     const b = body(item);
@@ -1039,7 +1240,14 @@ export function getScenePlacementIssues(
       chain.add(next);
       next = supports.get(next);
     }
-    if (cycle) append(item.id, supportCode, `${item.name} has a circular support relationship.`);
+    if (cycle)
+      append(
+        item.id,
+        supportCode,
+        `${item.name} has a circular support relationship.`,
+        'support-cycle',
+        supports.get(item.id),
+      );
     else if (!target)
       append(
         item.id,
@@ -1047,18 +1255,24 @@ export function getScenePlacementIssues(
         supports.has(item.id)
           ? `${item.name}'s selected support is unavailable. Choose a support surface.`
           : `${item.name} has no nearby support. Choose a support surface or adjust its height.`,
+        'missing-support',
+        supports.get(item.id),
       );
     else if (!supportedFootprint(b, target))
       append(
         item.id,
         supportCode,
         `${item.name} extends beyond ${target.name}. Adjust its placement or support.`,
+        'overhang',
+        target.id,
       );
     else if (!restingOn(b, target))
       append(
         item.id,
         supportCode,
         `${item.name} is not resting on ${target.name}. Place it on the selected support.`,
+        'height',
+        target.id,
       );
     const original = items(base).find((candidate) => candidate.id === item.id);
     const allowedFloor = original ? Math.min(0, getItemBounds(original).min.y) : 0;
@@ -1079,6 +1293,8 @@ export function getScenePlacementIssues(
             item.id,
             'retained-placement',
             `${item.name} would be carried outside the scene limits. Adjust the desk or detach and place the object.`,
+            'retained-placement',
+            original.attachment.parentId,
           );
       }
     }
@@ -1087,6 +1303,7 @@ export function getScenePlacementIssues(
         item.id,
         supportCode,
         `${item.name} leaves the scene limits or goes through the floor.`,
+        'scene-bounds',
       );
   }
   const all = items(draft).map(body);
@@ -1106,6 +1323,8 @@ export function getScenePlacementIssues(
         one.item.id,
         explicitChanges.has(one.item.id) ? 'collision' : 'retained-placement',
         `${one.item.name} overlaps ${other.item.name}. Adjust the proposed objects before applying.`,
+        'collision',
+        other.item.id,
       );
     }
   }
@@ -1119,12 +1338,15 @@ export function fitSceneProposalForReview(
   draft: Workspace,
   changedIds: Iterable<string>,
   relations: Iterable<SceneSupportRelation> = [],
-  options: { carryFrom?: Workspace } = {},
+  options: { carryFrom?: Workspace; lockedIds?: Iterable<string> } = {},
 ): { draft: Workspace; issues: ScenePlacementIssue[] } {
   const result = structuredClone(draft);
   const changed = new Set(changedIds);
   const explicitSupports = [...relations];
   const supports = new Map(explicitSupports.map(({ itemId, surfaceId }) => [itemId, surfaceId]));
+  const supportMetadata = new Map(explicitSupports.map((relation) => [relation.itemId, relation]));
+  const locked = new Set(options.lockedIds ?? []);
+  const budgetIssues: ScenePlacementIssue[] = [];
   const planned = new Map<string, string>();
   for (const item of items(draft).filter((candidate) => changed.has(candidate.id))) {
     const target = intendedSupport(draft, item, supports);
@@ -1148,17 +1370,38 @@ export function fitSceneProposalForReview(
       const heightAdjustment = target
         ? Math.abs(target.height + GAP - getItemBounds(item).min.y)
         : Infinity;
-      const deliberateSupport = supports.has(id) || !!item.attachment;
+      const relation = supportMetadata.get(id);
+      // A model-provided ID is still an estimate. Only an explicit user choice
+      // or an existing user attachment authorizes an unrestricted height change.
+      const deliberateSupport = relation?.source === 'user' || (!relation && !!item.attachment);
+      const limit =
+        relation?.maxHeightAdjustment ??
+        (deliberateSupport ? Infinity : DEFAULT_SCENE_HEIGHT_ADJUSTMENT);
       if (
         target &&
         supportedFootprint(body(item), target) &&
-        (deliberateSupport || heightAdjustment <= 0.12)
+        !locked.has(id) &&
+        heightAdjustment <= limit + EPS
       ) {
         try {
           setHeight(item, target);
         } catch {
           // The issue inspector explains an out-of-range or unsupported shape.
         }
+      } else if (
+        target &&
+        supportedFootprint(body(item), target) &&
+        !locked.has(id) &&
+        heightAdjustment > limit + EPS &&
+        !restingOn(body(item), target)
+      ) {
+        budgetIssues.push({
+          itemId: id,
+          code: 'support',
+          rootCause: 'height-budget',
+          relatedItemId: target.id,
+          message: `${item.name} needs a larger height adjustment. Confirm its support or adjust its height.`,
+        });
       }
     }
     active.delete(id);
@@ -1171,6 +1414,7 @@ export function fitSceneProposalForReview(
   for (const original of items(carryFrom)) {
     if (
       !changed.has(original.id) &&
+      !locked.has(original.id) &&
       original.attachment &&
       changed.has(original.attachment.parentId) &&
       items(result).some(
@@ -1196,12 +1440,22 @@ export function fitSceneProposalForReview(
     }
   }
   const plannedRelations = [...planned].map(([itemId, surfaceId]) => ({ itemId, surfaceId }));
+  const issues = getScenePlacementIssues(base, result, changed, [
+    ...plannedRelations,
+    ...explicitSupports,
+  ]);
   return {
     draft: result,
-    issues: getScenePlacementIssues(base, result, changed, [
-      ...plannedRelations,
-      ...explicitSupports,
-    ]),
+    issues: [
+      ...issues.filter(
+        (issue) =>
+          !(
+            issue.rootCause === 'height' &&
+            budgetIssues.some((budget) => budget.itemId === issue.itemId)
+          ),
+      ),
+      ...budgetIssues,
+    ],
   };
 }
 
@@ -1318,12 +1572,9 @@ export function validateSceneCollisions(workspace: Workspace, baseline?: Workspa
     if (b.bounds.min.y < allowedFloor - EPS) issues.add(`${b.item.name} goes through the floor.`);
     if (b.item.attachment) {
       const parent = workspace.objects.find((item) => item.id === b.item.attachment?.parentId);
-      let supported = false;
-      try {
-        supported = !!parent && fitsBody(b, surface(parent));
-      } catch {
-        /* No flat support. */
-      }
+      const target =
+        parent && intendedSupport(workspace, b.item, new Map([[b.item.id, parent.id]]));
+      const supported = !!target && supportedFootprint(b, target);
       if (!supported) {
         const oldParent = baseline?.objects.find((item) => item.id === b.item.attachment?.parentId);
         const unchanged =

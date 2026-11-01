@@ -24,6 +24,9 @@ import {
   resolveSpatialEdit,
   snapToSurface,
   validateSceneCollisions,
+  evaluateSceneSupport,
+  getSceneCollisionPairs,
+  getUnambiguousCoveringSupport,
 } from './spatial';
 
 const part = (x = 1, y = 1, z = 1): BoxPart => ({
@@ -62,7 +65,7 @@ function move(w: Workspace, id: string, x: number, z: number, rotation?: number)
 }
 
 describe('shared geometry placement', () => {
-  it('adds a manually entered monitor to a clear desk position after searching occupied mat layers', () => {
+  it('adds a manually entered monitor to a clear tabletop position without changing saved records', () => {
     const base = createDemoWorkspace();
     const original = structuredClone(base);
     const device = DeviceSchema.parse({
@@ -86,8 +89,12 @@ describe('shared geometry placement', () => {
       status: 'unknown',
       statusNote: '',
     });
-    expect(getRestingSurfaceId(result, placed.id)).toBe(desk.id);
-    expect(getItemBounds(placed).min.y).toBeCloseTo(getItemBounds(desk).max.y + 0.001, 6);
+    // Thin covering contact now has the same partial-overlap policy in manual
+    // search and photo review. A clear mat edge is a valid tabletop position too.
+    const restingId = getRestingSurfaceId(result, placed.id);
+    expect([desk.id, 'decor-desk-mat']).toContain(restingId);
+    const support = result.objects.find((entry) => entry.id === restingId)!;
+    expect(getItemBounds(placed).min.y).toBeCloseTo(getItemBounds(support).max.y + 0.001, 6);
     expect(validateSceneCollisions(result, base)).toEqual([]);
     expect(result.devices.filter((item) => item.id !== device.id)).toEqual(base.devices);
     expect(result.objects).toEqual(base.objects);
@@ -1050,5 +1057,375 @@ describe('legacy compatibility', () => {
     expect(upgraded.connections[0].from).toBe('decor-desk');
     expect(upgraded.objects.find((item) => item.kind === 'desk')?.id).toBe('decor-desk-migrated-1');
     expect(parseWorkspace(input)).toEqual(upgraded);
+  });
+});
+
+describe('shared photo contact policies', () => {
+  function device(id: string, kind: 'keyboard' | 'laptop' | 'monitor', x = 0, y = 2.5, z = 0) {
+    return DeviceSchema.parse({
+      id,
+      kind,
+      name: id,
+      model: '',
+      source: 'photo-inferred',
+      status: 'unknown',
+      statusNote: '',
+      placement: { x, y, z, rotation: 0 },
+      visual: defaultVisual('photo-inferred'),
+    });
+  }
+  function deskAndMat() {
+    const desk = {
+      ...createSceneObject('desk'),
+      id: 'desk',
+      placement: { x: 0, y: 0.001, z: 0, rotation: 0 },
+    };
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 0, y: 2.4855, z: 0, rotation: 0 },
+    };
+    return empty([desk, mat]);
+  }
+  function standAndLaptop() {
+    const desk = {
+      ...createSceneObject('desk'),
+      id: 'desk',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    const stand = {
+      ...createSceneObject('laptop-stand'),
+      id: 'stand',
+      placement: { x: 2, y: 2.4835, z: -0.1, rotation: -15 },
+      visual: { ...defaultVisual(), scale: { x: 0.8, y: 0.8, z: 0.8 } },
+    };
+    const laptop = device('laptop', 'laptop', 2, 2.8128, -0.1);
+    laptop.placement.rotation = -15;
+    laptop.visual.scale = { x: 0.95, y: 0.9, z: 0.95 };
+    const workspace = empty([desk, stand]);
+    workspace.devices = [laptop];
+    return workspace;
+  }
+  const laptopRelations = [
+    { itemId: 'desk', surfaceId: 'floor' },
+    { itemId: 'stand', surfaceId: 'desk' },
+    { itemId: 'laptop', surfaceId: 'stand' },
+  ];
+
+  it('keeps a valid partial-mat placement unchanged in review, snapping and free placement', () => {
+    const draft = deskAndMat();
+    draft.devices.push(device('keyboard', 'keyboard', 1.7, 2.49));
+    const fit = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'mat' }],
+    );
+    expect(fit.issues).toEqual([]);
+    expect(fit.draft.devices[0].placement.x).toBe(1.7);
+    expect(evaluateSceneSupport(fit.draft, 'keyboard', 'mat')).toMatchObject({
+      available: true,
+      footprintValid: true,
+      resting: true,
+    });
+    const snapped = snapToSurface(fit.draft, 'keyboard', 'mat');
+    const searched = findFreePlacement(fit.draft, 'keyboard', { surfaceId: 'mat' });
+    expect(snapped.devices[0].placement).toEqual(fit.draft.devices[0].placement);
+    expect(searched.devices[0].placement).toEqual(fit.draft.devices[0].placement);
+    expect(validateSceneCollisions(snapped)).toEqual([]);
+  });
+
+  it('still searches the desk after every partial-contact position on an occupied mat is blocked', () => {
+    const draft = deskAndMat();
+    const blocker = cube('blocker', 0);
+    blocker.placement.y = 2.514;
+    blocker.parts = [part(3.8, 0.5, 1.6)];
+    draft.objects.push(blocker);
+    draft.devices = [device('new-monitor', 'monitor', 0, 2.51, 0.35)];
+    const before = structuredClone(draft);
+    const result = findFreePlacement(draft, 'new-monitor', { allowFloorFallback: false });
+    expect(getRestingSurfaceId(result, 'new-monitor')).toBe('desk');
+    expect(validateSceneCollisions(result)).toEqual([]);
+    expect(result.objects).toEqual(before.objects);
+    expect(draft).toEqual(before);
+  });
+
+  it('fits the sanitized laptop overhang without changing either object size or horizontal pose', () => {
+    const draft = standAndLaptop();
+    const result = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['desk', 'stand', 'laptop'],
+      laptopRelations,
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.draft.devices[0].placement.y - draft.devices[0].placement.y).toBeCloseTo(
+      0.00295,
+      8,
+    );
+    for (const original of [...draft.devices, ...draft.objects]) {
+      const fitted = [...result.draft.devices, ...result.draft.objects].find(
+        (entry) => entry.id === original.id,
+      )!;
+      expect(fitted.visual.scale).toEqual(original.visual.scale);
+      expect({
+        x: fitted.placement.x,
+        z: fitted.placement.z,
+        rotation: fitted.placement.rotation,
+      }).toEqual({
+        x: original.placement.x,
+        z: original.placement.z,
+        rotation: original.placement.rotation,
+      });
+    }
+    expect(validateSceneCollisions(result.draft)).toEqual([]);
+    expect(evaluateSceneSupport(result.draft, 'laptop', 'stand').footprintValid).toBe(true);
+    expect(snapToSurface(result.draft, 'laptop', 'stand').devices[0].placement).toEqual(
+      result.draft.devices[0].placement,
+    );
+  });
+
+  it('accepts the explicit 5-percent-per-edge boundary and rejects excessive or off-centre overhang', () => {
+    const draft = standAndLaptop();
+    // The stand is 1.2 wide. A centred 1.32 base extends 0.06 beyond each edge.
+    draft.devices[0].visual.scale.x = 1.32 / 1.35;
+    expect(evaluateSceneSupport(draft, 'laptop', 'stand').footprintValid).toBe(true);
+    draft.devices[0].visual.scale.x = 1.322 / 1.35;
+    expect(evaluateSceneSupport(draft, 'laptop', 'stand').footprintValid).toBe(false);
+    const offset = standAndLaptop();
+    // Translate along the stand's local X axis, keeping the same yaw.
+    offset.devices[0].placement.x += 0.03 * Math.cos((-15 * Math.PI) / 180);
+    offset.devices[0].placement.z -= 0.03 * Math.sin((-15 * Math.PI) / 180);
+    expect(evaluateSceneSupport(offset, 'laptop', 'stand').footprintValid).toBe(false);
+  });
+
+  it('keeps exact solid collision checks for an allowed support pair', () => {
+    const fit = fitSceneProposalForReview(
+      empty([]),
+      standAndLaptop(),
+      ['desk', 'stand', 'laptop'],
+      laptopRelations,
+    );
+    fit.draft.devices[0].placement.y -= 0.02;
+    const pairs = getSceneCollisionPairs(fit.draft);
+    expect(pairs).toEqual([expect.objectContaining({ itemIds: ['laptop', 'stand'] })]);
+    expect(pairs[0].penetration).toBeGreaterThan(0);
+    expect(
+      getScenePlacementIssues(empty([]), fit.draft, ['laptop', 'stand'], laptopRelations),
+    ).toContainEqual(
+      expect.objectContaining({ itemId: 'laptop', relatedItemId: 'stand', rootCause: 'collision' }),
+    );
+    expect(validateSceneCollisions(fit.draft)).not.toEqual([]);
+  });
+
+  it('uses the central light mount and the monitor foot instead of their visual envelopes', () => {
+    const monitor = device('monitor', 'monitor', 0, 0);
+    monitor.visual.scale.x = 0.5;
+    const light = {
+      ...createSceneObject('light-bar'),
+      id: 'light',
+      placement: { x: 0, y: 1.51, z: 0, rotation: 0 },
+    };
+    const draft = empty([light]);
+    draft.devices = [monitor];
+    const fit = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['light'],
+      [{ itemId: 'light', surfaceId: 'monitor' }],
+    );
+    expect(fit.issues).toEqual([]);
+    expect(getItemBounds(light).max.x - getItemBounds(light).min.x).toBeGreaterThan(
+      getItemBounds(monitor).max.x - getItemBounds(monitor).min.x,
+    );
+    fit.draft.objects[0].placement.z = 0.2;
+    expect(evaluateSceneSupport(fit.draft, 'light', 'monitor').footprintValid).toBe(false);
+
+    const riser = {
+      ...createSceneObject('monitor-riser'),
+      id: 'riser',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+      visual: { ...defaultVisual(), scale: { x: 0.4, y: 1, z: 1 } },
+    };
+    const wideMonitor = device('wide-monitor', 'monitor', 0, 0.5);
+    const supported = empty([riser]);
+    supported.devices = [wideMonitor];
+    expect(evaluateSceneSupport(supported, 'wide-monitor', 'riser').footprintValid).toBe(true);
+  });
+
+  it('uses a custom support actual local face without lifting an unrelated object to a remote bump', () => {
+    const desk = {
+      ...createSceneObject('desk'),
+      id: 'desk',
+      shapeMode: 'custom' as const,
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+      parts: [
+        { ...part(4, 0.1, 2), position: { x: 0, y: 1, z: 0 } },
+        { ...part(0.01, 0.05, 0.01), position: { x: 1.9, y: 1.075, z: 0 } },
+      ],
+    };
+    const draft = empty([desk]);
+    draft.devices = [device('keyboard', 'keyboard', -1, 1.05)];
+    const fit = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'desk' }],
+    );
+    expect(fit.issues).toEqual([]);
+    expect(getItemBounds(fit.draft.devices[0]).min.y).toBeCloseTo(1.051, 8);
+    expect(getItemBounds(desk).max.y).toBeCloseTo(1.1, 8);
+    expect(snapToSurface(fit.draft, 'keyboard', 'desk').devices[0].placement).toEqual(
+      fit.draft.devices[0].placement,
+    );
+  });
+
+  it('uses the actual custom desk face consistently for attachment validation, snapping, search and carry', () => {
+    const desk = {
+      ...createSceneObject('desk'),
+      id: 'desk',
+      shapeMode: 'custom' as const,
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+      parts: [
+        { ...part(2, 0.2, 2), position: { x: -1, y: 1, z: 0 } },
+        { ...part(1, 0.2, 1), position: { x: 1.5, y: 1.5, z: 0 } },
+      ],
+    };
+    const child = cube('child', 1.5, 0, 0.4);
+    child.placement.y = 1.601;
+    child.attachment = { parentId: 'desk' };
+    const draft = empty([desk, child]);
+    expect(evaluateSceneSupport(draft, 'child', 'desk')).toMatchObject({
+      available: true,
+      footprintValid: true,
+      resting: true,
+    });
+    expect(getScenePlacementIssues(empty([]), draft, ['child'])).toEqual([]);
+    expect(validateSceneCollisions(draft)).toEqual([]);
+    const snapped = snapToSurface(draft, 'child', 'desk');
+    const free = findFreePlacement(draft, 'child');
+    const directSnap = resolveSpatialEdit(draft, draft, 'child', { snap: 'desk', sweep: false });
+    expect(snapped.objects[1]).toEqual(child);
+    expect(free.objects[1]).toEqual(child);
+    expect(directSnap.blocked, directSnap.reason).toBe(false);
+    expect(validateSceneCollisions(free)).toEqual([]);
+    const carry = resolveSpatialEdit(draft, move(draft, 'desk', 0.1, 0), 'desk', { sweep: false });
+    expect(carry.blocked, carry.reason).toBe(false);
+    expect(carry.workspace.objects[1].placement.x).toBeCloseTo(1.6, 8);
+    expect(evaluateSceneSupport(carry.workspace, 'child', 'desk').resting).toBe(true);
+    expect(validateSceneCollisions(carry.workspace)).toEqual([]);
+    const leavesBothFaces = resolveSpatialEdit(draft, move(draft, 'child', 0.5, 0), 'child', {
+      sweep: false,
+    });
+    expect(leavesBothFaces.blocked).toBe(true);
+    expect(leavesBothFaces.reason).toMatch(/attached desk/);
+
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 1.5, y: 1.601, z: 0, rotation: 0 },
+      visual: { ...defaultVisual(), scale: { x: 0.2, y: 1, z: 0.4 } },
+    };
+    const onMat = snapToSurface(empty([desk, child, mat]), 'child', 'mat');
+    expect(onMat.objects[1].attachment).toEqual({ parentId: 'desk' });
+    expect(evaluateSceneSupport(onMat, 'child', 'mat').resting).toBe(true);
+    expect(validateSceneCollisions(onMat)).toEqual([]);
+  });
+
+  it('bounds model height changes, allows an explicit user choice and respects user locks', () => {
+    const draft = deskAndMat();
+    draft.objects = draft.objects.filter((entry) => entry.id === 'desk');
+    draft.devices = [device('keyboard', 'keyboard', 0, 5)];
+    const model = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'desk', source: 'model' }],
+    );
+    expect(model.draft.devices[0].placement.y).toBe(5);
+    expect(model.issues).toContainEqual(
+      expect.objectContaining({
+        itemId: 'keyboard',
+        rootCause: 'height-budget',
+        relatedItemId: 'desk',
+      }),
+    );
+    const relation = [{ itemId: 'keyboard', surfaceId: 'desk', source: 'user' as const }];
+    const user = fitSceneProposalForReview(empty([]), draft, ['keyboard'], relation);
+    expect(user.issues).toEqual([]);
+    expect(user.draft.devices[0].placement.y).toBeCloseTo(2.4755, 8);
+    const locked = fitSceneProposalForReview(empty([]), draft, ['keyboard'], relation, {
+      lockedIds: ['keyboard'],
+    });
+    expect(locked.draft.devices[0].placement.y).toBe(5);
+    expect(locked.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'keyboard', rootCause: 'height' }),
+    );
+  });
+
+  it('preserves a usable lower face and chooses the nearest valid face on a multi-level custom support', () => {
+    const desk = {
+      ...createSceneObject('desk'),
+      id: 'desk',
+      shapeMode: 'custom' as const,
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+      parts: [
+        { ...part(3, 0.1, 2), position: { x: 0, y: 1, z: 0 } },
+        { ...part(3, 0.1, 2), position: { x: 0, y: 2, z: 0 } },
+      ],
+    };
+    const child = cube('child', 0, 0, 0.4);
+    child.placement.y = 1.051;
+    child.attachment = { parentId: 'desk' };
+    const draft = empty([desk, child]);
+    const relations = [{ itemId: 'child', surfaceId: 'desk', source: 'model' as const }];
+    expect(validateSceneCollisions(draft)).toEqual([]);
+    expect(getRestingSurfaceId(draft, 'child')).toBe('desk');
+    expect(evaluateSceneSupport(draft, 'child', 'desk')).toMatchObject({
+      footprintValid: true,
+      resting: true,
+      heightDelta: 0,
+    });
+    const fit = fitSceneProposalForReview(empty([]), draft, ['child'], relations);
+    expect(fit.issues).toEqual([]);
+    expect(fit.draft.objects[1].placement).toEqual(child.placement);
+    expect(snapToSurface(draft, 'child', 'desk').objects[1].placement).toEqual(child.placement);
+    const nearby = structuredClone(draft);
+    nearby.objects[1].placement.y = 1.08;
+    expect(evaluateSceneSupport(nearby, 'child', 'desk').heightDelta).toBeCloseTo(-0.029, 8);
+    expect(snapToSurface(nearby, 'child', 'desk').objects[1].placement.y).toBeCloseTo(1.051, 8);
+    // The lower face is no longer feasible when the object's solid shape would
+    // intersect the upper slab. A support relation never exempts that collision.
+    const tooTall = structuredClone(draft);
+    tooTall.objects[1].parts = [part(0.4, 1.2, 0.4)];
+    expect(evaluateSceneSupport(tooTall, 'child', 'desk').resting).toBe(false);
+    expect(evaluateSceneSupport(tooTall, 'child', 'desk').heightDelta).toBeCloseTo(1, 8);
+    expect(validateSceneCollisions(tooTall)).not.toEqual([]);
+    expect(validateSceneCollisions(snapToSurface(tooTall, 'child', 'desk'))).toEqual([]);
+  });
+
+  it('promotes a complete contact to only one valid thin mat and leaves ambiguous or partial contacts unchanged', () => {
+    const draft = deskAndMat();
+    draft.devices = [device('keyboard', 'keyboard', 0, 2.49)];
+    expect(getUnambiguousCoveringSupport(draft, 'keyboard', 'desk')).toBe('mat');
+    draft.devices[0].placement.x = 1.7;
+    expect(getUnambiguousCoveringSupport(draft, 'keyboard', 'desk')).toBeNull();
+    draft.devices[0].placement.x = 0;
+    draft.objects.push({ ...structuredClone(draft.objects[1]), id: 'second-mat' });
+    expect(getUnambiguousCoveringSupport(draft, 'keyboard', 'desk')).toBeNull();
+    draft.objects.pop();
+    draft.objects[1].placement.y += 0.1;
+    expect(getUnambiguousCoveringSupport(draft, 'keyboard', 'desk')).toBeNull();
+  });
+
+  it('reports one stable collision pair and preserves baseline contact exemptions', () => {
+    const draft = empty([cube('z', 0), cube('a', 0.25)]);
+    expect(getSceneCollisionPairs(draft)).toEqual([{ itemIds: ['a', 'z'], penetration: 0.25 }]);
+    expect(getSceneCollisionPairs(draft, structuredClone(draft))).toEqual([]);
+    const deeper = move(draft, 'a', 0.1, 0);
+    expect(getSceneCollisionPairs(deeper, draft)[0].penetration).toBeCloseTo(0.4, 8);
+    expect(
+      getSceneCollisionPairs({ ...deeper, objects: [...deeper.objects].reverse() }, draft),
+    ).toEqual(getSceneCollisionPairs(deeper, draft));
   });
 });
