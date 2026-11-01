@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PhotoCamera, PhotoDeskCorners, PhotoPoint, PhotoReference } from './photoProjection';
 import { diagnosisDeviceIds } from './diagnosis';
 import {
   photoPlacementSeed,
@@ -53,6 +54,21 @@ export const SceneImageRegionSchema = z
     message: 'The image region must stay within the reference image.',
   });
 
+export const SceneImagePointSchema = z.strictObject({
+  x: z.number().finite().min(0).max(1),
+  y: z.number().finite().min(0).max(1),
+});
+export const ScenePhotoReferenceSchema = z.strictObject({
+  objectId: IdSchema,
+  surface: z.enum(['tabletop', 'monitor-screen']).optional(),
+  corners: z.strictObject({
+    backLeft: SceneImagePointSchema,
+    backRight: SceneImagePointSchema,
+    frontRight: SceneImagePointSchema,
+    frontLeft: SceneImagePointSchema,
+  }),
+});
+
 /** A model may propose only bounded visual data, never executable geometry or device facts. */
 export const SceneProposalItemSchema = z.strictObject({
   id: IdSchema,
@@ -67,13 +83,30 @@ export const SceneProposalItemSchema = z.strictObject({
   // Older frozen provider replies omit these fields. New provider schemas require nullable values.
   supportId: IdSchema.nullable().optional(),
   imageRegion: SceneImageRegionSchema.nullable().optional(),
+  imageRegionVisibility: z.enum(['complete', 'partial', 'unknown']).nullable().optional(),
+  imageAnchor: SceneImagePointSchema.nullable().optional(),
 });
 export const SceneProposalSchema = z
   .strictObject({
     message: z.string().trim().min(1).max(6000),
     objects: z.array(SceneProposalItemSchema).min(1).max(32),
+    photoReference: ScenePhotoReferenceSchema.nullable().optional(),
   })
   .superRefine((scene, ctx) => {
+    if (
+      scene.photoReference &&
+      !scene.objects.some(
+        (item) =>
+          item.id === scene.photoReference!.objectId &&
+          item.kind === (scene.photoReference!.surface === 'monitor-screen' ? 'monitor' : 'desk'),
+      )
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['photoReference', 'objectId'],
+        message:
+          'The photo reference must identify a proposed rectangular desk or monitor surface.',
+      });
     const ids = new Set<string>();
     const deviceIds = new Set<string>();
     scene.objects.forEach((object, index) => {
@@ -112,6 +145,8 @@ export type SceneReviewCandidate = {
   source: 'photo-inferred' | 'user-reported';
   matchedSceneId: string | null;
   imageRegion: z.infer<typeof SceneImageRegionSchema> | null;
+  imageRegionVisibility?: 'complete' | 'partial' | 'unknown';
+  imageAnchor?: PhotoPoint | null;
   /** A proposal ID, existing scene ID, floor, or null for inferred support. */
   supportId: string | null;
   supportSource?: PhotoSupportSource;
@@ -146,6 +181,30 @@ export type ScenePreview = {
   repairSummary?: PhotoRepairSummary;
   /** User-edited support geometry remains an anchor when automatic changes are undone. */
   editedSupportIds?: string[];
+  /** Source-photo evidence is review-only; it is never part of a saved Workspace. */
+  photoReference?: {
+    objectId: string;
+    corners: PhotoDeskCorners;
+    source: 'model' | 'manual';
+    surface?: 'tabletop' | 'monitor-screen';
+    fov?: number;
+  };
+  photoAlignment?: {
+    reference?: PhotoReference;
+    camera: PhotoCamera;
+    beforeError: number;
+    afterError: number;
+    evaluations: number;
+    changedIds: string[];
+    warnings: string[];
+    beforeDraft: Workspace;
+    afterDraft: Workspace;
+    items?: {
+      proposalId: string;
+      before: Device | SceneObject;
+      after: Device | SceneObject;
+    }[];
+  };
 };
 export type SceneReviewMetadata = Pick<ScenePreview, 'candidates' | 'observations'>;
 
@@ -485,9 +544,23 @@ export function buildScenePreview(
       ),
       heightReference: { y: object.placement.y, source: 'model' },
       imageRegion: object.imageRegion ?? null,
+      imageRegionVisibility: object.imageRegionVisibility ?? 'unknown',
+      imageAnchor: object.imageAnchor ?? null,
     });
   }
   const bounded = WorkspaceSchema.parse(next);
+  const referenceCandidate =
+    proposal.photoReference &&
+    candidates.find((candidate) => candidate.proposalId === proposal.photoReference!.objectId);
+  const photoReference =
+    referenceCandidate && proposal.photoReference
+      ? {
+          objectId: referenceCandidate.sceneId,
+          corners: proposal.photoReference.corners,
+          source: 'model' as const,
+          surface: proposal.photoReference.surface ?? 'tabletop',
+        }
+      : undefined;
   const supports = sceneReviewSupports(candidates);
   const fitted = fitSceneProposalForReview(source, bounded, changedIds, supports, {
     heightReferences: photoPlacementHeightReferences(candidates),
@@ -528,6 +601,7 @@ export function buildScenePreview(
         unresolved: issues,
         status: issues.length ? 'needs-review' : 'ready',
       },
+      photoReference,
     };
   }
   return {
@@ -536,6 +610,7 @@ export function buildScenePreview(
     candidates,
     issues: fitted.issues,
     originalDraft: structuredClone(bounded),
+    photoReference,
   };
 }
 

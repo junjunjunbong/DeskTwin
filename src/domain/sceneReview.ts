@@ -28,6 +28,8 @@ import {
   type SceneSupportRelation,
 } from './spatial';
 import { getPhotoReviewPreset } from './photoPresets';
+import { fitPhotoLayout, fitPhotoLayoutFromRegions } from './photoFitting';
+import type { PhotoReference } from './photoProjection';
 import {
   photoPlacementSeed,
   repairPhotoLayout,
@@ -145,11 +147,14 @@ export function refreshSceneReview(
       if (
         ['x', 'y', 'z'].some(
           (axis) =>
-            item.placement[axis as 'x' | 'y' | 'z'] !== previous.placement[axis as 'x' | 'y' | 'z'],
+            Math.abs(
+              item.placement[axis as 'x' | 'y' | 'z'] - previous.placement[axis as 'x' | 'y' | 'z'],
+            ) > 1e-8,
         )
       )
         locks.position = true;
-      if (item.placement.rotation !== previous.placement.rotation) locks.rotation = true;
+      if (Math.abs(item.placement.rotation - previous.placement.rotation) > 1e-8)
+        locks.rotation = true;
       if (!same(item.visual.scale, previous.visual.scale)) locks.scale = true;
     }
     return item
@@ -217,7 +222,7 @@ export function refreshSceneReview(
     for (const candidate of candidates) {
       const before = itemIn(state.draft, candidate.sceneId);
       const after = itemIn(draft, candidate.sceneId);
-      if (before && after && before.placement.y !== after.placement.y)
+      if (before && after && Math.abs(before.placement.y - after.placement.y) > 1e-8)
         heightReferenceIds.add(candidate.sceneId);
     }
     candidates = rememberUserHeightReferences(candidates, draft, heightReferenceIds);
@@ -435,6 +440,8 @@ export function repairSceneReview(
   base: Workspace,
   policy: Partial<PhotoRepairPolicy> = {},
 ): SceneReviewState {
+  if (state.photoAlignment)
+    return autoFitSceneReviewToPhoto(state, base, state.photoAlignment.camera.aspect);
   const seeded = state.candidates.map((candidate) => {
     const item = candidate.included
       ? itemIn(state.draft, candidate.sceneId)
@@ -479,6 +486,7 @@ export function repairSceneReview(
 
 /** Undo automatic changes only. User-locked edits and saved evidence remain intact. */
 export function revertSceneRepair(state: SceneReviewState, base: Workspace): SceneReviewState {
+  if (state.photoAlignment) state = undoScenePhotoFit(state, base);
   let draft = structuredClone(state.draft);
   const editedSupports = new Set(state.editedSupportIds ?? []);
   const candidates = state.candidates.map((candidate) => {
@@ -538,6 +546,213 @@ export function revertSceneRepair(state: SceneReviewState, base: Workspace): Sce
     base,
     draft,
     { origin: 'geometry' },
+  );
+}
+
+/** Reconstruct the pre-fit variables without overwriting edits made afterwards.
+ * Used both for undo and repeat fitting so a bounded search cannot keep walking
+ * through new initial states on each click. Photo evidence never changes locks. */
+function beforePhotoFit(state: SceneReviewState): Workspace {
+  const draft = structuredClone(state.draft);
+  const alignment = state.photoAlignment;
+  if (!alignment) return draft;
+  for (const candidate of state.candidates.filter((entry) => entry.included)) {
+    const current = itemIn(draft, candidate.sceneId);
+    const saved = alignment.items?.find((entry) => entry.proposalId === candidate.proposalId);
+    const before = saved?.before ?? itemIn(alignment.beforeDraft, candidate.sceneId);
+    const after = saved?.after ?? itemIn(alignment.afterDraft, candidate.sceneId);
+    if (!current || !before || !after) continue;
+    restorePhotoFields(current, before, after, candidate);
+  }
+  return draft;
+}
+
+function restorePhotoFields(
+  current: Item,
+  before: Item,
+  after: Item,
+  candidate: SceneReviewState['candidates'][number],
+) {
+  if (!candidate.locks?.position) {
+    for (const axis of ['x', 'y', 'z'] as const)
+      if (
+        Math.abs(current.placement[axis] - after.placement[axis]) < 1e-8 &&
+        !(axis === 'y' && candidate.heightReference?.source === 'user')
+      )
+        current.placement[axis] = before.placement[axis];
+  }
+  if (
+    !candidate.locks?.rotation &&
+    Math.abs(current.placement.rotation - after.placement.rotation) < 1e-8
+  )
+    current.placement.rotation = before.placement.rotation;
+  if (!candidate.locks?.scale && same(current.visual.scale, after.visual.scale))
+    current.visual.scale = structuredClone(before.visual.scale);
+}
+
+function photoFitSnapshots(
+  state: SceneReviewState,
+  beforeDraft?: Workspace,
+  afterDraft?: Workspace,
+) {
+  const alignment = state.photoAlignment;
+  return state.candidates.flatMap((candidate) => {
+    const saved = alignment?.items?.find((entry) => entry.proposalId === candidate.proposalId);
+    const before =
+      (candidate.included && beforeDraft ? itemIn(beforeDraft, candidate.sceneId) : undefined) ??
+      saved?.before ??
+      (alignment && itemIn(alignment.beforeDraft, candidate.sceneId));
+    const after =
+      (candidate.included && afterDraft ? itemIn(afterDraft, candidate.sceneId) : undefined) ??
+      saved?.after ??
+      (alignment && itemIn(alignment.afterDraft, candidate.sceneId));
+    return before && after
+      ? [
+          {
+            proposalId: candidate.proposalId,
+            before: structuredClone(before),
+            after: structuredClone(after),
+          },
+        ]
+      : [];
+  });
+}
+
+/** Explicit local photo fit, separate from provider validation and saved state. */
+export function fitSceneReviewToPhoto(
+  state: SceneReviewState,
+  base: Workspace,
+  reference: PhotoReference,
+): SceneReviewState {
+  const input = beforePhotoFit(state);
+  const fit = fitPhotoLayout(base, input, state.candidates, reference);
+  const refreshed = refreshSceneReview(state, base, fit.draft, { origin: 'geometry' });
+  return {
+    ...refreshed,
+    photoReference: {
+      objectId: reference.objectId,
+      corners: structuredClone(reference.corners),
+      source: reference.source,
+      surface: reference.surface,
+      fov: reference.fov,
+    },
+    photoAlignment: {
+      reference: fit.reference,
+      camera: fit.camera,
+      beforeError: fit.beforeError,
+      afterError: fit.afterError,
+      evaluations: fit.evaluations,
+      changedIds: fit.changedIds,
+      warnings: fit.warnings,
+      beforeDraft: fit.beforeDraft,
+      afterDraft: structuredClone(refreshed.draft),
+      items: photoFitSnapshots(state, fit.beforeDraft, refreshed.draft),
+    },
+  };
+}
+
+/** Automatic source matching: model image evidence is the input, never user
+ * coordinates. Failure leaves the editable preview intact for semantic review. */
+export function autoFitSceneReviewToPhoto(
+  state: SceneReviewState,
+  base: Workspace,
+  aspect: number,
+): SceneReviewState {
+  if (
+    !state.candidates.some(
+      (candidate) =>
+        candidate.included &&
+        candidate.kind !== 'desk' &&
+        (candidate.imageRegion || candidate.imageAnchor),
+    )
+  )
+    throw new Error('There is not enough photo evidence to match this preview automatically.');
+  let referenceWarning: string | undefined;
+  if (state.photoReference) {
+    try {
+      const fit = fitSceneReviewToPhoto(state, base, { ...state.photoReference, aspect });
+      return {
+        ...fit,
+        photoAlignment: {
+          ...fit.photoAlignment!,
+          warnings: automaticPhotoWarnings(fit.photoAlignment!.warnings),
+        },
+      };
+    } catch {
+      referenceWarning =
+        'The model reference was uncertain. This view was instead inferred from the visible object regions and template estimates.';
+    }
+  }
+  const input = beforePhotoFit(state);
+  const fit = fitPhotoLayoutFromRegions(base, input, state.candidates, aspect);
+  const refreshed = refreshSceneReview(state, base, fit.draft, { origin: 'geometry' });
+  return {
+    ...refreshed,
+    photoAlignment: {
+      reference: fit.reference,
+      camera: fit.camera,
+      beforeError: fit.beforeError,
+      afterError: fit.afterError,
+      evaluations: fit.evaluations,
+      changedIds: fit.changedIds,
+      warnings: automaticPhotoWarnings([
+        ...(referenceWarning ? [referenceWarning] : []),
+        ...fit.warnings,
+      ]),
+      beforeDraft: fit.beforeDraft,
+      afterDraft: structuredClone(refreshed.draft),
+      items: photoFitSnapshots(state, fit.beforeDraft, refreshed.draft),
+    },
+  };
+}
+
+function automaticPhotoWarnings(warnings: string[]): string[] {
+  return warnings.map((warning) => {
+    if (/corner marks|proportions/i.test(warning))
+      return 'Some photo outlines do not agree with the chosen object shapes. Check object types and supports.';
+    if (/field of view|FOV|source cropping/i.test(warning))
+      return 'The photo perspective is uncertain. A photo from another angle may help.';
+    return warning;
+  });
+}
+
+/** Undo only fitting changes that have not since been edited or locked. */
+export function undoScenePhotoFit(state: SceneReviewState, base: Workspace): SceneReviewState {
+  if (!state.photoAlignment) return state;
+  const excluded = photoFitSnapshots(state);
+  const candidates = state.candidates.map((candidate) => {
+    const snapshot = excluded.find((entry) => entry.proposalId === candidate.proposalId);
+    if (!snapshot || !candidate.excludedItem) return candidate;
+    const excludedItem = structuredClone(candidate.excludedItem);
+    restorePhotoFields(excludedItem, snapshot.before, snapshot.after, candidate);
+    return { ...candidate, excludedItem };
+  });
+  const draft = beforePhotoFit(state);
+  const fitted = fitSceneProposalForReview(
+    base,
+    draft,
+    state.candidates
+      .filter((candidate) => candidate.included)
+      .map((candidate) => candidate.sceneId),
+    sceneReviewSupports(state.candidates),
+    {
+      lockedIds: state.candidates
+        .filter((candidate) => candidate.locks?.position)
+        .map((candidate) => candidate.sceneId),
+      heightReferences: state.candidates.flatMap((candidate) =>
+        candidate.heightReference
+          ? [{ itemId: candidate.sceneId, y: candidate.heightReference.y, maxDisplacement: 0.12 }]
+          : [],
+      ),
+    },
+  );
+  return refreshSceneReview(
+    { ...state, candidates, photoAlignment: undefined },
+    base,
+    fitted.draft,
+    {
+      origin: 'geometry',
+    },
   );
 }
 

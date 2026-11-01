@@ -450,6 +450,8 @@ export type SceneSupportEvaluation = {
   footprintValid: boolean;
   resting: boolean;
   heightDelta: number;
+  /** Maximum distance outside the allowed contact rectangle, in scene units. */
+  footprintError: number;
   issue?: string;
 };
 
@@ -467,6 +469,7 @@ export function evaluateSceneSupport(
       footprintValid: false,
       resting: false,
       heightDelta: 0,
+      footprintError: Infinity,
       issue: 'The selected support is unavailable.',
     };
   const b = body(item);
@@ -477,6 +480,7 @@ export function evaluateSceneSupport(
     footprintValid,
     resting,
     heightDelta: target.height + GAP - b.bounds.min.y,
+    footprintError: footprintValid ? 0 : contactFootprintError(b, target),
     ...(!footprintValid
       ? { issue: `${item.name} exceeds the contact allowance on ${target.name}.` }
       : !resting
@@ -536,6 +540,35 @@ function containsXZ(box: Box, point: V, overhangFraction = 0): boolean {
   return (
     Math.abs(u) <= 1 + 2 * overhangFraction + EPS && Math.abs(v) <= 1 + 2 * overhangFraction + EPS
   );
+}
+function contactFootprintError(b: Body, target: Surface): number {
+  if (!target.box) return 0;
+  const [a, c] = target.box.edges.filter((edge) => Math.abs(edge.y) < EPS && length(edge) > EPS);
+  if (!a || !c) return Infinity;
+  const determinant = a.x * c.z - a.z * c.x;
+  if (Math.abs(determinant) < 1e-10) return Infinity;
+  const allowance =
+    hasTemplateGeometry(b.item) && target.overhangKinds?.includes(b.item.kind)
+      ? (target.maxOverhangFraction ?? 0)
+      : 0;
+  const points = contactPoints(b);
+  if (!points.length) return Infinity;
+  const error = (point: V, fraction: number) => {
+    const p = sub(point, target.box!.center);
+    const u = (p.x * c.z - p.z * c.x) / determinant;
+    const v = (a.x * p.z - a.z * p.x) / determinant;
+    return Math.max(
+      0,
+      (Math.abs(u) - 1 - 2 * fraction) * length(a),
+      (Math.abs(v) - 1 - 2 * fraction) * length(c),
+    );
+  };
+  let result = Math.max(...points.map((point) => error(point, allowance)));
+  if (allowance > 0)
+    result = Math.max(result, error(mul(points.reduce(add, origin), 1 / points.length), 0));
+  // For an invalid covering, preserve the conservative rectangle excess. Valid
+  // partial coverings return zero before this function is called.
+  return result;
 }
 function fits(item: Item, target: Surface): boolean {
   return supportedFootprint(body(item), target);
