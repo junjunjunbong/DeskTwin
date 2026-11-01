@@ -122,6 +122,29 @@ function createTemplate(kind: Kind): BoxPart[] {
     case 'shelf':
       box([2.1, 0.13, 0.5], [0, 0.065, 0], '#bc946b');
       break;
+    case 'wrist-rest':
+      box([1.4, 0.09, 0.3], [0, 0.045, 0], '#706b65');
+      break;
+    case 'monitor-riser':
+      // A tabletop support with clearance below it, not the legacy wall shelf.
+      box([2.4, 0.1, 0.8], [0, 0.45, 0], '#b49370');
+      for (const x of [-1.08, 1.08]) box([0.12, 0.4, 0.74], [x, 0.2, 0], '#645f58');
+      break;
+    case 'laptop-stand':
+      // A level upper platform lets a separate laptop rest without inventing
+      // pitch in the yaw-only placement format.
+      box([1.5, 0.07, 1.05], [0, 0.385, 0], '#9ca6ad');
+      for (const x of [-0.5, 0.5]) {
+        box([0.1, 0.29, 0.16], [x, 0.205, 0.1], '#8b969e');
+        box([0.18, 0.06, 0.85], [x, 0.03, 0], '#8b969e');
+      }
+      break;
+    case 'light-bar':
+      // Local y=0 is the mounting surface; illumination is decorative only.
+      box([1.4, 0.08, 0.1], [0, 0.04, 0], '#535c61');
+      box([1.3, 0.015, 0.02], [0, 0.0125, 0.06], '#e4d8b7');
+      box([0.18, 0.06, 0.1], [0, 0.09, 0], '#687279');
+      break;
     case 'picture':
       box([1.28, 0.93, 0.1], [0, 0.465, 0], '#b49678');
       box([1.15, 0.8, 0.02], [0, 0.465, 0.07], '#f0e9dc');
@@ -202,6 +225,15 @@ function createTemplate(kind: Kind): BoxPart[] {
       box([0.29, 0.1, 0.43], [0, 0.07, 0], '#a9b4ba');
       box([0.25, 0.06, 0.31], [0, 0.15, -0.03], '#b4bfc4');
       box([0.025, 0.02, 0.07], [0, 0.19, -0.1], '#65727c');
+      break;
+    case 'trackpad':
+      box([0.5, 0.035, 0.38], [0, 0.0175, 0], '#b5bfc4');
+      box([0.47, 0.008, 0.35], [0, 0.039, 0], '#d1d7d7');
+      break;
+    case 'tablet':
+      // Flat tablet; an upright drawing/display arrangement can use custom boxes.
+      box([0.82, 0.045, 0.58], [0, 0.0225, 0], '#65717a');
+      box([0.75, 0.008, 0.51], [0, 0.049, 0], '#354956');
       break;
     case 'desktop':
       box([0.64, 1.25, 0.95], [0, 0.63, 0], '#52616c');

@@ -881,8 +881,13 @@ export default function App() {
                   setPhotoContext(context);
                   openSetup();
                 }}
-                onApply={async (draft, base) => {
-                  if (!(await store.replace(applySceneDraft(store.workspace, base, draft), base)))
+                onApply={async (draft, base, review) => {
+                  if (
+                    !(await store.replace(
+                      applySceneDraft(store.workspace, base, draft, undefined, review),
+                      base,
+                    ))
+                  )
                     throw new Error(
                       'The scene was not saved. Resolve the storage notice and try again.',
                     );

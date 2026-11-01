@@ -5,34 +5,11 @@ import { type Workspace } from '../domain/workspace';
 import {
   SceneProposalSchema,
   buildScenePreview,
-  type SceneDeviceObservation,
+  type SceneReviewMetadata,
 } from '../domain/sceneProposal';
 import { ScenePreview } from './ScenePreview';
-
-export async function preparePhoto(file: File): Promise<string> {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024)
-    throw new Error('Choose a PNG, JPEG, or WebP image up to 8 MB.');
-  const bitmap = await createImageBitmap(file);
-  try {
-    if (!bitmap.width || !bitmap.height)
-      throw new Error('Could not determine the image dimensions.');
-    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Could not process the photo.');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    // Re-encoding strips EXIF and reduces resolution before any explicit external transfer.
-    const data = canvas.toDataURL('image/jpeg', 0.82);
-    if (data.length > 1_900_000) throw new Error('The photo is too large. Choose a smaller image.');
-    return data;
-  } finally {
-    bitmap.close();
-  }
-}
+import { PHOTO_ACCEPT, preparePhoto } from '../domain/photoInput';
+export { preparePhoto } from '../domain/photoInput';
 interface Props {
   workspace: Workspace;
   photo: string | null;
@@ -40,7 +17,7 @@ interface Props {
   available: boolean;
   onClose: () => void;
   onAdd: () => void;
-  onApply: (draft: Workspace, base: Workspace) => void | Promise<void>;
+  onApply: (draft: Workspace, base: Workspace, review: SceneReviewMetadata) => void | Promise<void>;
   storageConflict?: boolean;
   onClearDemo: () => unknown | Promise<unknown>;
   onRefresh: () => void;
@@ -61,32 +38,38 @@ export function PhotoPanel({
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const request = useRef<AbortController | null>(null);
+  const preparation = useRef<AbortController | null>(null);
   const version = useRef(0);
   const [consent, setConsent] = useState(false);
   const [context, setContext] = useState('');
   const [pending, setPending] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{
-    base: Workspace;
-    draft: Workspace;
-    observations: SceneDeviceObservation[];
-    message: string;
-  } | null>(null);
+  const [result, setResult] = useState<
+    | (ReturnType<typeof buildScenePreview> & {
+        base: Workspace;
+        message: string;
+      })
+    | null
+  >(null);
   const [applied, setApplied] = useState(false);
   const [clearConfirm, setClearConfirm] = useState(false);
   useEffect(
     () => () => {
       version.current++;
       request.current?.abort();
+      preparation.current?.abort();
     },
     [],
   );
   function cancel() {
     version.current++;
     request.current?.abort();
+    preparation.current?.abort();
     request.current = null;
+    preparation.current = null;
     setPending(false);
+    setPreparing(false);
     setResult(null);
   }
   async function analyze() {
@@ -167,7 +150,7 @@ export function PhotoPanel({
               <>
                 <ImageIcon size={38} />
                 <strong>{preparing ? 'Preparing photo...' : 'Choose a photo'}</strong>
-                <span>PNG, JPEG, WebP · up to 8 MB</span>
+                <span>PNG, JPEG, WebP, HEIC/HEIF · up to 8 MB</span>
               </>
             )}
           </button>
@@ -175,7 +158,7 @@ export function PhotoPanel({
             hidden
             ref={fileRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept={PHOTO_ACCEPT}
             aria-label="Desk photo file"
             onChange={async (e) => {
               const file = e.target.files?.[0];
@@ -183,22 +166,32 @@ export function PhotoPanel({
               if (!file) return;
               cancel();
               const token = version.current;
+              const controller = new AbortController();
+              preparation.current = controller;
               setPreparing(true);
               setError('');
               setConsent(false);
               setApplied(false);
               onPhoto(null);
               try {
-                const data = await preparePhoto(file);
+                const data = await preparePhoto(file, controller.signal);
                 if (token === version.current) onPhoto(data);
               } catch (e) {
                 if (token === version.current)
                   setError(e instanceof Error ? e.message : 'Could not read the photo.');
               } finally {
-                if (token === version.current) setPreparing(false);
+                if (token === version.current) {
+                  preparation.current = null;
+                  setPreparing(false);
+                }
               }
             }}
           />
+          {preparing && (
+            <button className="text-button" onClick={cancel}>
+              Cancel photo preparation
+            </button>
+          )}
           <p className="micro-note">
             Photos stay in memory, are resized to at most 1280 pixels, and are stripped of metadata.
             Selecting a photo does not send it.
@@ -326,13 +319,15 @@ export function PhotoPanel({
           base={result.base}
           initialDraft={result.draft}
           initialObservations={result.observations}
+          initialCandidates={result.candidates}
+          initialIssues={result.issues}
           current={workspace}
           storageConflict={storageConflict}
           message={result.message}
           photo={photo}
           onDiscard={() => setResult(null)}
-          onApply={async (draft, base) => {
-            await onApply(draft, base);
+          onApply={async (draft, base, review) => {
+            await onApply(draft, base, review);
             setResult(null);
             setApplied(true);
           }}

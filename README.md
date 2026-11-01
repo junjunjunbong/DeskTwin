@@ -8,7 +8,7 @@ DeskTwin은 책상을 넓게 보여주는 **실제 3D voxel 작업실**과, 기�
 
 ![View 모드의 예시 책상과 오른쪽 고정 Workspace overview 패널](docs/screenshots/workspace-overview-desktop.png)
 
-> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 실제 Meta 호출과 사진 인식 품질 평가는 아직 완료하지 않았습니다. 이번 변경의 사진·Mac·대화 검증은 모의 응답을 사용하며 실제 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [모델 테스트 전 구현 범위와 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
+> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 2026-11-01에 별도 승인한 Meta 대화 1건과 실제 사진 분석 1건이 성공했으며, 사진 결과에서 발견한 물체 누락과 배치 문제를 바탕으로 검토 흐름을 개선했습니다. 새 프롬프트의 실제 인식 품질과 물리적 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [사진 검토 개선과 검증 범위](docs/PHOTO_REVIEW.md), [이전 워크플로 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
 
 ## 빠르게 실행하기
 
@@ -176,15 +176,15 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 ## 사진에서 편집 가능한 장면 만들기
 
-1. **Desk photo**에서 사진을 선택합니다. 선택만으로는 전송하지 않습니다.
+1. **Desk photo**에서 JPEG, PNG, WebP 또는 HEIC/HEIF 사진을 선택합니다. 방향 보정·축소·HEIC 변환은 로컬에서 수행하며 선택만으로는 전송하지 않습니다.
 2. 알고 있는 기기나 연결 설명을 입력하고 별도 Meta 전송 동의를 확인합니다.
 3. **Create scene preview with Meta**를 누릅니다. 서버 key가 설정된 경우 실제 API 비용이 발생할 수 있습니다.
-4. **Review your desk scene**에서 물체와 기기 매칭을 확인하고, 충돌을 검사하는 배치·표면·책상 연결·부품 편집기로 조정합니다. **Review device record** 안내가 있으면 기존 기기 또는 별도의 새 기기를 선택합니다.
+4. **Review your desk scene**의 물건 목록에서 포함·제외를 선택하고, 빠진 물건은 **Add missing object**로 추가합니다. 제외한 후보는 편집값을 유지한 채 복구할 수 있으며, 기존 저장 기기와 매칭된 후보를 제외해도 원래 기기 기록은 남습니다. 키보드와 손목 받침대, 모니터와 받침대, 노트북과 스탠드는 독립적으로 편집합니다. 원본 사진과 3D를 비교하고, 기기 매칭과 배치 문제를 해결한 뒤 적용합니다.
 5. **Confirm and apply scene**으로 한 번에 적용하거나 **Discard preview**로 취소합니다.
 6. **Scene objects**에서 이후에도 가구·소품을 편집합니다. 기기는 **Edit placement**에서 배치·연결·부품을 수정합니다.
 7. 변경은 브라우저에 저장됩니다. 설정의 **Export JSON**과 **Import JSON**으로 구성을 옮길 수 있습니다. 기존 v1 저장본과 JSON은 v2로 읽으며, 사진·대화·key는 JSON에 포함하지 않습니다.
 
-사진 분석의 모델 인식 품질과 live API 성공은 아직 검증하지 않았습니다. 아래 테스트에서는 응답을 mock으로 대체합니다.
+이전 버전의 실제 API 성공 2건은 단일 사례이며 인식 품질을 일반화하지 않습니다. 이번 개선의 자동 검증은 기존 응답 재생과 모의 응답·합성 이미지로 수행합니다. 새 프롬프트의 실사진 평가에는 별도 실제 호출이 필요합니다. [검증 범위](docs/PHOTO_REVIEW.md)를 참고하세요.
 
 ## 데모 순서
 
@@ -195,7 +195,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 5. 관측 하나를 선택하고 기존 기기 또는 새 기기를 명시적으로 매칭합니다. 검토 전에는 저장되지 않고, 승인해도 사용자 작동 상태는 자동 변경되지 않음을 확인합니다.
 6. **Stop detection**으로 중지합니다. 상태가 Detection stopped가 되며 연결 해제로 표시되지 않는지 확인합니다.
 7. 문제가 보고된 모니터를 선택해 **Troubleshoot monitor step by step**을 엽니다. 각 답은 점검 이력에 저장됩니다. 작동 상태는 **Save result as user-reported**를 눌러야 별도로 저장됩니다.
-8. 사진 흐름은 선택 → 별도 전송 동의 → preview 수정 → **Confirm and apply scene** 순서입니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 사진 테스트는 mock 결과이며 실제 인식 성공으로 소개하지 않습니다.
+8. 사진 흐름은 선택 → 별도 전송 동의 → 물건별 포함·제외·추가와 배치 검토 → **Confirm and apply scene** 순서입니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 모의 응답 시연과 이전 실제 분석 결과를 구분해서 설명합니다.
 9. **Open settings → Export JSON**으로 구성을 내보냅니다. 승인한 장면과 출처는 남고 설치별 하드웨어 매칭은 제외됩니다.
 
 로컬 대화 데모에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. View에서는 **Edit to review connection**으로 Edit에 들어간 뒤 **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.
@@ -243,7 +243,7 @@ DESKTWIN_TEST_PORT=5187 DESKTWIN_TEST_API_PORT=4337 npm run test:e2e
 
 ## 라이선스와 에셋
 
-새 구현 코드는 [MIT](LICENSE) 라이선스입니다. 장면의 geometry와 pixel texture는 이 저장소 코드로 생성합니다. 제3자 3D 모델이나 사용자 사진을 기본 에셋으로 배포하지 않습니다. 아이콘은 `@phosphor-icons/react`, 글꼴은 시스템 글꼴을 사용합니다. 각 의존성과 Meta API에는 각각의 라이선스·서비스 조건이 적용됩니다.
+새 구현 코드는 [MIT](LICENSE) 라이선스입니다. 장면의 geometry와 pixel texture는 이 저장소 코드로 생성합니다. 제3자 3D 모델이나 사용자 사진을 기본 에셋으로 배포하지 않습니다. 아이콘은 `@phosphor-icons/react`, 글꼴은 시스템 글꼴을 사용합니다. 로컬 HEIC 변환용 `libheif-js`는 LGPL-3.0이며 [별도 고지와 소스 링크](public/THIRD_PARTY_NOTICES.txt), 라이선스 전문을 포함합니다. 각 의존성과 Meta API에는 각각의 라이선스·서비스 조건이 적용됩니다.
 
 ## API 참고 자료
 

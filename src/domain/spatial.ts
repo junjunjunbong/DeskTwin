@@ -174,33 +174,50 @@ function sweptCollision(a0: Box, a1: Box, b0: Box, b1: Box, padding: number): bo
   return true;
 }
 
-type Surface = { id: string; name: string; height: number; box: Box | null };
-function surface(desk: SceneObject): Surface {
-  const b = body(desk);
+type Surface = { id: string; name: string; height: number; box: Box | null; covering?: boolean };
+const solidSupportKinds = new Set(['desk', 'shelf', 'monitor-riser', 'laptop-stand']);
+function surface(item: Item): Surface {
+  const b = body(item);
   const horizontal = b.boxes.filter((box) =>
     box.edges.some((edge) => Math.abs(edge.x) < EPS && Math.abs(edge.z) < EPS),
   );
-  const top = horizontal.sort(
+  const byArea = horizontal.sort(
     (a, b) =>
       (b.bounds.max.x - b.bounds.min.x) * (b.bounds.max.z - b.bounds.min.z) -
       (a.bounds.max.x - a.bounds.min.x) * (a.bounds.max.z - a.bounds.min.z),
-  )[0];
+  );
+  // A stand's upper platform, rather than its wider feet, supports the device.
+  // Tiny trim pieces must not invent a broad supporting plane above the actual top.
+  const largestArea = byArea[0]
+    ? (byArea[0].bounds.max.x - byArea[0].bounds.min.x) *
+      (byArea[0].bounds.max.z - byArea[0].bounds.min.z)
+    : 0;
+  const top =
+    item.kind === 'desk'
+      ? byArea[0]
+      : byArea
+          .filter(
+            (box) =>
+              (box.bounds.max.x - box.bounds.min.x) * (box.bounds.max.z - box.bounds.min.z) >=
+              largestArea * 0.4,
+          )
+          .sort((a, b) => b.bounds.max.y - a.bounds.max.y)[0];
   if (!top)
     throw new Error(
-      'This desk has no flat top. Add a horizontal box before placing objects on it.',
+      'This object has no flat top. Add a horizontal box before placing objects on it.',
     );
   const nearbyTop = Math.max(
     ...b.boxes
       .filter((box) => box.bounds.max.y <= top.bounds.max.y + 0.06)
       .map((box) => box.bounds.max.y),
   );
-  return { id: desk.id, name: desk.name, height: Math.max(top.bounds.max.y, nearbyTop), box: top };
+  return { id: item.id, name: item.name, height: Math.max(top.bounds.max.y, nearbyTop), box: top };
 }
 function surfaces(w: Workspace): Surface[] {
   return [
     { id: 'floor', name: 'Floor', height: 0, box: null },
     ...w.objects
-      .filter((o) => o.kind === 'desk')
+      .filter((o) => solidSupportKinds.has(o.kind))
       .flatMap((o) => {
         try {
           return [surface(o)];
@@ -209,6 +226,27 @@ function surfaces(w: Workspace): Surface[] {
         }
       }),
   ];
+}
+
+/** Placement support is separate from the desk-only carry attachment. */
+function placementSurfaces(w: Workspace, item: Item): Surface[] {
+  const monitors =
+    item.kind === 'light-bar'
+      ? w.devices
+          .filter((candidate) => candidate.kind === 'monitor')
+          .flatMap((candidate) => {
+            try {
+              return [surface(candidate)];
+            } catch {
+              return [];
+            }
+          })
+      : [];
+  return [...surfaces(w), ...coveringSurfaces(w), ...monitors].filter(
+    (target) =>
+      target.id !== item.id &&
+      ((item.kind !== 'desk' && item.kind !== 'chair') || target.id === 'floor'),
+  );
 }
 
 /** Only thin, horizontal mats are walk-over support layers. Thick or tilted custom
@@ -231,6 +269,7 @@ function coveringSurfaces(w: Workspace, excluded: Set<string> = new Set()): Surf
       name: item.name,
       height: box.bounds.max.y,
       box,
+      covering: true,
     }));
   });
 }
@@ -362,9 +401,18 @@ function resolveCoveringMove(
 }
 export function getSurfaceTargets(w: Workspace, id: string): { id: string; name: string }[] {
   const item = find(w, id);
-  return surfaces(w)
-    .filter((s) => s.id !== item.id && (item.kind !== 'desk' || s.id === 'floor'))
-    .map(({ id, name }) => ({ id, name }));
+  return [
+    ...new Map(placementSurfaces(w, item).map(({ id, name }) => [id, { id, name }])).values(),
+  ];
+}
+export function getRestingSurfaceId(workspace: Workspace, id: string): string | null {
+  const item = find(workspace, id);
+  const b = body(item);
+  return (
+    placementSurfaces(workspace, item)
+      .filter((target) => supportedFootprint(b, target) && restingOn(b, target))
+      .sort((a, b) => b.height - a.height)[0]?.id ?? null
+  );
 }
 function corners(box: Box): V[] {
   return [-1, 1].flatMap((a) =>
@@ -391,20 +439,38 @@ function fits(item: Item, target: Surface): boolean {
 }
 function fitsBody(b: Body, target: Surface): boolean {
   if (!target.box) return true;
-  const contact = b.boxes.filter((box) => box.bounds.min.y <= b.bounds.min.y + 0.035);
+  // A light bar's front diffuser may overhang a narrow monitor bezel. Its real
+  // lowest mounting face, rather than nearby decorative parts, needs support.
+  const contactTolerance = b.item.kind === 'light-bar' ? EPS : 0.035;
+  const contact = b.boxes.filter((box) => box.bounds.min.y <= b.bounds.min.y + contactTolerance);
   return contact.every((box) =>
     corners(box)
-      .filter((p) => p.y <= b.bounds.min.y + 0.035)
+      .filter((p) => p.y <= b.bounds.min.y + contactTolerance)
       .every((p) => containsXZ(target.box!, p)),
   );
 }
+function supportedFootprint(b: Body, target: Surface): boolean {
+  // Thin coverings can support a partially overlapping foot, as in ordinary
+  // dragging over a mat. Solid stands and desks require the whole contact base.
+  return target.covering ? footprintContact(b, target) : fitsBody(b, target);
+}
+function restingOn(b: Body, target: Surface): boolean {
+  const gap = b.bounds.min.y - target.height - GAP;
+  return (
+    Math.abs(gap) <= REST_TOLERANCE ||
+    // Keep the existing floor-origin clamp for chair wheels and other template
+    // origins that would otherwise need a small negative root coordinate.
+    (target.id === 'floor' && b.item.placement.y === 0 && gap > 0 && gap < 0.051)
+  );
+}
 function setHeight(item: Item, target: Surface): void {
-  item.placement.y += target.height + GAP - getItemBounds(item).min.y;
-  if (target.id === 'floor' && item.placement.y > -0.051 && item.placement.y < 0)
-    item.placement.y = 0;
-  if (item.placement.y < -EPS || item.placement.y > 5.5)
+  const delta = target.height + GAP - getItemBounds(item).min.y;
+  if (Math.abs(delta) < 1e-10) return;
+  let height = item.placement.y + delta;
+  if (target.id === 'floor' && height > -0.051 && height < 0) height = 0;
+  if (height < -EPS || height > 5.5)
     throw new Error('This shape cannot rest on that surface within the scene height limit.');
-  item.placement.y = Math.max(0, item.placement.y);
+  item.placement.y = Math.max(0, height);
 }
 
 function descendants(w: Workspace, id: string): Set<string> {
@@ -463,7 +529,12 @@ export function rebaseAttachedPlacement(
   );
   if (!from || !to)
     throw new Error('The original attached desk is no longer available in this preview.');
-  return childPlacement(from, to, item);
+  const placement = childPlacement(from, to, item);
+  const carried = { ...item, placement };
+  return validPlacement(carried) &&
+    getItemBounds(carried).min.y >= Math.min(0, getItemBounds(item).min.y) - EPS
+    ? placement
+    : { ...item.placement };
 }
 function interpolate(before: Workspace, candidate: Workspace, id: string, t: number): Workspace {
   const result = structuredClone(candidate);
@@ -766,20 +837,22 @@ export function resolveSpatialEdit(
   return { workspace: previous, blocked: false, reason: '' };
 }
 
-/** Place deliberately on a floor/desk. This is an explicit relocation, not a physical animation. */
+/** Place deliberately on a support. This is an explicit relocation, not a physical animation. */
 export function snapToSurface(workspace: Workspace, id: string, surfaceId: string): Workspace {
   const candidate = structuredClone(workspace);
   const item = find(candidate, id);
-  const target = surfaces(candidate).find((s) => s.id === surfaceId && s.id !== id);
-  if (!target || (item.kind === 'desk' && surfaceId !== 'floor'))
-    throw new Error('Choose a valid floor or desk surface.');
+  const targets = placementSurfaces(candidate, item)
+    .filter((s) => s.id === surfaceId)
+    .sort((a, b) => b.height - a.height);
+  const target = targets.find((s) => fits(item, s)) ?? targets[0];
+  if (!target) throw new Error('Choose a valid support surface.');
   if (!fits(item, target)) {
     if (!target.box) throw new Error('This shape does not fit on the selected surface.');
     item.placement.x = target.box.center.x;
     item.placement.z = target.box.center.z;
   }
   if (!fits(item, target))
-    throw new Error('This object is too large for that desk. Reduce its size first.');
+    throw new Error('This object is too large for that surface. Reduce its size first.');
   setHeight(item, target);
   const covering = coveringSurfaces(candidate, descendants(candidate, id))
     .filter(
@@ -790,7 +863,19 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
     )
     .sort((a, b) => b.height - a.height)[0];
   if (covering && item.kind !== 'mat' && item.kind !== 'desk') setHeight(item, covering);
-  if (item.attachment?.parentId !== surfaceId) item.attachment = null;
+  const attachedDesk = candidate.objects.find(
+    (object) => object.id === item.attachment?.parentId && object.kind === 'desk',
+  );
+  const selectedDesk = candidate.objects.some(
+    (object) => object.id === surfaceId && object.kind === 'desk',
+  );
+  const keepsDeskAttachment =
+    attachedDesk &&
+    !selectedDesk &&
+    surfaceId !== 'floor' &&
+    target.height >= surface(attachedDesk).height - EPS &&
+    fits(item, surface(attachedDesk));
+  if (item.attachment?.parentId !== surfaceId && !keepsDeskAttachment) item.attachment = null;
   const result = resolveSpatialEdit(workspace, candidate, id, { sweep: false });
   if (result.blocked) throw new Error(result.reason);
   return result.workspace;
@@ -813,21 +898,29 @@ function translatedBody(base: Body, item: Item): Body {
     })),
   };
 }
-export function findFreePlacement(workspace: Workspace, id: string): Workspace {
+export function findFreePlacement(
+  workspace: Workspace,
+  id: string,
+  options: { surfaceId?: string; allowFloorFallback?: boolean } = {},
+): Workspace {
   const source = find(workspace, id);
   const sourceBody = body(source);
   const rest = items(workspace)
     .filter((item) => item.id !== id)
     .map(body);
-  const possible = surfaces(workspace).filter(
+  const possible = placementSurfaces(workspace, source).filter(
     (s) =>
       s.id !== id &&
       ((source.kind !== 'desk' && source.kind !== 'chair') || s.id === 'floor') &&
-      (!source.attachment || s.id === source.attachment.parentId),
+      (!source.attachment || s.id === source.attachment.parentId) &&
+      (!options.surfaceId || s.id === options.surfaceId) &&
+      (options.allowFloorFallback !== false || s.id !== 'floor' || sourceBody.bounds.min.y < 0.22),
   );
   if (!possible.length)
     throw new Error(
-      'The attached desk is no longer available. Detach this object before placing it elsewhere.',
+      source.attachment
+        ? 'The attached desk is no longer available. Detach this object before placing it elsewhere.'
+        : 'No intended support surface is available. Choose a support surface before placing this object.',
     );
   possible.sort(
     (a, b) =>
@@ -838,8 +931,10 @@ export function findFreePlacement(workspace: Workspace, id: string): Workspace {
     for (let x = -r; x <= r; x++) offsets.push([x * 0.2, -r * 0.2], [x * 0.2, r * 0.2]);
     for (let z = -r + 1; z < r; z++) offsets.push([-r * 0.2, z * 0.2], [r * 0.2, z * 0.2]);
   }
-  let attempts = 0;
-  for (const target of possible)
+  for (const target of possible) {
+    // Every support gets its own bounded search. Nearby mat layers must not
+    // exhaust the budget before an ordinary manual addition can reach the desk.
+    let attempts = 0;
     for (const [dx, dz] of offsets) {
       if (++attempts > 4096) break;
       let y = source.placement.y + target.height + GAP - sourceBody.bounds.min.y;
@@ -861,9 +956,253 @@ export function findFreePlacement(workspace: Workspace, id: string): Workspace {
       Object.assign(find(next, id), candidate);
       return next;
     }
+  }
   throw new Error(
     'No clear resting position was found. Move another object or reduce this object’s size, then try again.',
   );
+}
+
+export type SceneSupportRelation = { itemId: string; surfaceId: string };
+export type ScenePlacementIssue = {
+  itemId: string;
+  code: 'support' | 'collision' | 'retained-placement';
+  message: string;
+};
+
+function intendedSupport(
+  workspace: Workspace,
+  item: Item,
+  supports: Map<string, string>,
+): Surface | undefined {
+  const possible = placementSurfaces(workspace, item);
+  const required = supports.get(item.id) ?? item.attachment?.parentId;
+  if (required) {
+    const matching = possible
+      .filter((target) => target.id === required)
+      .sort((a, b) => b.height - a.height);
+    return matching.find((target) => supportedFootprint(body(item), target)) ?? matching[0];
+  }
+  const b = body(item);
+  // A tabletop observation cannot acquire an unrelated floor position when its
+  // intended desk or stand is crowded, too small, missing, or unsupported.
+  const nearby = possible
+    .filter(
+      (target) =>
+        Math.abs(target.height - b.bounds.min.y) <= 0.22 &&
+        (target.id === 'floor' || footprintContact(b, target)),
+    )
+    .sort(
+      (one, two) =>
+        Number(supportedFootprint(b, two)) - Number(supportedFootprint(b, one)) ||
+        Math.abs(one.height - b.bounds.min.y) - Math.abs(two.height - b.bounds.min.y) ||
+        two.height - one.height,
+    );
+  return nearby[0];
+}
+
+function reviewScope(base: Workspace, draft: Workspace, changedIds: Iterable<string>): Set<string> {
+  const changed = new Set(changedIds);
+  for (const item of items(draft)) {
+    const original = items(base).find((candidate) => candidate.id === item.id);
+    if (original?.attachment && changed.has(original.attachment.parentId)) changed.add(item.id);
+  }
+  return changed;
+}
+
+/** Inspect an editable photo draft without moving any object or rejecting the preview. */
+export function getScenePlacementIssues(
+  base: Workspace,
+  draft: Workspace,
+  changedIds: Iterable<string>,
+  relations: Iterable<SceneSupportRelation> = [],
+): ScenePlacementIssue[] {
+  const supports = new Map([...relations].map(({ itemId, surfaceId }) => [itemId, surfaceId]));
+  const explicitChanges = new Set(changedIds);
+  const changed = reviewScope(base, draft, explicitChanges);
+  const issues: ScenePlacementIssue[] = [];
+  const append = (itemId: string, code: ScenePlacementIssue['code'], message: string) => {
+    if (!issues.some((issue) => issue.itemId === itemId && issue.message === message))
+      issues.push({ itemId, code, message });
+  };
+  for (const item of items(draft).filter((candidate) => changed.has(candidate.id))) {
+    const b = body(item);
+    const supportCode = explicitChanges.has(item.id) ? 'support' : 'retained-placement';
+    const target = intendedSupport(draft, item, supports);
+    let next = supports.get(item.id);
+    const chain = new Set([item.id]);
+    let cycle = false;
+    while (next && next !== 'floor') {
+      if (chain.has(next)) {
+        cycle = true;
+        break;
+      }
+      chain.add(next);
+      next = supports.get(next);
+    }
+    if (cycle) append(item.id, supportCode, `${item.name} has a circular support relationship.`);
+    else if (!target)
+      append(
+        item.id,
+        supportCode,
+        supports.has(item.id)
+          ? `${item.name}'s selected support is unavailable. Choose a support surface.`
+          : `${item.name} has no nearby support. Choose a support surface or adjust its height.`,
+      );
+    else if (!supportedFootprint(b, target))
+      append(
+        item.id,
+        supportCode,
+        `${item.name} extends beyond ${target.name}. Adjust its placement or support.`,
+      );
+    else if (!restingOn(b, target))
+      append(
+        item.id,
+        supportCode,
+        `${item.name} is not resting on ${target.name}. Place it on the selected support.`,
+      );
+    const original = items(base).find((candidate) => candidate.id === item.id);
+    const allowedFloor = original ? Math.min(0, getItemBounds(original).min.y) : 0;
+    if (
+      original?.attachment &&
+      item.attachment?.parentId === original.attachment.parentId &&
+      !explicitChanges.has(item.id)
+    ) {
+      const fromParent = base.objects.find((parent) => parent.id === original.attachment?.parentId);
+      const toParent = draft.objects.find((parent) => parent.id === original.attachment?.parentId);
+      if (fromParent && toParent) {
+        const expected = { ...item, placement: childPlacement(fromParent, toParent, original) };
+        if (
+          !validPlacement(expected) &&
+          JSON.stringify(item.placement) === JSON.stringify(original.placement)
+        )
+          append(
+            item.id,
+            'retained-placement',
+            `${item.name} would be carried outside the scene limits. Adjust the desk or detach and place the object.`,
+          );
+      }
+    }
+    if (!validPlacement(item) || b.bounds.min.y < allowedFloor - EPS)
+      append(
+        item.id,
+        supportCode,
+        `${item.name} leaves the scene limits or goes through the floor.`,
+      );
+  }
+  const all = items(draft).map(body);
+  const initial = new Map(
+    collisionPairs(items(base).map(body), changed)
+      .flatMap(([a, b]) => pairCollisions(a, b))
+      .map((hit) => [hit.key, hit]),
+  );
+  for (const [a, b] of collisionPairs(all, changed)) {
+    if (!pairCollisions(a, b).some((hit) => !allowedExisting(hit, initial))) continue;
+    for (const [one, other] of [
+      [a, b],
+      [b, a],
+    ]) {
+      if (!changed.has(one.item.id)) continue;
+      append(
+        one.item.id,
+        explicitChanges.has(one.item.id) ? 'collision' : 'retained-placement',
+        `${one.item.name} overlaps ${other.item.name}. Adjust the proposed objects before applying.`,
+      );
+    }
+  }
+  return issues;
+}
+
+/** Fit support heights in dependency order, preserving the photo's relative X/Z.
+ * Unresolved shapes stay visible in place and produce review issues, never a floor fallback. */
+export function fitSceneProposalForReview(
+  base: Workspace,
+  draft: Workspace,
+  changedIds: Iterable<string>,
+  relations: Iterable<SceneSupportRelation> = [],
+  options: { carryFrom?: Workspace } = {},
+): { draft: Workspace; issues: ScenePlacementIssue[] } {
+  const result = structuredClone(draft);
+  const changed = new Set(changedIds);
+  const explicitSupports = [...relations];
+  const supports = new Map(explicitSupports.map(({ itemId, surfaceId }) => [itemId, surfaceId]));
+  const planned = new Map<string, string>();
+  for (const item of items(draft).filter((candidate) => changed.has(candidate.id))) {
+    const target = intendedSupport(draft, item, supports);
+    if (target) planned.set(item.id, target.id);
+  }
+  const active = new Set<string>();
+  const done = new Set<string>();
+  const cyclic = new Set<string>();
+  function place(id: string): void {
+    if (done.has(id)) return;
+    if (active.has(id)) {
+      for (const cycleId of active) cyclic.add(cycleId);
+      return;
+    }
+    active.add(id);
+    const supportId = planned.get(id);
+    if (supportId && changed.has(supportId)) place(supportId);
+    if (!cyclic.has(id) && supportId) {
+      const item = find(result, id);
+      const target = intendedSupport(result, item, new Map([[id, supportId]]));
+      const heightAdjustment = target
+        ? Math.abs(target.height + GAP - getItemBounds(item).min.y)
+        : Infinity;
+      const deliberateSupport = supports.has(id) || !!item.attachment;
+      if (
+        target &&
+        supportedFootprint(body(item), target) &&
+        (deliberateSupport || heightAdjustment <= 0.12)
+      ) {
+        try {
+          setHeight(item, target);
+        } catch {
+          // The issue inspector explains an out-of-range or unsupported shape.
+        }
+      }
+    }
+    active.delete(id);
+    done.add(id);
+  }
+  for (const item of items(result).filter((candidate) => changed.has(candidate.id))) place(item.id);
+  // An existing explicit attachment carries its retained child as a rigid group.
+  // The child never participates in the search for vacant positions.
+  const carryFrom = options.carryFrom ?? base;
+  for (const original of items(carryFrom)) {
+    if (
+      !changed.has(original.id) &&
+      original.attachment &&
+      changed.has(original.attachment.parentId) &&
+      items(result).some(
+        (candidate) =>
+          candidate.id === original.id &&
+          candidate.attachment?.parentId === original.attachment?.parentId,
+      ) &&
+      result.objects.some(
+        (candidate) => candidate.id === original.attachment?.parentId && candidate.kind === 'desk',
+      )
+    ) {
+      const child = find(result, original.id);
+      const placement = rebaseAttachedPlacement(carryFrom, result, original);
+      const carried = { ...child, placement };
+      if (
+        validPlacement(carried) &&
+        getItemBounds(carried).min.y >= Math.min(0, getItemBounds(original).min.y) - EPS
+      )
+        child.placement = placement;
+      // An impossible carry leaves the original valid record in place. The
+      // inspector includes retained children and explains their missing support.
+      else child.placement = { ...original.placement };
+    }
+  }
+  const plannedRelations = [...planned].map(([itemId, surfaceId]) => ({ itemId, surfaceId }));
+  return {
+    draft: result,
+    issues: getScenePlacementIssues(base, result, changed, [
+      ...plannedRelations,
+      ...explicitSupports,
+    ]),
+  };
 }
 
 /** Arrange only proposal candidates. Retained user records are obstacles, never silently relocated. */
@@ -908,7 +1247,11 @@ export function fitSceneProposal(
   };
   const ordered = items(result)
     .filter((item) => changed.has(item.id))
-    .sort((a, b) => Number(b.kind === 'desk') - Number(a.kind === 'desk'));
+    .sort((a, b) => {
+      const rank = (item: Item) =>
+        item.kind === 'desk' ? 0 : solidSupportKinds.has(item.kind) || item.kind === 'mat' ? 1 : 2;
+      return rank(a) - rank(b);
+    });
   for (const original of ordered) {
     const item = structuredClone(original);
     if ('status' in item) working.devices.push(item);
@@ -924,7 +1267,7 @@ export function fitSceneProposal(
       const previouslySaved = items(base).some((entry) => entry.id === item.id);
       // An existing object's intentional height is preserved when the proposal already fits.
       if (!previouslySaved || validateSceneCollisions(working, base).length)
-        working = findFreePlacement(working, item.id);
+        working = findFreePlacement(working, item.id, { allowFloorFallback: false });
       if (item.kind === 'desk') {
         const movedDesk = find(working, item.id);
         // Children not inserted yet must follow any extra placement adjustment of their parent.

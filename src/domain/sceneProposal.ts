@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { diagnosisDeviceIds } from './diagnosis';
 import {
-  fitSceneProposal,
-  findFreePlacement,
+  fitSceneProposalForReview,
+  getScenePlacementIssues,
   rebaseAttachedPlacement,
   validateSceneCollisions,
+  type ScenePlacementIssue,
+  type SceneSupportRelation,
 } from './spatial';
 import {
   BoxPartSchema,
@@ -23,6 +25,18 @@ import {
   type Workspace,
 } from './workspace';
 
+/** Normalized image coordinates are a visual estimate, never an identification result. */
+export const SceneImageRegionSchema = z
+  .strictObject({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().positive().max(1),
+    height: z.number().positive().max(1),
+  })
+  .refine((region) => region.x + region.width <= 1 && region.y + region.height <= 1, {
+    message: 'The image region must stay within the reference image.',
+  });
+
 /** A model may propose only bounded visual data, never executable geometry or device facts. */
 export const SceneProposalItemSchema = z.strictObject({
   id: IdSchema,
@@ -34,6 +48,9 @@ export const SceneProposalItemSchema = z.strictObject({
   color: ColorSchema,
   parts: z.array(BoxPartSchema).max(32),
   note: z.string().max(300),
+  // Older frozen provider replies omit these fields. New provider schemas require nullable values.
+  supportId: IdSchema.nullable().optional(),
+  imageRegion: SceneImageRegionSchema.nullable().optional(),
 });
 export const SceneProposalSchema = z
   .strictObject({
@@ -70,6 +87,113 @@ export const SceneProposalSchema = z
   });
 export type SceneProposal = z.infer<typeof SceneProposalSchema>;
 export type SceneProposalItem = z.infer<typeof SceneProposalItemSchema>;
+export type SceneReviewCandidate = {
+  proposalId: string;
+  sceneId: string;
+  kind: SceneProposalItem['kind'];
+  proposedName: string;
+  included: boolean;
+  source: 'photo-inferred' | 'user-reported';
+  matchedSceneId: string | null;
+  imageRegion: z.infer<typeof SceneImageRegionSchema> | null;
+  /** A proposal ID, existing scene ID, floor, or null for inferred support. */
+  supportId: string | null;
+  /** Unsaved edited geometry retained while this candidate is excluded. */
+  excludedItem?: Device | SceneObject;
+  excludedIndex?: number;
+  excludedParent?: SceneObject;
+  excludedObservation?: SceneDeviceObservation;
+  pendingAttachment?: {
+    attachment: NonNullable<Device['attachment']>;
+    parent?: SceneObject;
+    placement: Device['placement'];
+  };
+  suspendedAttachments?: {
+    itemId: string;
+    attachment: NonNullable<Device['attachment']>;
+    placement: Device['placement'];
+  }[];
+};
+export type ScenePreview = {
+  draft: Workspace;
+  observations: SceneDeviceObservation[];
+  candidates: SceneReviewCandidate[];
+  issues: ScenePlacementIssue[];
+};
+export type SceneReviewMetadata = Pick<ScenePreview, 'candidates' | 'observations'>;
+
+/** Proposal references follow a candidate even when its saved-record association changes. */
+export function sceneReviewSupports(candidates: SceneReviewCandidate[]): SceneSupportRelation[] {
+  return candidates.flatMap((candidate) => {
+    if (!candidate.included || !candidate.supportId) return [];
+    const support =
+      candidate.supportId === 'floor'
+        ? undefined
+        : candidates.find((entry) => entry.proposalId === candidate.supportId);
+    return [
+      {
+        itemId: candidate.sceneId,
+        surfaceId: support
+          ? support.included
+            ? support.sceneId
+            : `excluded-${support.sceneId}`
+          : candidate.supportId,
+      },
+    ];
+  });
+}
+
+/** Inspect all affected geometry, including retained children detached by an excluded support. */
+export function sceneReviewPlacementIssues(
+  base: Workspace,
+  draft: Workspace,
+  review: SceneReviewMetadata,
+): ScenePlacementIssue[] {
+  const geometry = (item: Device | SceneObject) => ({
+    kind: item.kind,
+    placement: item.placement,
+    scale: item.visual.scale,
+    parts: item.parts,
+    shapeMode: item.shapeMode,
+    attachment: item.attachment,
+  });
+  const originals = new Map([...base.devices, ...base.objects].map((item) => [item.id, item]));
+  const changed = new Set(
+    review.candidates
+      .filter((candidate) => candidate.included)
+      .map((candidate) => candidate.sceneId),
+  );
+  for (const item of [...draft.devices, ...draft.objects]) {
+    const original = originals.get(item.id);
+    if (!original || JSON.stringify(geometry(original)) !== JSON.stringify(geometry(item)))
+      changed.add(item.id);
+  }
+  return getScenePlacementIssues(base, draft, changed, sceneReviewSupports(review.candidates));
+}
+
+/** The final confirmation rechecks the full review rather than trusting rendered warning state. */
+export function validateSceneReviewForApply(
+  review: SceneReviewMetadata & { draft: Workspace },
+  base: Workspace,
+): Workspace {
+  const draft = WorkspaceSchema.parse(review.draft);
+  const included = review.candidates.filter((candidate) => candidate.included);
+  const all = [...draft.objects, ...draft.devices];
+  if (included.some((candidate) => !all.some((item) => item.id === candidate.sceneId)))
+    throw new Error('An included review object is missing. Restore it or exclude its candidate.');
+  if (
+    review.observations.some(
+      (observation) =>
+        observation.needsRecordChoice &&
+        included.some((candidate) => candidate.proposalId === observation.proposalId),
+    )
+  )
+    throw new Error('Choose an existing or separate new device for each included candidate.');
+  const issues = sceneReviewPlacementIssues(base, draft, review);
+  if (issues.length)
+    throw new Error(`Resolve the scene placement before applying: ${issues[0].message}`);
+  return draft;
+}
 
 export function retainedDevices(base: Workspace): Device[] {
   // A user report can refer to an original demo ID. Keep the evidence and its endpoints.
@@ -139,13 +263,7 @@ export function buildSceneDraft(base: Workspace, value: unknown): Workspace {
   return buildScenePreview(base, value).draft;
 }
 
-export function buildScenePreview(
-  base: Workspace,
-  value: unknown,
-): {
-  draft: Workspace;
-  observations: SceneDeviceObservation[];
-} {
+export function buildScenePreview(base: Workspace, value: unknown): ScenePreview {
   const source = parseWorkspace(base);
   const proposal = SceneProposalSchema.parse(value);
   const next = structuredClone(source);
@@ -162,6 +280,7 @@ export function buildScenePreview(
   const taken = new Set([...source.devices, ...source.objects].map((object) => object.id));
   const matched = new Set<string>();
   const observations: SceneDeviceObservation[] = [];
+  const candidates: SceneReviewCandidate[] = [];
   const changedIds: string[] = [];
   function freshId(candidate: string) {
     const prefix = `photo-${candidate.slice(0, 80)}`;
@@ -171,6 +290,8 @@ export function buildScenePreview(
     return id;
   }
   for (const object of proposal.objects) {
+    let sceneId: string;
+    let matchedSceneId: string | null = null;
     const visual = {
       scale: object.scale,
       color: object.color,
@@ -189,6 +310,8 @@ export function buildScenePreview(
           'A photo suggestion references an unknown, unused sample, or mismatched device.',
         );
       if (existing) {
+        sceneId = existing.id;
+        matchedSceneId = existing.id;
         if (matched.has(existing.id))
           throw new Error('Two photo objects reference the same device record.');
         matched.add(existing.id);
@@ -212,6 +335,7 @@ export function buildScenePreview(
         changedIds.push(existing.id);
       } else {
         const id = freshId(object.id);
+        sceneId = id;
         next.devices.push(
           DeviceSchema.parse({
             id,
@@ -254,13 +378,30 @@ export function buildScenePreview(
         next.objects[next.objects.findIndex((item) => item.id === existing.id)] = replacement;
       } else next.objects.push(replacement);
       matched.add(replacement.id);
+      sceneId = replacement.id;
+      matchedSceneId = existing?.id ?? null;
       changedIds.push(replacement.id);
     }
+    candidates.push({
+      proposalId: object.id,
+      sceneId,
+      kind: object.kind,
+      proposedName: object.name,
+      included: true,
+      source: 'photo-inferred',
+      matchedSceneId,
+      supportId: object.supportId ?? null,
+      imageRegion: object.imageRegion ?? null,
+    });
   }
   const bounded = WorkspaceSchema.parse(next);
+  const supports = sceneReviewSupports(candidates);
+  const fitted = fitSceneProposalForReview(source, bounded, changedIds, supports);
   return {
-    draft: WorkspaceSchema.parse(fitSceneProposal(source, bounded, changedIds)),
+    draft: WorkspaceSchema.parse(fitted.draft),
     observations,
+    candidates,
+    issues: fitted.issues,
   };
 }
 
@@ -336,10 +477,7 @@ export function rebindSceneDevice(
   }
   return {
     draft: WorkspaceSchema.parse(
-      findFreePlacement(
-        fitSceneProposal(base, next, [...restoredIds, replacement.id]),
-        replacement.id,
-      ),
+      fitSceneProposalForReview(base, next, [...restoredIds, replacement.id]).draft,
     ),
     observations: observations.map((item) =>
       item.proposalId === proposalId
@@ -369,6 +507,7 @@ export function applySceneDraft(
   base: Workspace,
   draft: Workspace,
   at = new Date().toISOString(),
+  review?: SceneReviewMetadata,
 ): Workspace {
   const currentValidated = parseWorkspace(current);
   const baseValidated = parseWorkspace(base);
@@ -376,7 +515,9 @@ export function applySceneDraft(
     throw new Error(
       'Your workspace changed while this preview was open. Discard it and analyze again.',
     );
-  const next = parseWorkspace(draft);
+  const next = review
+    ? validateSceneReviewForApply({ ...review, draft: parseWorkspace(draft) }, baseValidated)
+    : parseWorkspace(draft);
   if (
     retainedObjects(baseValidated).some(
       (original) => !next.objects.some((object) => object.id === original.id),
@@ -396,13 +537,13 @@ export function applySceneDraft(
       if (JSON.stringify(identity(device)) !== JSON.stringify(identity(original)))
         throw new Error('A scene preview cannot change existing device reports.');
     } else if (
-      device.source !== 'photo-inferred' ||
+      !['photo-inferred', 'user-reported'].includes(device.source) ||
       device.status !== 'unknown' ||
       device.statusNote !== '' ||
       device.hardwareBinding !== undefined ||
       device.hardwareOrigin !== undefined
     ) {
-      throw new Error('New photo devices must have an unknown operating status.');
+      throw new Error('New reviewed devices must have an unknown operating status.');
     }
   }
   const keptIds = new Set(next.devices.map((device) => device.id));

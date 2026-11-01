@@ -5,6 +5,7 @@ import {
   createDemoWorkspace,
   createSceneObject,
   defaultVisual,
+  DeviceSchema,
   parseWorkspace,
   WorkspaceSchema,
   type BoxPart,
@@ -14,6 +15,10 @@ import {
 import {
   findFreePlacement,
   fitSceneProposal,
+  fitSceneProposalForReview,
+  getRestingSurfaceId,
+  getScenePlacementIssues,
+  getSurfaceTargets,
   getItemBounds,
   rebaseAttachedPlacement,
   resolveSpatialEdit,
@@ -57,6 +62,40 @@ function move(w: Workspace, id: string, x: number, z: number, rotation?: number)
 }
 
 describe('shared geometry placement', () => {
+  it('adds a manually entered monitor to a clear desk position after searching occupied mat layers', () => {
+    const base = createDemoWorkspace();
+    const original = structuredClone(base);
+    const device = DeviceSchema.parse({
+      id: 'manual-monitor',
+      name: 'My unsaved setup monitor',
+      kind: 'monitor',
+      model: '',
+      source: 'user-reported',
+      status: 'unknown',
+      statusNote: '',
+      placement: { x: 0, z: 0.35, rotation: 0 },
+    });
+    const result = applyCommand(base, { type: 'add-device', device });
+    const placed = result.devices.find((item) => item.id === device.id)!;
+    const desk = result.objects.find((item) => item.id === 'decor-desk')!;
+    expect(placed).toMatchObject({
+      id: device.id,
+      name: device.name,
+      kind: 'monitor',
+      source: 'user-reported',
+      status: 'unknown',
+      statusNote: '',
+    });
+    expect(getRestingSurfaceId(result, placed.id)).toBe(desk.id);
+    expect(getItemBounds(placed).min.y).toBeCloseTo(getItemBounds(desk).max.y + 0.001, 6);
+    expect(validateSceneCollisions(result, base)).toEqual([]);
+    expect(result.devices.filter((item) => item.id !== device.id)).toEqual(base.devices);
+    expect(result.objects).toEqual(base.objects);
+    expect(result.connections).toEqual(base.connections);
+    expect(result.history).toHaveLength(base.history.length + 1);
+    expect(base).toEqual(original);
+  });
+
   it.each(['keyboard', 'mouse', 'ssd', 'decor-chair'])(
     'moves the default %s over its mat/rug without lowering it into the covering',
     (id) => {
@@ -585,6 +624,328 @@ describe('desk attachments and paths', () => {
 });
 
 describe('photo proposal spatial fitting', () => {
+  const photoDevice = (kind: 'keyboard' | 'monitor', id: string, x: number, y: number, z: number) =>
+    DeviceSchema.parse({
+      id,
+      kind,
+      name: id,
+      model: '',
+      source: 'photo-inferred',
+      status: 'unknown',
+      statusNote: '',
+      placement: { x, y, z, rotation: 0 },
+      visual: defaultVisual('photo-inferred'),
+      parts: [],
+      shapeMode: 'template',
+    });
+
+  it('fits desk, mat and riser before their devices without changing relative X/Z', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 0.15, y: 2.52, z: 0.7, rotation: 0 },
+    };
+    const riser = {
+      ...createSceneObject('monitor-riser'),
+      id: 'riser',
+      placement: { x: -0.2, y: 2.51, z: -0.6, rotation: 0 },
+    };
+    const retained = cube('retained', 4, 3);
+    const base = empty([retained]);
+    const draft = empty([retained, mat, riser, desk]);
+    draft.devices = [
+      photoDevice('keyboard', 'keyboard', 0, 2.54, 0.7),
+      photoDevice('monitor', 'monitor', -0.2, 3.01, -0.6),
+    ];
+    const relations = [
+      { itemId: 'keyboard', surfaceId: 'mat' },
+      { itemId: 'monitor', surfaceId: 'riser' },
+      { itemId: 'mat', surfaceId: 'desk' },
+      { itemId: 'riser', surfaceId: 'desk' },
+      { itemId: 'desk', surfaceId: 'floor' },
+    ];
+    const result = fitSceneProposalForReview(
+      base,
+      draft,
+      ['keyboard', 'monitor', 'mat', 'riser', 'desk'],
+      relations,
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.draft.objects[0]).toEqual(retained);
+    for (const original of [...draft.devices, ...draft.objects]) {
+      const placed = [...result.draft.devices, ...result.draft.objects].find(
+        (item) => item.id === original.id,
+      )!;
+      expect(placed.placement.x).toBe(original.placement.x);
+      expect(placed.placement.z).toBe(original.placement.z);
+      expect(placed.placement.rotation).toBe(original.placement.rotation);
+    }
+    for (const relation of relations.filter((entry) => entry.surfaceId !== 'floor')) {
+      const placed = [...result.draft.devices, ...result.draft.objects];
+      expect(getItemBounds(placed.find((item) => item.id === relation.itemId)!).min.y).toBeCloseTo(
+        getItemBounds(placed.find((item) => item.id === relation.surfaceId)!).max.y + 0.001,
+        6,
+      );
+    }
+    expect(
+      getScenePlacementIssues(
+        base,
+        result.draft,
+        relations.map((entry) => entry.itemId),
+        relations,
+      ),
+    ).toEqual([]);
+  });
+
+  it('infers a desk mat beneath a device even when devices precede objects in scene storage', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 0.15, y: 2.52, z: 0.65, rotation: 0 },
+    };
+    const draft = empty([mat, desk]);
+    draft.devices.push(photoDevice('keyboard', 'keyboard', 0, 2.54, 0.5));
+    const result = fitSceneProposalForReview(empty([]), draft, ['keyboard', 'mat', 'desk']);
+    expect(result.issues).toEqual([]);
+    expect(result.draft.objects[0].placement.y).toBeGreaterThan(2);
+    expect(getItemBounds(result.draft.devices[0]).min.y).toBeCloseTo(
+      getItemBounds(result.draft.objects[0]).max.y + 0.001,
+      6,
+    );
+  });
+
+  it('keeps an oversized tabletop item visible for review instead of dropping it to the floor', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      visual: { ...defaultVisual('photo-inferred'), scale: { x: 3, y: 1, z: 1 } },
+      placement: { x: 0, y: 2.52, z: 0.5, rotation: 0 },
+    };
+    const draft = empty([desk, mat]);
+    const result = fitSceneProposalForReview(empty([]), draft, ['desk', 'mat']);
+    expect(result.draft.objects[1].placement).toEqual(mat.placement);
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'mat', code: 'support' }),
+    );
+    expect(() => fitSceneProposal(empty([]), draft, ['desk', 'mat'])).toThrow(/resting|support/i);
+  });
+
+  it('reports collisions while preserving proposed X/Z and every untouched retained record', () => {
+    const retained = cube('retained', 0);
+    const base = empty([retained]);
+    const draft = empty([retained, cube('new', 0)]);
+    const result = fitSceneProposalForReview(base, draft, ['new']);
+    expect(result.draft.objects).toEqual(draft.objects);
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'new', code: 'collision' }),
+    );
+    expect(base).toEqual(empty([retained]));
+  });
+
+  it('keeps missing and cyclic support relationships reviewable without any relocation', () => {
+    const draft = empty([cube('one', -1), cube('two', 1)]);
+    const missing = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['one'],
+      [{ itemId: 'one', surfaceId: 'missing' }],
+    );
+    expect(missing.draft).toEqual(draft);
+    expect(missing.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'one', code: 'support' }),
+    );
+    const cyclic = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['one', 'two'],
+      [
+        { itemId: 'one', surfaceId: 'two' },
+        { itemId: 'two', surfaceId: 'one' },
+      ],
+    );
+    expect(cyclic.draft).toEqual(draft);
+    expect(cyclic.issues.filter((issue) => issue.message.includes('circular'))).toHaveLength(2);
+  });
+
+  it('keeps an out-of-range support fit bounded and editable rather than mutating its height before failing', () => {
+    const item = cube('low-origin', 0);
+    item.parts = [{ ...part(0.2, 0.2, 0.2), position: { x: 0, y: -6, z: 0 } }];
+    const draft = empty([item]);
+    const result = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['low-origin'],
+      [{ itemId: 'low-origin', surfaceId: 'floor' }],
+    );
+    expect(result.draft.objects[0].placement).toEqual(item.placement);
+    expect(() => WorkspaceSchema.parse(result.draft)).not.toThrow();
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'low-origin', code: 'support' }),
+    );
+  });
+
+  it('offers and deliberately places on a mat, riser or laptop stand while retaining desk-only attachments', () => {
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    const riser = {
+      ...createSceneObject('monitor-riser'),
+      id: 'riser',
+      placement: { x: 2, y: 0, z: 0, rotation: 0 },
+    };
+    const stand = {
+      ...createSceneObject('laptop-stand'),
+      id: 'stand',
+      placement: { x: -2, y: 0, z: 0, rotation: 0 },
+    };
+    const workspace = empty([mat, riser, stand, cube('item', 0, 2, 0.2)]);
+    expect(getSurfaceTargets(workspace, 'item').map((target) => target.id)).toEqual(
+      expect.arrayContaining(['floor', 'mat', 'riser', 'stand']),
+    );
+    for (const supportId of ['mat', 'riser', 'stand']) {
+      const placed = snapToSurface(workspace, 'item', supportId);
+      const item = placed.objects.find((entry) => entry.id === 'item')!;
+      const support = placed.objects.find((entry) => entry.id === supportId)!;
+      expect(getItemBounds(item).min.y).toBeCloseTo(getItemBounds(support).max.y + 0.001, 6);
+      expect(getRestingSurfaceId(placed, 'item')).toBe(supportId);
+      expect(item.attachment).toBeFalsy();
+    }
+  });
+
+  it('permits a light bar to rest on the monitor top without offering monitors to other items', () => {
+    const monitor = photoDevice('monitor', 'monitor', 0, 0, 0);
+    const light = {
+      ...createSceneObject('light-bar'),
+      id: 'light',
+      placement: { x: 0, y: 1.51, z: 0, rotation: 0 },
+    };
+    const draft = empty([light, cube('other', 2)]);
+    draft.devices = [monitor];
+    expect(getSurfaceTargets(draft, 'light').map((target) => target.id)).toContain('monitor');
+    expect(getSurfaceTargets(draft, 'other').map((target) => target.id)).not.toContain('monitor');
+    const result = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['light'],
+      [{ itemId: 'light', surfaceId: 'monitor' }],
+    );
+    expect(result.issues).toEqual([]);
+    expect(getItemBounds(result.draft.objects[0]).min.y).toBeCloseTo(
+      getItemBounds(monitor).max.y + 0.001,
+      6,
+    );
+  });
+
+  it('keeps an explicit desk attachment when placing a child on a mat over that desk', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const mat = {
+      ...createSceneObject('mat'),
+      id: 'mat',
+      placement: { x: 0, y: 2.4855, z: 0, rotation: 0 },
+    };
+    const item = cube('item', 0, 0, 0.2);
+    item.placement.y = 2.514;
+    item.attachment = { parentId: 'desk' };
+    const placed = snapToSurface(empty([desk, mat, item]), 'item', 'mat');
+    expect(placed.objects[2].attachment).toEqual({ parentId: 'desk' });
+    expect(getRestingSurfaceId(placed, 'item')).toBe('mat');
+  });
+
+  it('carries retained attached records with a proposed desk and reports a newly blocked carry', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const child = cube('child', 0.4, 0, 0.2);
+    const base = applyCommand(empty([desk, child]), {
+      type: 'attach-object',
+      id: 'child',
+      parentId: 'desk',
+    });
+    const draft = move(base, 'desk', 0.5, 0, 30);
+    const result = fitSceneProposalForReview(base, draft, ['desk']);
+    expect(result.issues).toEqual([]);
+    expect(result.draft.objects[1].placement).toEqual(
+      rebaseAttachedPlacement(base, result.draft, base.objects[1]),
+    );
+    expect(result.draft.objects[1].visual).toEqual(base.objects[1].visual);
+    expect(result.draft.objects[1].parts).toEqual(base.objects[1].parts);
+    const blocker = cube(
+      'blocker',
+      result.draft.objects[1].placement.x,
+      result.draft.objects[1].placement.z,
+      0.2,
+    );
+    blocker.placement.y = result.draft.objects[1].placement.y;
+    const blockedBase = { ...base, objects: [...base.objects, blocker] };
+    const blockedDraft = { ...draft, objects: [...draft.objects, blocker] };
+    const blocked = fitSceneProposalForReview(blockedBase, blockedDraft, ['desk']);
+    expect(blocked.draft.objects[2]).toEqual(blocker);
+    expect(blocked.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'child', code: 'retained-placement' }),
+    );
+  });
+
+  it('preserves a valid retained child record when a resized desk would carry it outside scene bounds', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const base = applyCommand(empty([desk, cube('child', 3, 0, 0.2)]), {
+      type: 'attach-object',
+      id: 'child',
+      parentId: 'desk',
+    });
+    const draft = structuredClone(base);
+    draft.objects[0].visual.scale = { x: 3, y: 1, z: 1 };
+    draft.objects[0].placement.x = 4.3;
+    const result = fitSceneProposalForReview(base, draft, ['desk']);
+    expect(result.draft.objects[1]).toEqual(base.objects[1]);
+    expect(rebaseAttachedPlacement(base, draft, base.objects[1])).toEqual(
+      base.objects[1].placement,
+    );
+    expect(() => WorkspaceSchema.parse(result.draft)).not.toThrow();
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'child', code: 'retained-placement' }),
+    );
+  });
+
+  it('keeps manual retained-child edits when a later support fit uses the current preview frame', () => {
+    const desk = { ...createSceneObject('desk'), id: 'desk' };
+    const base = applyCommand(empty([desk, cube('child', 0, 0, 0.2)]), {
+      type: 'attach-object',
+      id: 'child',
+      parentId: 'desk',
+    });
+    const initial = fitSceneProposalForReview(base, move(base, 'desk', 0.5, 0), ['desk']).draft;
+    const edited = move(initial, 'child', 1, 0);
+    const result = fitSceneProposalForReview(
+      base,
+      edited,
+      ['desk'],
+      [{ itemId: 'desk', surfaceId: 'floor' }],
+      { carryFrom: edited },
+    );
+    expect(result.draft.objects[1]).toEqual(edited.objects[1]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('accepts the exact existing floor-origin clamp for chair wheels without broadening the resting tolerance', () => {
+    const chair = {
+      ...createSceneObject('chair'),
+      id: 'chair',
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    const result = fitSceneProposalForReview(empty([]), empty([chair]), ['chair']);
+    expect(result.draft.objects[0].placement.y).toBe(0);
+    expect(result.issues).toEqual([]);
+    expect(getRestingSurfaceId(result.draft, 'chair')).toBe('floor');
+    const raised = structuredClone(result.draft);
+    raised.objects[0].placement.y = 0.03;
+    expect(getScenePlacementIssues(empty([]), raised, ['chair'])).toContainEqual(
+      expect.objectContaining({ itemId: 'chair', code: 'support' }),
+    );
+  });
+
   it('places pending candidates in clear positions while preserving retained objects', () => {
     const retained = cube('retained', 0);
     const base = empty([retained]);

@@ -8,6 +8,8 @@ import {
   Keyboard,
   Mouse,
   DesktopTower,
+  DeviceTablet,
+  HandPointing,
   Usb,
   type IconProps,
 } from '@phosphor-icons/react';
@@ -22,6 +24,8 @@ export function DeviceIcon({ kind, ...props }: IconProps & { kind: DeviceKind })
     keyboard: Keyboard,
     mouse: Mouse,
     desktop: DesktopTower,
+    tablet: DeviceTablet,
+    trackpad: HandPointing,
   };
   const Icon = icons[kind];
   return <Icon {...props} />;

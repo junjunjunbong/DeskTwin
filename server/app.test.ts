@@ -9,6 +9,9 @@ import {
 import { createDemoWorkspace } from '../src/domain/workspace';
 import { answerDiagnosis, startDiagnosis } from '../src/domain/diagnosis';
 import type { Server } from 'node:http';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const servers: Server[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -119,6 +122,24 @@ describe('local API and Meta boundary', () => {
     const text = await (await fetch(url + '/api/health')).text();
     expect(text).not.toContain('test-secret');
     expect(JSON.parse(text).photoAvailable).toBe(true);
+  });
+  it('serves production assets with local workers while retaining the script policy', async () => {
+    const productionRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktwin-csp-')));
+    try {
+      await writeFile(join(productionRoot, 'index.html'), '<!doctype html><title>DeskTwin</title>');
+      const url = await app({ productionRoot });
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      const policy = response.headers.get('content-security-policy');
+      expect(policy).toContain("worker-src 'self';");
+      expect(policy).toContain("script-src 'self';");
+      expect(policy).toContain("connect-src 'self';");
+      expect(policy).not.toContain('unsafe-eval');
+      expect(policy).not.toContain('wasm-unsafe-eval');
+      expect(policy).not.toContain("worker-src 'self' blob:");
+    } finally {
+      await rm(productionRoot, { recursive: true, force: true });
+    }
   });
   it('requires explicit consent before a live call', async () => {
     const fetchImpl = vi.fn();
@@ -304,6 +325,42 @@ describe('local API and Meta boundary', () => {
     expect(body.messages.at(-1).content[0].text).toContain('in English');
     expect(JSON.stringify(body)).not.toContain('test-key');
     expect(body.messages[1].content).not.toContain('"history"');
+  });
+  it('grounds independent photo objects in actual template sizes and nullable visual evidence', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(upstream(sceneReply()));
+    const url = await app({ apiKey: 'test-key', fetchImpl });
+    expect((await post(url, '/api/photo', photoRequest())).status).toBe(200);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    const prompt = body.messages[0].content as string;
+    expect(prompt).toContain('separate a keyboard from its wrist rest');
+    expect(prompt).toContain('a monitor from its riser');
+    expect(prompt).toContain('a laptop from its stand');
+    expect(prompt).toContain('Do not invent any of these objects');
+    expect(prompt).toContain('left-to-right order, front-to-back order');
+    expect(prompt).toContain('not real-world measurements');
+    expect(prompt).toContain('supportId');
+    expect(prompt).toContain('imageRegion');
+    const dimensions = JSON.parse(prompt.split('TEMPLATE DIMENSIONS (unscaled scene units):\n')[1]);
+    expect(dimensions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'monitor-riser', width: 2.4, depth: 0.8, supportTop: 0.5 }),
+        expect.objectContaining({
+          kind: 'laptop-stand',
+          width: 1.5,
+          depth: 1.05,
+          supportTop: 0.42,
+        }),
+        expect.objectContaining({ kind: 'wrist-rest', width: 1.4, height: 0.09, depth: 0.3 }),
+        expect.objectContaining({ kind: 'shelf', width: 2.1, height: 0.13, depth: 0.5 }),
+        expect.objectContaining({ kind: 'trackpad', width: 0.5 }),
+        expect.objectContaining({ kind: 'tablet', width: 0.82 }),
+        expect.objectContaining({ kind: 'light-bar', width: 1.4 }),
+      ]),
+    );
+    const itemSchema = body.response_format.json_schema.schema.properties.objects.items;
+    expect(itemSchema.required).toEqual(expect.arrayContaining(['supportId', 'imageRegion']));
+    expect(JSON.stringify(itemSchema.properties.supportId)).toContain('null');
+    expect(JSON.stringify(itemSchema.properties.imageRegion)).toContain('null');
   });
   it('validates photo consent and context before making an upstream request', async () => {
     const fetchImpl = vi.fn();

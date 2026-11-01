@@ -225,6 +225,17 @@ test('photo selection alone never sends an image; applying a scene needs a secon
         message: 'I found an object that looks like a monitor.',
         objects: [
           {
+            id: 'desk-photo',
+            deviceId: null,
+            kind: 'desk',
+            name: 'Desk in photo',
+            placement: { x: 0, y: 0, z: 0, rotation: 0 },
+            scale: { x: 1, y: 1, z: 1 },
+            color: '#795b43',
+            parts: [],
+            note: 'Synthetic support for the consent and confirmation test.',
+          },
+          {
             id: 'monitor-photo',
             deviceId: null,
             kind: 'monitor',
@@ -234,6 +245,7 @@ test('photo selection alone never sends an image; applying a scene needs a secon
             color: '#334455',
             parts: [],
             note: 'Visual inference from the photo',
+            supportId: 'desk-photo',
           },
         ],
       },

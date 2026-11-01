@@ -3,6 +3,9 @@ import {
   applyCommand,
   applyProposal,
   createDemoWorkspace,
+  createSceneObject,
+  DeviceSchema,
+  defaultVisual,
   localizeLegacyDemoForDisplay,
   parseWorkspace,
 } from './workspace';
@@ -79,6 +82,39 @@ describe('evidence-aware workspace', () => {
     const w = createDemoWorkspace();
     w.devices.push(w.devices[0]);
     expect(() => parseWorkspace(w)).toThrow();
+  });
+  it('keeps existing version 2 records unchanged while accepting separate desk accessories', () => {
+    const legacy = createDemoWorkspace();
+    expect(parseWorkspace(JSON.parse(JSON.stringify(legacy)))).toEqual(legacy);
+    const next = structuredClone(legacy);
+    for (const kind of ['wrist-rest', 'monitor-riser', 'laptop-stand', 'light-bar'] as const) {
+      const accessory = createSceneObject(kind);
+      accessory.visual.source = 'photo-inferred';
+      next.objects.push(accessory);
+    }
+    for (const kind of ['trackpad', 'tablet'] as const)
+      next.devices.push(
+        DeviceSchema.parse({
+          id: `photo-${kind}`,
+          kind,
+          name: kind,
+          model: '',
+          placement: { x: 0, y: 2.51, z: 0, rotation: 0 },
+          visual: defaultVisual('photo-inferred'),
+          source: 'photo-inferred',
+          status: 'unknown',
+          statusNote: '',
+        }),
+      );
+    const parsed = parseWorkspace(next);
+    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.devices.slice(0, legacy.devices.length)).toEqual(legacy.devices);
+    expect(parsed.objects.slice(0, legacy.objects.length)).toEqual(legacy.objects);
+    expect(parsed.devices.slice(-2).every((device) => device.status === 'unknown')).toBe(true);
+    expect(parsed.connections).toEqual(legacy.connections);
+    expect(parsed.objects.filter((object) => object.kind === 'shelf')).toEqual(
+      legacy.objects.filter((object) => object.kind === 'shelf'),
+    );
   });
   it('rejects dangling and self connections', () => {
     const w = createDemoWorkspace();

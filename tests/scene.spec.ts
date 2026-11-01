@@ -30,7 +30,23 @@ function proposal(): SceneProposal {
     deviceId: null,
     kind,
     name,
-    placement: { x: 0, y, z: 0, rotation: 0 },
+    // Consent, identity and persistence checks use a plausible, non-overlapping
+    // scene. Placement rejection is covered separately in photo-review.spec.ts.
+    placement: {
+      x: kind === 'plant' ? 2.9 : kind === 'monitor' ? -0.7 : kind === 'generic' ? 1.6 : 0,
+      y,
+      z:
+        kind === 'chair'
+          ? 2.8
+          : kind === 'monitor'
+            ? -0.7
+            : kind === 'generic'
+              ? 0.8
+              : kind === 'plant'
+                ? 0.6
+                : 0,
+      rotation: 0,
+    },
     scale: { x: 1, y: 1, z: 1 },
     color: '#829575',
     parts: [],
@@ -232,8 +248,11 @@ test('an unmatched photo device requires an explicit record choice and keeps use
     },
   ];
   const fixture = proposal();
-  fixture.objects = fixture.objects.filter((item) => item.kind === 'monitor');
-  fixture.objects[0].name = 'Monitor in the photo';
+  fixture.objects = fixture.objects.filter((item) => ['desk', 'monitor'].includes(item.kind));
+  fixture.objects.find((item) => item.kind === 'monitor')!.name = 'Monitor in the photo';
+  // Identity review must remain valid for either an additional or a matched
+  // monitor; keep the candidate clear of the retained left monitor.
+  fixture.objects.find((item) => item.kind === 'monitor')!.placement.x = 1.3;
   await seed(page, base);
   await page.route('**/api/photo', (route) =>
     route.fulfill({ json: { mode: 'meta', ...fixture } }),
@@ -300,7 +319,7 @@ test('applying a scene is one undo step and preserves user-reported identity, li
   await seed(page, base);
   const scene = proposal();
   // Keep the approval/Undo fixture clear of the intended desk movement. Collision rejection has dedicated tests.
-  scene.objects.find((object) => object.kind === 'chair')!.placement.z = 3.2;
+  scene.objects.find((object) => object.kind === 'chair')!.placement.z = 2.8;
   scene.objects.find((object) => object.kind === 'monitor')!.deviceId = monitor.id;
   await page.route('**/api/photo', (route) => route.fulfill({ json: { mode: 'meta', ...scene } }));
   await openPhoto(page);

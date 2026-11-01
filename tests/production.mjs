@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -55,6 +56,10 @@ try {
   });
   const page = await browser.newPage({ viewport: { width: 1448, height: 1086 } });
   const errors = [];
+  let photoRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/photo') photoRequests++;
+  });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
@@ -62,11 +67,31 @@ try {
   const response = await page.goto(base, { waitUntil: 'networkidle' });
   assert.equal(response.status(), 200);
   assert.ok(response.headers()['content-security-policy'].includes("frame-ancestors 'none'"));
+  assert.ok(response.headers()['content-security-policy'].includes("worker-src 'self'"));
   await page.getByTestId('desk-canvas').waitFor();
   await page.getByRole('button', { name: 'Device list', exact: true }).click();
   await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
   await page.getByRole('button', { name: 'Close device details' }).click();
   await page.screenshot({ path: 'test-results/production.png' });
+  // Exercise the local HEIC decoder through the production bundle and CSP. This
+  // tiny red/blue fixture was generated for tests; no user photo is included.
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await page
+    .getByLabel('Desk photo file')
+    .setInputFiles(resolve('tests/fixtures/synthetic-rotated.heic'));
+  const photo = page.getByAltText('Desk reference photo selected by the user');
+  await photo.waitFor();
+  await photo.evaluate((element) => element.decode());
+  const heic = await photo.evaluate((element) => ({
+    width: element.naturalWidth,
+    height: element.naturalHeight,
+    jpeg: element.src.startsWith('data:image/jpeg;base64,'),
+    storedPhoto: [...Object.values(localStorage), ...Object.values(sessionStorage)].some((value) =>
+      value.includes('data:image/'),
+    ),
+  }));
+  assert.deepEqual(heic, { width: 32, height: 64, jpeg: true, storedPhoto: false });
+  assert.equal(photoRequests, 0, 'Selecting a HEIC image must never send it for analysis.');
   const result = await page.evaluate(async () => {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -89,6 +114,7 @@ try {
       webgl: true,
       errors: [],
       csp: true,
+      heic: { ...heic, photoRequests },
       invalidInput: 'rejected',
       port,
     }),

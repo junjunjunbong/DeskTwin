@@ -207,8 +207,9 @@ describe('photo scene draft isolation and evidence', () => {
     expect(restored.attachment?.parentId).toBe(desk.id);
     expect(restored.status).toBe('reported-working');
     expect(getItemBounds(restored).min.y).toBeGreaterThanOrEqual(getItemBounds(desk).max.y);
-    expect(validateSceneCollisions(separate.draft, base)).toEqual([]);
-    expect(() => applySceneDraft(base, base, separate.draft)).not.toThrow();
+    // A duplicate observation keeps its reviewed location; it must be moved deliberately.
+    expect(validateSceneCollisions(separate.draft, base)).not.toEqual([]);
+    expect(() => applySceneDraft(base, base, separate.draft)).toThrow(/placement/);
   });
 
   it('does not allow a reviewed scene to silently remove an existing user prop', () => {
@@ -483,7 +484,10 @@ describe('photo scene draft isolation and evidence', () => {
 
   it('applies one reviewed event, drops temporary edit events, and rejects stale or forged drafts', () => {
     const base = legacy();
-    const draft = buildSceneDraft(base, proposal());
+    const input = proposal();
+    // Review preserves the proposed X/Z, so this unrelated history test uses a clear location.
+    input.objects[0].placement = { x: 0, y: 0.01, z: 3, rotation: 0 };
+    const draft = buildSceneDraft(base, input);
     const object = draft.objects[0];
     const edited = applyCommand(draft, {
       type: 'update-object',

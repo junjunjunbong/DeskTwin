@@ -87,16 +87,18 @@ The following recovered spatial-editor checkpoint images show an attached monito
 
 ## Photo workflow and duplicate prevention
 
-1. Choose a photo in **Desk photo**. Selection and local resizing do not transmit it.
+1. Choose a JPEG, PNG, WebP or HEIC/HEIF photo in **Desk photo**. Selection, local conversion and resizing do not transmit it.
 2. Add known device/connection notes and check the separate Meta transmission consent.
 3. Choose **Create scene preview with Meta**. The server key stays out of the browser.
-4. Review the unsaved scene. Candidate positions are fitted to available floor/desk surfaces in a bounded, deterministic pass; retained user records are preserved. The proposal is still approximate.
+4. Review the unsaved scene and its object list. Include/exclude candidates independently, restore excluded edits, and use **Add missing object** for items the photo missed. Retained saved records remain distinct from photo candidates. Candidates are fitted in support order; unavailable surfaces and collisions require review instead of silently sending tabletop objects to the floor.
 5. For a photographed device, review **Device record**. Explicit existing IDs, stable prior photo IDs and unique matching names suggest reuse of an existing record. When a same-type retained record exists but there is no unambiguous match, **Confirm and apply scene** is disabled until a record choice is made. Choose an existing compatible device or explicitly choose **Keep as a separate new device**. **Review device record** jumps to an unresolved candidate.
-6. Edit placement, attachment, shape and color before **Confirm and apply scene**, or **Discard preview**.
+6. Compare the reference photo and selected 3D item. Approximate photo regions appear only when supplied by the model. Edit name/type for new candidates, presets, placement, support, attachment, shape and color, resolve outstanding issues, then **Confirm and apply scene**, or **Discard preview**.
 
 A repeated proposal reuses compatible existing photo records and uniquely matching props instead of blindly appending them. Matching is a visual suggestion, not verified identity. Different names, changed candidate IDs or ambiguous identical devices can still require manual matching. Example devices with user-recorded connections, status, visual edits or attachments are retained and can be matched. An existing record retains its name, model, identity source, reports and cable endpoints. Rebinding a preview restores the prior record and moves only the visual association. A new photo device always has unknown operating status.
 
 The model may use a template or supply up to 32 bounded boxes for any device or prop, not just generic objects. Those boxes describe a complete approximate replacement shape, and the same editor remains available before and after approval. Described connections provide context but are not automatically persisted as cables.
+
+Trackpad and tablet device types, and wrist-rest, monitor-riser, laptop-stand and light-bar object types provide independent editing without changing old shelf geometry. Manually added candidates use user-reported provenance and do not receive an invented photo region. Excluding a matched candidate restores its existing record; it is not a saved-device deletion action. See [photo review](PHOTO_REVIEW.md) for the bounded live-test evidence, new behavior and remaining limitations.
 
 ## OS observations and scene placement
 

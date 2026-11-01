@@ -17,6 +17,8 @@ export const DeviceKindSchema = z.enum([
   'router',
   'keyboard',
   'mouse',
+  'trackpad',
+  'tablet',
   'desktop',
 ]);
 export const SourceSchema = z.enum(['demo', 'user-reported', 'photo-inferred', 'os-detected']);
@@ -96,6 +98,10 @@ export const ObjectKindSchema = z.enum([
   'mug',
   'mat',
   'shelf',
+  'wrist-rest',
+  'monitor-riser',
+  'laptop-stand',
+  'light-bar',
   'picture',
   'organizer',
   'figurine',
@@ -131,6 +137,10 @@ export const objectKindLabels: Record<ObjectKind, string> = {
   mug: 'Mug',
   mat: 'Mat',
   shelf: 'Shelf',
+  'wrist-rest': 'Wrist rest',
+  'monitor-riser': 'Monitor riser',
+  'laptop-stand': 'Laptop stand',
+  'light-bar': 'Monitor light bar',
   picture: 'Picture',
   organizer: 'Organizer',
   figurine: 'Figurine',
@@ -262,6 +272,8 @@ export const kindLabels: Record<DeviceKind, string> = {
   router: 'Router',
   keyboard: 'Keyboard',
   mouse: 'Mouse',
+  trackpad: 'Trackpad',
+  tablet: 'Tablet',
   desktop: 'Desktop',
 };
 export const sourceLabels: Record<Source, string> = {

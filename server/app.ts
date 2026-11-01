@@ -119,7 +119,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, root: stri
     'Cache-Control': extname(realFile) === '.html' ? 'no-cache' : 'public, max-age=3600',
     'Referrer-Policy': 'no-referrer',
     'Content-Security-Policy':
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   });
   res.end(req.method === 'HEAD' ? undefined : data);

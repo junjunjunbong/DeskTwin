@@ -1,0 +1,36 @@
+DeskTwin third-party notices
+
+DeskTwin's original application source is licensed under the MIT License.
+Third-party code retains its own license and copyright notices.
+
+HEIC / HEIF decoder
+-------------------
+Package: libheif-js 1.23.5
+Author: Kiril Vatev
+License declared by package: LGPL-3.0
+
+The browser loads the package's pure-JavaScript libheif build in a local worker
+only when native image decoding cannot handle a HEIC / HEIF photo. DeskTwin does
+not edit the decoder source. The application worker is built separately from the
+main UI; rebuilding with a replacement decoder uses the ordinary npm/Vite build.
+
+License texts shipped alongside this notice:
+- licenses/libheif-js-LGPL-3.0.txt
+- licenses/libheif-LICENSE.txt (includes LGPL-3.0, GPL-3.0, and upstream notices)
+
+Exact package source and build instructions:
+https://github.com/catdad-experiments/libheif-js/tree/67d6e493dff2213fb3476e7b0ef18108671a6938
+https://www.npmjs.com/package/libheif-js/v/1.23.5
+
+Prebuilt decoder source/build distribution used by that package:
+https://github.com/catdad-experiments/libheif-emscripten/releases/tag/v1.23.5
+https://github.com/catdad-experiments/libheif-emscripten/tree/v1.23.5
+
+Upstream libheif project:
+https://github.com/strukturag/libheif
+
+Other dependencies
+------------------
+React, Three.js, Zod, Phosphor Icons and other application/build dependencies
+retain the license and copyright notices included in their npm distributions.
+Exact versions and integrity hashes are recorded in package-lock.json.
