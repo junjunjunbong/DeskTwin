@@ -180,7 +180,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 2. 알고 있는 기기나 연결 설명을 입력하고 별도 Meta 전송 동의를 확인합니다.
 3. **Create scene preview with Meta**를 누릅니다. 서버 key가 설정된 경우 실제 API 비용이 발생할 수 있습니다.
 4. **Review your desk scene**의 물건 목록에서 포함·제외를 선택하고, 빠진 물건은 **Add missing object**로 추가합니다. 제외한 후보는 편집값을 유지한 채 복구할 수 있으며, 기존 저장 기기와 매칭된 후보를 제외해도 원래 기기 기록은 남습니다. 키보드와 손목 받침대, 모니터와 받침대, 노트북과 스탠드는 독립적으로 편집합니다. 원본 사진과 3D를 비교하고, 기기 매칭과 배치 문제를 해결한 뒤 적용합니다.
-5. **Show original estimate**로 원본 추정을 비교하고, **Undo automatic adjustments**로 자동 보정을 되돌릴 수 있습니다. **Fit small gaps**는 원래 추정 주변의 작은 이동만 탐색하며 크기·회전·주요 받침·사용자 잠금값을 보존합니다. 직접 편집한 위치·회전·크기와 선택한 받침은 자동 잠금됩니다. 해결되지 않은 장면도 preview는 열리지만 적용은 차단됩니다.
+5. **Show original estimate**로 원본 추정을 비교하고, **Undo automatic adjustments**로 자동 보정을 되돌릴 수 있습니다. **Fit small gaps**는 사진 피팅 전에는 원래 추정 주변의 작은 이동을 탐색하고, 사진 피팅 후에는 현재 잠금을 반영해 사진 맞춤을 다시 실행합니다. 사용자 잠금값은 유지합니다. 직접 편집한 위치·회전·크기와 선택한 받침은 자동 잠금됩니다. 해결되지 않은 장면도 preview는 열리지만 적용은 차단됩니다.
 6. **Confirm and apply scene**으로 한 번에 적용하거나 **Discard preview**로 취소합니다.
 7. **Scene objects**에서 이후에도 가구·소품을 편집합니다. 기기는 **Edit placement**에서 배치·연결·부품을 수정합니다.
 8. 변경은 브라우저에 저장됩니다. 설정의 **Export JSON**과 **Import JSON**으로 구성을 옮길 수 있습니다. 기존 v1 저장본과 JSON은 v2로 읽으며, 사진·대화·key는 JSON에 포함하지 않습니다.
@@ -188,6 +188,8 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 같은 사진을 사용한 후속 실제 평가에서 물체 19개가 반환됐지만 받침·충돌 문제로 적용은 차단됐습니다. 성공한 후속 요청은 테스트 전용 90초 제한에서 38.887초가 걸렸으며 제품의 서버 제한은 여전히 35초입니다. 단일 사진 결과와 자동 기능 검증을 구분합니다. [실사진 평가와 재현 사례](docs/PHOTO_EVALUATION.md), [기능 검증 범위](docs/PHOTO_REVIEW.md), [GPT Pro 검토 프롬프트](docs/GPT_PRO_REVIEW_PROMPT.md)를 참고하세요.
 
 이후 구현한 [제한된 사진 배치 보정](docs/PHOTO_PLACEMENT_REPAIR.md)은 위 세 재현 사례와 mock·로컬 fixture로 검증했습니다. 접촉·받침 판정, 수정값 보존, 작은 간격 보정과 취소 전파를 개선했지만 새로운 실사진 품질 향상이나 실제 API 지연 개선을 입증한 것은 아닙니다. 서버 35초·브라우저 40초 제한을 유지하며, preview 받침 관계는 영속 Workspace graph로 저장하지 않습니다.
+
+[사진 기준 자동 피팅](docs/PHOTO_REFERENCE_FITTING.md)은 사진 속 물체 영역과 템플릿으로 비교 시점을 추정하고 배치를 맞춥니다. 좌표·모서리·시야각 입력 단계는 없습니다. **Compare with your photo**에서 비교하고, **Match photo again**으로 로컬 재시도하거나 **Undo photo match**로 되돌립니다. 근거가 부족하면 기존 preview를 유지합니다. 전체 19개 응답의 재생 결과와 남은 충돌은 검증 문서에 구분해 기록합니다.
 
 ## 데모 순서
 

@@ -456,6 +456,7 @@ export function PhotoPanel({
           initialOriginalDraft={result.originalDraft}
           initialAdjustments={result.adjustments}
           initialRepairSummary={result.repairSummary}
+          initialPhotoReference={result.photoReference}
           current={workspace}
           storageConflict={storageConflict}
           message={result.message}

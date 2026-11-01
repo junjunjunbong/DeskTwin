@@ -40,6 +40,7 @@ import { ShapeEditor } from './ShapeEditor';
 import { PlacementControls } from './PlacementControls';
 import { PreviewObjectList, previewKindLabel } from './PreviewObjectList';
 import { PreviewPhotoReference } from './PreviewPhotoReference';
+import { PhotoAlignmentPanel } from './PhotoAlignmentPanel';
 const DeskCanvas = lazy(() => import('./DeskCanvas'));
 
 type Selection =
@@ -60,6 +61,7 @@ export function ScenePreview({
   initialOriginalDraft,
   initialAdjustments,
   initialRepairSummary,
+  initialPhotoReference,
 }: {
   base: Workspace;
   initialDraft: Workspace;
@@ -75,6 +77,7 @@ export function ScenePreview({
   initialOriginalDraft?: SceneReviewState['originalDraft'];
   initialAdjustments?: SceneReviewState['adjustments'];
   initialRepairSummary?: SceneReviewState['repairSummary'];
+  initialPhotoReference?: SceneReviewState['photoReference'];
 }) {
   const [review, setReview] = useState<SceneReviewState>({
     draft: initialDraft,
@@ -84,6 +87,7 @@ export function ScenePreview({
     originalDraft: initialOriginalDraft ?? structuredClone(initialDraft),
     adjustments: initialAdjustments,
     repairSummary: initialRepairSummary,
+    photoReference: initialPhotoReference,
   });
   const [selection, setSelection] = useState<Selection>(
     initialCandidates[0]
@@ -271,6 +275,17 @@ export function ScenePreview({
           </p>
         )}
       </section>
+      {photo && (
+        <PhotoAlignmentPanel
+          key={photo}
+          state={review}
+          base={base}
+          photo={photo}
+          disabled={showingOriginal || stale || applying}
+          onChange={(next) => changeReview(() => next)}
+          onDiscard={onDiscard}
+        />
+      )}
       <div className="scene-preview-layout">
         <div className="preview-scene" aria-label="Proposed 3D scene">
           <Suspense fallback={<p>Preparing the 3D preview...</p>}>

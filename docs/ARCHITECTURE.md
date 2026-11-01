@@ -134,6 +134,12 @@ Playwright starts and owns its development server with `MODEL_API_KEY` explicitl
 
 GitHub Actions additionally defines a `native-compile` job on `macos-15`. It compiles the fixed Swift source against the hosted macOS SDK without starting detection. A successful SDK build would not establish correct recognition on the user's Mac. Hosted job outcomes, including scheduling failures, belong in the validation record separately from local checks.
 
+## Automatic photo-view fitting
+
+`photoProjection.ts` estimates a separate source camera from reliable model-proposed reference corners or, without them, from at least four spread object regions and current template geometry. The latter is approximate view inference, not calibrated camera recovery. `photoFitting.ts` uses complete outlines, conservative partial-region coverage and visible contact anchors to refine an in-memory layout under seed-relative bounds and independent contact/SAT checks. The normal orthographic hero camera is unchanged.
+
+`PhotoAlignmentPanel` attempts matching once after the local source image loads. Its product flow has no coordinate, corner-marking, calibration-object or field-of-view inputs. Comparison and retry are local; undo is not automatically re-applied. Regions, camera estimates and stable per-proposal fit snapshots stay in review metadata. `sceneReview.ts` protects later locks and saved-record identity through undo, exclusion and rebinding. Model semantic validation does not run the costly search. See [implementation and verification](PHOTO_REFERENCE_FITTING.md).
+
 ## Bounds and unverified integrations
 
 Saved scenes contain up to 40 devices, 60 other objects, 128 boxes per custom shape, and 100 connections/history entries. HTTP request bodies are bounded at 8 MB. Photo input accepts PNG/JPEG/WebP/HEIC/HEIF up to 8 MiB, re-encoded locally to JPEG with a longest side of 1280 pixels. User description and chat input allow 2,000 characters. Provider output limits remain 4,096 chat / 12,000 photo tokens, with a 35-second provider timeout and no automatic retry loop. The photo UI aborts its request at 40 seconds. The local 20 POSTs/minute and two concurrent provider calls are not a financial spending cap.

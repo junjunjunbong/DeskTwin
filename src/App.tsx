@@ -56,7 +56,6 @@ import { ReportedStatus, WorkspaceOverview } from './components/WorkspaceOvervie
 import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs';
 import { DeviceIcon, Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
-import { PhotoPanel } from './components/PhotoPanel';
 import { DeskSetupPanel } from './components/DeskSetupPanel';
 import type { ConnectionFocusPath } from './domain/connectionView';
 import {
@@ -68,6 +67,9 @@ import { applySceneDraft, retainedDevices } from './domain/sceneProposal';
 import { CommitTextInput } from './components/CommitInput';
 import { useDeviceDrafts } from './components/useDeviceDrafts';
 import './styles/app.css';
+const PhotoPanel = lazy(() =>
+  import('./components/PhotoPanel').then((module) => ({ default: module.PhotoPanel })),
+);
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel =
   | 'objects'
@@ -870,48 +872,56 @@ export default function App() {
               </aside>
             )}
             {panel === 'photo' && (
-              <PhotoPanel
-                workspace={store.workspace}
-                photo={referencePhoto}
-                onPhoto={setReferencePhoto}
-                available={assistant.available}
-                onClose={() => setPanel(null)}
-                onAdd={() => setDialog('device')}
-                onContinue={(context) => {
-                  setPhotoContext(context);
-                  openSetup();
-                }}
-                onApply={async (draft, base, review) => {
-                  if (
-                    !(await store.replace(
-                      applySceneDraft(store.workspace, base, draft, undefined, review),
-                      base,
-                    ))
-                  )
-                    throw new Error(
-                      'The scene was not saved. Resolve the storage notice and try again.',
-                    );
-                }}
-                storageConflict={store.conflict}
-                onRefresh={assistant.refreshHealth}
-                onClearDemo={() =>
-                  safe(async () => {
-                    const devices = retainedDevices(store.workspace);
-                    const ids = new Set(devices.map((d) => d.id));
-                    const saved = await store.replace({
-                      ...store.workspace,
-                      devices,
-                      connections: store.workspace.connections.filter(
-                        (c) => ids.has(c.from) && ids.has(c.to),
-                      ),
-                    });
-                    if (!saved) return false;
-                    setToast(
-                      'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
-                    );
-                  })
+              <Suspense
+                fallback={
+                  <aside className="side-panel" role="status">
+                    Preparing photo review...
+                  </aside>
                 }
-              />
+              >
+                <PhotoPanel
+                  workspace={store.workspace}
+                  photo={referencePhoto}
+                  onPhoto={setReferencePhoto}
+                  available={assistant.available}
+                  onClose={() => setPanel(null)}
+                  onAdd={() => setDialog('device')}
+                  onContinue={(context) => {
+                    setPhotoContext(context);
+                    openSetup();
+                  }}
+                  onApply={async (draft, base, review) => {
+                    if (
+                      !(await store.replace(
+                        applySceneDraft(store.workspace, base, draft, undefined, review),
+                        base,
+                      ))
+                    )
+                      throw new Error(
+                        'The scene was not saved. Resolve the storage notice and try again.',
+                      );
+                  }}
+                  storageConflict={store.conflict}
+                  onRefresh={assistant.refreshHealth}
+                  onClearDemo={() =>
+                    safe(async () => {
+                      const devices = retainedDevices(store.workspace);
+                      const ids = new Set(devices.map((d) => d.id));
+                      const saved = await store.replace({
+                        ...store.workspace,
+                        devices,
+                        connections: store.workspace.connections.filter(
+                          (c) => ids.has(c.from) && ids.has(c.to),
+                        ),
+                      });
+                      if (!saved) return false;
+                      setToast(
+                        'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
+                      );
+                    })
+                  }
+                />
+              </Suspense>
             )}
             {panel !== 'settings' && dialog !== 'connection' && dialog !== 'device' && notices}
           </div>
