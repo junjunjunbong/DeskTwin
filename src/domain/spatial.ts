@@ -518,6 +518,192 @@ export function getUnambiguousCoveringSupport(
   );
   return candidates.size === 1 ? [...candidates][0] : null;
 }
+export type ScenePlanarOffset = { x: number; z: number };
+
+/** Read-only alternatives for a joint preview search. Unlike automatic inference,
+ * a candidate need not cover the whole contact base when the existing covering
+ * policy verifies a solid beneath it. Ambiguity is returned to the caller, never
+ * resolved by object order. Locks and complete-scene validation belong to the
+ * caller; this does not change the selected support or any collision policy. */
+export function getSceneCoveringAlternatives(
+  workspace: Workspace,
+  itemId: string,
+  currentSurfaceId: string,
+): { surfaceId: string; heightDelta: number }[] {
+  const item = find(workspace, itemId);
+  if (item.kind === 'desk' || item.kind === 'chair' || item.kind === 'mat') return [];
+  const current = intendedSupport(workspace, item, new Map([[itemId, currentSurfaceId]]));
+  if (!current || current.covering || current.id === 'floor') return [];
+  const b = body(item);
+  const ids = new Set(
+    coveringSurfaces(workspace, new Set([itemId]))
+      .filter(
+        (target) =>
+          target.coveringSupports?.some((underlying) => underlying.id === current.id) &&
+          supportedFootprint(b, target) &&
+          target.height >= current.height - EPS &&
+          target.height <= current.height + 0.06 + GAP + REST_TOLERANCE,
+      )
+      .map((target) => target.id),
+  );
+  return [...ids].sort().flatMap((surfaceId) => {
+    const contact = evaluateSceneSupport(workspace, itemId, surfaceId);
+    return contact.available && contact.footprintValid
+      ? [{ surfaceId, heightDelta: contact.heightDelta }]
+      : [];
+  });
+}
+
+function uniquePlanarOffsets(offsets: ScenePlanarOffset[]): ScenePlanarOffset[] {
+  const unique = new Map<string, ScenePlanarOffset>();
+  for (const offset of offsets) {
+    if (!Number.isFinite(offset.x) || !Number.isFinite(offset.z)) continue;
+    const x = Math.abs(offset.x) < 1e-10 ? 0 : offset.x;
+    const z = Math.abs(offset.z) < 1e-10 ? 0 : offset.z;
+    const key = `${Math.round(x * 1e8)}:${Math.round(z * 1e8)}`;
+    if (!unique.has(key)) unique.set(key, { x, z });
+  }
+  return [...unique.values()].sort(
+    (a, b) => a.x * a.x + a.z * a.z - b.x * b.x - b.z * b.z || a.x - b.x || a.z - b.z,
+  );
+}
+
+/** Contact-derived planar placements on the requested support. The local-axis
+ * clamp is followed by center/edge alternatives for sibling packing. The same
+ * footprint predicate validates every result; a covering may also use its real
+ * underlying solid. These are candidates, not permission to apply a placement. */
+export function getSceneSupportOffsets(
+  workspace: Workspace,
+  itemId: string,
+  surfaceId: string,
+): ScenePlanarOffset[] {
+  const item = find(workspace, itemId);
+  const b = body(item);
+  const points = contactPoints(b);
+  if (!points.length) return [];
+  const offsets: ScenePlanarOffset[] = [];
+  for (const target of placementSurfaces(workspace, item).filter(
+    (entry) => entry.id === surfaceId,
+  )) {
+    if (!target.box) {
+      offsets.push({ x: 0, z: 0 });
+      continue;
+    }
+    const rectangles = [target, ...(target.covering ? (target.coveringSupports ?? []) : [])];
+    for (const rectangle of rectangles) {
+      if (!rectangle.box) continue;
+      const [a, c] = rectangle.box.edges.filter(
+        (edge) => Math.abs(edge.y) < EPS && length(edge) > EPS,
+      );
+      if (!a || !c) continue;
+      const determinant = a.x * c.z - a.z * c.x;
+      if (Math.abs(determinant) < 1e-10) continue;
+      const local = points.map((point) => {
+        const p = sub(point, rectangle.box!.center);
+        return {
+          u: (p.x * c.z - p.z * c.x) / determinant,
+          v: (a.x * p.z - a.z * p.x) / determinant,
+        };
+      });
+      const allowance =
+        hasTemplateGeometry(item) && rectangle.overhangKinds?.includes(item.kind)
+          ? (rectangle.maxOverhangFraction ?? 0)
+          : 0;
+      const extent = 1 + 2 * allowance;
+      const range = (axis: 'u' | 'v') => {
+        const values = local.map((point) => point[axis]);
+        let low = -extent - Math.min(...values);
+        let high = extent - Math.max(...values);
+        if (allowance > 0) {
+          const center = values.reduce((sum, value) => sum + value, 0) / values.length;
+          low = Math.max(low, -1 - center);
+          high = Math.min(high, 1 - center);
+        }
+        return { low, high };
+      };
+      const u = range('u');
+      const v = range('v');
+      if (u.low > u.high + 1e-10 || v.low > v.high + 1e-10) continue;
+      const choices = ({ low, high }: { low: number; high: number }) => [
+        Math.max(low, Math.min(high, 0)),
+        (low + high) / 2,
+        low,
+        high,
+      ];
+      for (const du of choices(u))
+        for (const dv of choices(v)) {
+          const move = add(mul(a, du), mul(c, dv));
+          const moved = {
+            ...item,
+            placement: {
+              ...item.placement,
+              x: item.placement.x + move.x,
+              z: item.placement.z + move.z,
+            },
+          };
+          if (supportedFootprint(translatedBody(b, moved), target))
+            offsets.push({ x: move.x, z: move.z });
+        }
+    }
+  }
+  return uniquePlanarOffsets(offsets);
+}
+
+/** Planar separation endpoints generated from the actually colliding box parts.
+ * Offsets move itemId relative to otherId. Both individual contact endpoints and
+ * clear-all endpoints are proposed; the complete scene still needs the unchanged
+ * component-level collision guard after support/group corrections are composed. */
+export function getScenePairSeparationOffsets(
+  workspace: Workspace,
+  itemId: string,
+  otherId: string,
+): ScenePlanarOffset[] {
+  const a = body(find(workspace, itemId));
+  const b = body(find(workspace, otherId));
+  if (!intersectsBounds(a.bounds, b.bounds)) return [];
+  const contacts = a.boxes.flatMap((one) =>
+    b.boxes.flatMap((two) => (penetration(one, two) > 0 ? [{ one, two }] : [])),
+  );
+  if (!contacts.length) return [];
+  const directions = new Map<string, V>();
+  for (const axis of [
+    { x: 1, y: 0, z: 0 },
+    { x: 0, y: 0, z: 1 },
+    ...contacts.flatMap(({ one, two }) => axes(one, two)),
+  ]) {
+    const horizontal = Math.hypot(axis.x, axis.z);
+    if (horizontal < 1e-10) continue;
+    const sign = axis.x < -1e-10 || (Math.abs(axis.x) <= 1e-10 && axis.z < 0) ? -1 : 1;
+    const direction = {
+      x: (sign * axis.x) / horizontal,
+      y: 0,
+      z: (sign * axis.z) / horizontal,
+    };
+    directions.set(`${Math.round(direction.x * 1e8)}:${Math.round(direction.z * 1e8)}`, direction);
+  }
+  const offsets: ScenePlanarOffset[] = [];
+  for (const direction of directions.values()) {
+    let negative = 0;
+    let positive = 0;
+    for (const { one, two } of contacts) {
+      const distance = dot(sub(one.center, two.center), direction);
+      const extent = radius(one, direction) + radius(two, direction) + GAP;
+      const low = -extent - distance;
+      const high = extent - distance;
+      negative = Math.min(negative, low);
+      positive = Math.max(positive, high);
+      offsets.push(
+        { x: direction.x * low, z: direction.z * low },
+        { x: direction.x * high, z: direction.z * high },
+      );
+    }
+    offsets.push(
+      { x: direction.x * negative, z: direction.z * negative },
+      { x: direction.x * positive, z: direction.z * positive },
+    );
+  }
+  return uniquePlanarOffsets(offsets);
+}
 function corners(box: Box): V[] {
   return [-1, 1].flatMap((a) =>
     [-1, 1].flatMap((b) =>
