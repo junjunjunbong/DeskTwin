@@ -1,5 +1,7 @@
 # Photo review and support-aware placement — 2026-11-01
 
+> This document records the earlier photo workflow and its verification. [PHOTO_PLACEMENT_REPAIR.md](PHOTO_PLACEMENT_REPAIR.md) documents the subsequent common contact policy, bounded repair, preview locks/comparison, cancellation and current verification. The historical test counts and live observations below are unchanged.
+
 The photo workflow creates editable object candidates. Users choose which candidates to include, restore excluded candidates, add missing objects, and correct placement before a separate confirmation writes the workspace. A photo remains an interpretation of visible objects, not evidence of working hardware or cable connections.
 
 ## Why this changed

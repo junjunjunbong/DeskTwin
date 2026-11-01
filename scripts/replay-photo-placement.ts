@@ -1,11 +1,12 @@
-/** Offline, sanitized reproduction of three observed photo-placement failures.
- * This diagnostic describes the known baseline; it is not an acceptance test.
+/** Offline acceptance for three observed photo-placement failures, using sanitized geometry.
+ * Historical failures are recorded separately, never required of the current implementation.
  * No private files, network requests, or saved workspace writes are involved.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   buildScenePreview,
-  sceneReviewPlacementIssues,
+  validateSceneReviewForApply,
   type SceneProposal,
 } from '../src/domain/sceneProposal';
 import { getItemBounds, type ScenePlacementIssue } from '../src/domain/spatial';
@@ -17,6 +18,17 @@ base.devices = [];
 base.objects = [];
 base.connections = [];
 base.history = [];
+base.diagnoses = [];
+
+if (process.argv.includes('--baseline')) {
+  console.log(
+    readFileSync(
+      new URL('../docs/baselines/photo-placement-d02cac93.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  process.exit(0);
+}
 
 // Preserve only the six objects' type, placement, scale, and support relation.
 // Names, colors, notes and image regions are replaced. These scene units are
@@ -77,9 +89,8 @@ const input: SceneProposal = {
     imageRegion: null,
   })),
 };
-const run = (ids: string[], edit = (_objects: SceneProposal['objects']) => {}) => {
+const run = (ids: string[]) => {
   const objects = structuredClone(input.objects.filter((item) => ids.includes(item.id)));
-  edit(objects);
   return buildScenePreview(base, { ...input, objects });
 };
 const counts = (issues: ScenePlacementIssue[]) => ({
@@ -88,68 +99,61 @@ const counts = (issues: ScenePlacementIssue[]) => ({
   collisionEntries: issues.filter((issue) => issue.code === 'collision').length,
 });
 
-const matIds = ['desk', 'mat', 'keyboard'];
-const matBaseline = run(matIds);
-if (process.argv.includes('--expect-clear')) {
-  assert.equal(
-    matBaseline.issues.length,
-    0,
-    'The keyboard should rest on the mat without intersecting it.',
-  );
-  process.exit(0);
+const scenes = {
+  keyboardSupport: run(['desk', 'mat', 'keyboard']),
+  wristSpacing: run(['desk', 'keyboard', 'wrist-rest']),
+  laptopSupport: run(['desk', 'stand', 'laptop']),
+};
+for (const [name, review] of Object.entries(scenes)) {
+  assert.deepEqual(review.issues, [], `${name} must pass current placement validation.`);
+  validateSceneReviewForApply(review, base);
+  const desk = review.draft.objects.find((item) => item.kind === 'desk')!;
+  const bounds = getItemBounds(desk);
+  for (const candidate of review.candidates) {
+    const current = [...review.draft.objects, ...review.draft.devices].find(
+      (item) => item.id === candidate.sceneId,
+    )!;
+    assert.deepEqual(current.visual.scale, candidate.seed!.scale, `${name}: no scale repair`);
+    assert.equal(
+      current.placement.rotation,
+      candidate.seed!.placement.rotation,
+      `${name}: no yaw repair`,
+    );
+    assert.ok(
+      Math.abs(current.placement.x - candidate.seed!.placement.x) <=
+        (bounds.max.x - bounds.min.x) * 0.03 + 1e-8,
+    );
+    assert.ok(
+      Math.abs(current.placement.z - candidate.seed!.placement.z) <=
+        (bounds.max.z - bounds.min.z) * 0.05 + 1e-8,
+    );
+  }
 }
-assert.equal(matBaseline.issues.length, 2);
-assert.equal(run(['desk', 'mat']).issues.length, 0);
-assert.equal(run(['desk', 'keyboard']).issues.length, 0);
-const matCorrected = run(matIds, (objects) => {
-  objects.find((item) => item.id === 'keyboard')!.supportId = 'mat';
-});
-assert.equal(matCorrected.issues.length, 0);
-
-const wristIds = ['desk', 'keyboard', 'wrist-rest'];
-const wristBaseline = run(wristIds);
-assert.equal(wristBaseline.issues.length, 2);
-assert.equal(run(['desk', 'wrist-rest']).issues.length, 0);
-const wristCorrected = run(wristIds, (objects) => {
-  objects.find((item) => item.id === 'wrist-rest')!.placement.z = 0.78;
-});
-assert.equal(wristCorrected.issues.length, 0);
-
-const standIds = ['desk', 'stand', 'laptop'];
-const standBaseline = run(standIds);
-assert.equal(standBaseline.issues.length, 3);
-const heightDraft = structuredClone(standBaseline.draft);
-const laptop = heightDraft.devices.find((item) => item.kind === 'laptop')!;
-const stand = heightDraft.objects.find((item) => item.kind === 'laptop-stand')!;
-const lift = getItemBounds(stand).max.y + 0.001 - getItemBounds(laptop).min.y;
-laptop.placement.y += lift;
-const heightIssues = sceneReviewPlacementIssues(base, heightDraft, standBaseline);
-assert.deepEqual(counts(heightIssues), { total: 1, support: 1, collisionEntries: 0 });
-const largerStand = run(standIds, (objects) => {
-  const support = objects.find((item) => item.id === 'stand')!;
-  support.scale.x = 0.9;
-  support.scale.z = 0.9;
-});
-assert.equal(largerStand.issues.length, 0);
+assert.equal(
+  scenes.keyboardSupport.candidates.find((item) => item.kind === 'keyboard')!.supportId,
+  'mat',
+);
+assert.equal(
+  scenes.keyboardSupport.candidates.find((item) => item.kind === 'keyboard')!.seed!.supportId,
+  'desk',
+);
 
 console.log(
   JSON.stringify(
     {
-      scope: 'Known baseline diagnosis using sanitized geometry. No API or workspace writes.',
-      keyboardSupport: {
-        before: counts(matBaseline.issues),
-        afterChangingOnlySupportToMat: counts(matCorrected.issues),
-      },
-      wristSpacing: {
-        before: counts(wristBaseline.issues),
-        afterChangingOnlyZFrom07To078: counts(wristCorrected.issues),
-      },
-      laptopSupport: {
-        before: counts(standBaseline.issues),
-        afterChangingOnlyHeight: counts(heightIssues),
-        heightChangeSceneUnits: lift,
-        afterIncreasingStandXZScaleFrom08To09: counts(largerStand.issues),
-      },
+      scope:
+        'Current geometry acceptance only. No API, photos or workspace writes. Use --baseline for the historical record; --expect-clear remains an alias for current acceptance.',
+      baselineSource: 'd02cac93cf007321cded2a52e31bbdc96a6f88e3',
+      results: Object.fromEntries(
+        Object.entries(scenes).map(([name, review]) => [
+          name,
+          {
+            issues: counts(review.issues),
+            adjustments: review.adjustments,
+            search: review.repairSummary,
+          },
+        ]),
+      ),
     },
     null,
     2,

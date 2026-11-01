@@ -1,0 +1,18 @@
+{
+  "sourceCommit": "d02cac93cf007321cded2a52e31bbdc96a6f88e3",
+  "scope": "Historical offline diagnosis from six sanitized geometry records. Issue entries are not independent failures or a photo-quality score.",
+  "keyboardSupport": {
+    "before": { "total": 2, "support": 0, "collisionEntries": 2 },
+    "afterChangingOnlySupportToMat": { "total": 0, "support": 0, "collisionEntries": 0 }
+  },
+  "wristSpacing": {
+    "before": { "total": 2, "support": 0, "collisionEntries": 2 },
+    "afterChangingOnlyZFrom07To078": { "total": 0, "support": 0, "collisionEntries": 0 }
+  },
+  "laptopSupport": {
+    "before": { "total": 3, "support": 1, "collisionEntries": 2 },
+    "afterChangingOnlyHeight": { "total": 1, "support": 1, "collisionEntries": 0 },
+    "heightChangeSceneUnits": 0.00295,
+    "afterIncreasingStandXZScaleFrom08To09": { "total": 0, "support": 0, "collisionEntries": 0 }
+  }
+}
