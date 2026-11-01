@@ -82,6 +82,21 @@ MODEL_API_KEY='' node --import tsx scripts/evaluate-photo-reference.ts \
 
 The optional internal `--reference` flag is for controlled numerical comparisons, not a product setup requirement. Output files use exclusive creation. The script checks source hashes and repeat stability, and never applies the workspace. Private source inputs are intentionally not committed.
 
+## Full-scene replay for independent review
+
+The repository also includes a sanitized numerical fixture of all 19 objects, with original names, notes, colors, photo and private workspace removed. Stable generic IDs, geometry and estimated normalized image regions are retained because they affect the deterministic search. These are model estimates, not measurements or ground truth.
+
+```sh
+node --import tsx scripts/replay-photo-scene-19.ts
+node --import tsx scripts/replay-photo-scene-19.ts --extended
+```
+
+On 2026-11-02, the sanitized replay matched the private-data replay: 11 collision pairs and three support issues after fitting. The remaining support issues concern two monitors on their riser and one monitor light bar. Increasing the candidate budget to 1,024 and the sweep limit to 12 used 864 evaluations and reduced image-evidence error to 0.0146203, but left the same 11 collision pairs. This does not isolate every cause; it rules out a larger search budget alone as a sufficient solution in this case.
+
+The inherited response has zero complete-outline labels, zero contact anchors and no source reference. Accordingly, the fitter does not propose scale/yaw changes; support relations and template kinds remain fixed. Every accepted step must reduce image-evidence loss while not adding/worsening geometric violations. Review should assess whether these fixed variables and monotonic local updates prevent a useful joint correction, rather than simply loosening all constraints or asserting that another model will solve it.
+
+For a further GPT Pro review, read the current `main`, run the full-scene replay, and inspect `photoFitting.ts`, `photoPlacement.ts`, `spatial.ts` and the fixture. Propose the smallest change that can improve this complete scene without coordinate setup: automatic support alternatives, support-group transformations, or a bounded joint search. Preserve user edits and independent final validation; distinguish app limitations from missing/inaccurate model evidence. The sanitized fixture permits numerical diagnosis, not a visual evaluation of the withheld photograph. Implementation and additional paid model calls require their own task scope.
+
 ## Remaining limits
 
 One photo does not uniquely determine hidden geometry, true scale, lens distortion or all depth/size combinations. Matching model-generated image boxes does not prove resemblance to the original photograph. Recognition, visible alignment, geometric validity, manual correction burden and latency need separate evaluation across multiple photos. No segmentation/depth model, generated mesh backend, persistent support graph or additional agent/model loop is introduced here.
