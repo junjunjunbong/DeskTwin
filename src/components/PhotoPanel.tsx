@@ -43,6 +43,10 @@ export function PhotoPanel({
   const [consent, setConsent] = useState(false);
   const [context, setContext] = useState('');
   const [pending, setPending] = useState(false);
+  const [phase, setPhase] = useState<'analyzing' | 'fitting' | null>(null);
+  const analysisStarted = useRef(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [timingSummary, setTimingSummary] = useState('');
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<
@@ -62,6 +66,14 @@ export function PhotoPanel({
     },
     [],
   );
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(
+      () => setElapsedSeconds(Math.floor((performance.now() - analysisStarted.current) / 1000)),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [pending]);
   function cancel() {
     version.current++;
     request.current?.abort();
@@ -69,6 +81,8 @@ export function PhotoPanel({
     request.current = null;
     preparation.current = null;
     setPending(false);
+    setPhase(null);
+    setTimingSummary('');
     setPreparing(false);
     setResult(null);
   }
@@ -80,7 +94,10 @@ export function PhotoPanel({
     request.current = controller;
     const timeout = setTimeout(() => controller.abort(), 40000);
     const base = structuredClone(workspace);
+    analysisStarted.current = performance.now();
+    setElapsedSeconds(0);
     setPending(true);
+    setPhase('analyzing');
     setError('');
     setApplied(false);
     try {
@@ -100,11 +117,21 @@ export function PhotoPanel({
       if (!res.ok) throw new Error(data.error || 'Analysis failed.');
       if (data.mode !== 'meta')
         throw new Error('The photo response was not a Meta scene proposal.');
-      const { mode: _mode, ...proposal } = data;
+      // Transport measurements are separate from scene data. Older frozen replies omit them.
+      const { mode: _mode, timings: _timings, ...proposal } = data;
       const parsed = SceneProposalSchema.safeParse(proposal);
       if (!parsed.success)
         throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
-      setResult({ base, ...buildScenePreview(base, parsed.data), message: parsed.data.message });
+      setPhase('fitting');
+      // Yield once before local fitting so cancellation and the actual stage can be reflected.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (token !== version.current) return;
+      controller.signal.throwIfAborted();
+      const preview = buildScenePreview(base, parsed.data);
+      setResult({ base, ...preview, message: parsed.data.message });
+      setTimingSummary(
+        `Preview prepared in ${((performance.now() - analysisStarted.current) / 1000).toFixed(1)} s · ${preview.candidates.length} candidate objects.`,
+      );
     } catch (e) {
       if (token !== version.current) return;
       setError(
@@ -118,6 +145,7 @@ export function PhotoPanel({
       clearTimeout(timeout);
       if (token === version.current) {
         setPending(false);
+        setPhase(null);
         request.current = null;
       }
     }
@@ -130,7 +158,14 @@ export function PhotoPanel({
             <span className="eyebrow">START WITH YOUR DESK</span>
             <h2>My desk photo</h2>
           </div>
-          <button className="icon-button" aria-label="Close photo panel" onClick={onClose}>
+          <button
+            className="icon-button"
+            aria-label="Close photo panel"
+            onClick={() => {
+              cancel();
+              onClose();
+            }}
+          >
             <X size={19} />
           </button>
         </div>
@@ -229,8 +264,19 @@ export function PhotoPanel({
                 onClick={() => void analyze()}
               >
                 <Sparkle size={18} />
-                {pending ? 'Meta is analyzing the photo...' : 'Create scene preview with Meta'}
+                {pending
+                  ? phase === 'fitting'
+                    ? 'Preparing the scene preview...'
+                    : 'Meta is analyzing the photo...'
+                  : 'Create scene preview with Meta'}
               </button>
+              {pending && (
+                <p className="micro-note" role="status" aria-label="Photo analysis progress">
+                  {phase === 'fitting' ? 'Fitting the proposed scene' : 'Analyzing the photo'} ·{' '}
+                  {elapsedSeconds} s elapsed
+                </p>
+              )}
+              {!pending && timingSummary && <p className="micro-note">{timingSummary}</p>}
               {pending && (
                 <button className="text-button" onClick={cancel}>
                   Cancel analysis

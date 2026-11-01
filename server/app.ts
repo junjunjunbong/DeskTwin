@@ -130,6 +130,33 @@ export function createApp(config: ServerConfig) {
   let windowStart = Date.now();
   let requests = 0;
   let active = 0;
+  async function providerRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    run: (signal: AbortSignal) => Promise<unknown>,
+  ) {
+    // Acquire after body parsing too: several uploads may finish in the same event-loop turn.
+    if (active >= 2)
+      throw new ApiError(429, 'Requests are already in progress. Please wait for them to finish.');
+    const controller = new AbortController();
+    const disconnect = () => {
+      if (!res.writableEnded)
+        controller.abort(new DOMException('The client disconnected.', 'AbortError'));
+    };
+    // IncomingMessage.close also fires when a normal request body ends; it is not cancellation.
+    req.once('aborted', disconnect);
+    res.once('close', disconnect);
+    if (req.aborted || res.destroyed) disconnect();
+    active++;
+    try {
+      const result = await run(controller.signal);
+      if (!controller.signal.aborted && !res.destroyed) json(res, 200, result);
+    } finally {
+      active--;
+      req.removeListener('aborted', disconnect);
+      res.removeListener('close', disconnect);
+    }
+  }
   const server = createServer(async (req, res) => {
     try {
       if (!isAllowedRequest(req)) {
@@ -196,11 +223,6 @@ export function createApp(config: ServerConfig) {
           429,
           'The local request limit has been reached. Please try again shortly.',
         );
-      if (active >= 2)
-        throw new ApiError(
-          429,
-          'Requests are already in progress. Please wait for them to finish.',
-        );
       const body = await readJSON(req);
       if (path === '/api/chat') {
         const data = ChatRequest.parse(body);
@@ -218,20 +240,14 @@ export function createApp(config: ServerConfig) {
         }
         if (!data.consent)
           throw new ApiError(400, 'Your consent is required before sending data to Meta.');
-        active++;
-        try {
-          json(
-            res,
-            200,
-            await callMeta(config, data.workspace, {
-              message: data.message,
-              history: data.history,
-              focusDeviceId: data.focusDeviceId,
-            }),
-          );
-        } finally {
-          active--;
-        }
+        await providerRequest(req, res, (signal) =>
+          callMeta(config, data.workspace, {
+            message: data.message,
+            history: data.history,
+            focusDeviceId: data.focusDeviceId,
+            signal,
+          }),
+        );
       } else {
         const data = PhotoRequest.parse(body);
         if (!config.apiKey)
@@ -239,19 +255,13 @@ export function createApp(config: ServerConfig) {
             503,
             'Photo analysis requires a Meta API key. You can add devices manually.',
           );
-        active++;
-        try {
-          json(
-            res,
-            200,
-            await callMetaScene(config, data.workspace, {
-              image: data.image,
-              context: data.context,
-            }),
-          );
-        } finally {
-          active--;
-        }
+        await providerRequest(req, res, (signal) =>
+          callMetaScene(config, data.workspace, {
+            image: data.image,
+            context: data.context,
+            signal,
+          }),
+        );
       }
     } catch (error) {
       if (res.headersSent || res.destroyed) return;

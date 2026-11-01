@@ -19,6 +19,7 @@ import {
   type SceneProposal,
 } from '../src/domain/sceneProposal';
 import { getItemBounds } from '../src/domain/spatial';
+import { getTemplateSupportTop } from '../src/domain/geometry';
 
 /** Send compact visual dimensions, not thousands of editable box records, to the provider. */
 function modelContextItem(item: Device | SceneObject) {
@@ -50,6 +51,18 @@ export interface MetaConfig {
   baseURL: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** Aggregate counters only. Never receives images, workspace data, content, or credentials. */
+  onRequestMeasurement?: (measurement: MetaRequestMeasurement) => void;
+}
+export interface MetaRequestTimings {
+  providerMs: number;
+  validationMs: number;
+  totalMs: number;
+  responseBytes: number;
+}
+export interface MetaRequestMeasurement extends MetaRequestTimings {
+  request: 'chat' | 'photo';
+  outcome: 'success' | 'canceled' | 'timeout' | 'provider-error' | 'invalid-response';
 }
 export const HistorySchema = z
   .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(6000) }))
@@ -98,6 +111,7 @@ const sceneTemplateDimensions = [
   })),
 ].map((item) => {
   const bounds = getItemBounds(item);
+  const supportTop = getTemplateSupportTop(item.kind);
   const round = (value: number) => Math.round(value * 10000) / 10000;
   return {
     kind: item.kind,
@@ -106,9 +120,7 @@ const sceneTemplateDimensions = [
     depth: round(bounds.max.z - bounds.min.z),
     minY: round(bounds.min.y),
     maxY: round(bounds.max.y),
-    ...(['desk', 'monitor-riser', 'laptop-stand', 'monitor', 'shelf'].includes(item.kind)
-      ? { supportTop: round(bounds.max.y) }
-      : {}),
+    ...(supportTop === null ? {} : { supportTop: round(supportTop) }),
   };
 });
 
@@ -164,7 +176,13 @@ export function validateModelReply(
 export async function callMeta(
   config: MetaConfig,
   workspace: Workspace,
-  input: { message: string; history?: History; image?: string; focusDeviceId?: string | null },
+  input: {
+    message: string;
+    history?: History;
+    image?: string;
+    focusDeviceId?: string | null;
+    signal?: AbortSignal;
+  },
 ): Promise<AssistantResponse> {
   const sharedWorkspace = modelWorkspace(workspace);
   if (
@@ -203,10 +221,16 @@ export async function callMeta(
   } else messages.push({ role: 'user', content: input.message });
   const parsed = await requestMeta(
     config,
-    { messages, name: 'desktwin_response', schema: responseSchema, maxTokens: 4096 },
+    {
+      messages,
+      name: 'desktwin_response',
+      schema: responseSchema,
+      maxTokens: 4096,
+      signal: input.signal,
+    },
     (raw) => validateModelReply(raw, sharedWorkspace, !!input.image),
   );
-  return { ...parsed, mode: 'meta' };
+  return { ...parsed.value, mode: 'meta' };
 }
 
 const sceneInstructions = `You are DeskTwin, an English-speaking visual workspace assistant. Return only the requested scene JSON, never code.
@@ -226,13 +250,13 @@ SCENE FORMAT:
 - Create a separate object for each useful, independently editable visible physical item. In particular, separate a keyboard from its wrist rest, a monitor from its riser, and a laptop from its stand. A visibly separate trackpad, tablet or monitor light bar gets its own object. Do not hide a separate accessory inside another object's note or boxes. Do not invent any of these objects merely because this list names them; include only visible evidence and describe uncertainty.
 - placement.x is left/right in [-4.3,4.3]; z is back/front in [-1.9,3.7]; y is absolute ground-to-base height in [0,5.5]. rotation is yaw in degrees [-180,180].
 - Preserve the photo's left-to-right order, front-to-back order, relative widths/depths, spacing, orientation and visible stacking. Image vertical position alone is not a base height: a rear object may project higher in the image while resting on the same desk. A wrist rest normally sits in front of its keyboard when that is visible. A laptop or monitor resting on a separate support must sit on that support's upper surface, not intersect it or float at a guessed universal tabletop height.
-- TEMPLATE DIMENSIONS below are exact procedural scene units at scale=1, not real-world measurements. minY/maxY are local bounds relative to placement.y; supportTop is the upper support level. Use scaled dimensions to preserve visible size ratios. The default desk base is y=0 and its actual top is given by supportTop. For a child resting on a support: child placement.y = support placement.y + supportTop * support scale.y - child minY * child scale.y, with at most 0.01 scene units clearance. Use the actual custom-box upper surface instead when parts replace the template. Chairs and floor props rest with their geometry bottom at y=0. Do not assume every template has the same height or y offset.
-- supportId is another proposal object's ID, a retained scene object's ID, or "floor" for an observed supporting surface. Set null if uncertain. Use the desk for tabletop items, the separate monitor-riser or laptop-stand for a supported monitor/laptop, and the monitor for a top-mounted light-bar. Do not infer hidden supports. This is a placement hypothesis, not a hardware connection or proof of physical attachment.
+- TEMPLATE DIMENSIONS below are exact procedural scene units at scale=1, not real-world measurements. minY/maxY are local bounds relative to placement.y; supportTop comes from the application's contact surfaces, including mats. Use scaled dimensions to preserve visible size ratios. Coordinates and scales are initial estimates; the application fits final contact height and checks geometry. Give an approximate y consistent with the direct support rather than solving hidden geometry or using a universal tabletop height. The default desk base is y=0. Chairs and floor props rest with their geometry bottom at y=0.
+- supportId identifies the DIRECT supporting surface immediately under this object: another proposal object's ID, a retained scene object's ID, or "floor". Set null if uncertain. For a keyboard resting on a mat, use keyboard -> mat -> desk -> floor, not keyboard -> desk. Use the desk only when it directly supports the item, the separate monitor-riser or laptop-stand for a supported monitor/laptop, and the monitor for a top-mounted light-bar. A centered light-bar mount can rest on a monitor even when the light-bar extends past its edges. Do not infer hidden supports. This is a placement hypothesis, not a hardware connection or proof of physical attachment.
 - imageRegion is an approximate normalized photo rectangle {x,y,width,height} for that individual object, with origin at the top-left, all values in [0,1], positive width/height and x+width<=1, y+height<=1. Set null if the region is uncertain. Separate accessories should have separate estimated regions even when they touch or partly overlap. A region is a visual estimate, not an object detection claim. Include both supportId and imageRegion, using null when uncertain.
 - scale x/y/z are dimensionless multipliers of the procedural template, each 0.1-3. Default is 1. color is a six-digit #rrggbb base tint; infer approximate dominant color only.
-- parts=[] uses the named procedural template. Any device or object may instead supply 1-32 bounded local boxes as its complete replacement shape when the template does not resemble the visible object. Use position x/y/z in [-6,6], size x/y/z in [0.005,10], a #rrggbb color, and rotation x/y/z in degrees [-180,180] (zero for axis-aligned boxes). Build a few major volumes with believable support contact; avoid small surface details. Keep the correct device kind even when changing its visual shape. Unsupported objects use kind=generic. The user can edit all parts after review.
+- Prefer parts=[] and the named procedural template for the first preview. Use only a few bounded local boxes for an unsupported silhouette that materially affects placement; avoid decorative details. Keep the correct device kind. Unsupported objects use kind=generic. Boxes use position x/y/z in [-6,6], size x/y/z in [0.005,10], a #rrggbb color, and rotation x/y/z in degrees [-180,180]. The existing schema permits up to 32 boxes for compatibility, not a target to fill.
 - Box coordinates are local to the object's base; empty generic templates are approximately 0.7 on each axis. Keep boxes above the local ground unless there is a clear reason for an offset. Approximate shape only; do not infer unseen components. No meshes, URLs, scripts, shaders, expressions or executable content.
-- Use note to state visible evidence and uncertainty about object identity, size, support and occluded boundaries. Do not claim that this proposal has been applied; the user will review and edit a separate 3D preview before confirming.
+- Keep the message to one brief sentence and each note to one short, useful uncertainty about identity, size, support or occlusion; use an empty note when there is nothing specific to add. Do not repeat geometry fields in prose. Include visible independent objects and their supports before adding shape detail. Do not claim that this proposal has been applied; the user reviews a separate preview before confirming.
 TEMPLATE DIMENSIONS (unscaled scene units):
 ${JSON.stringify(sceneTemplateDimensions)}`;
 
@@ -246,8 +270,10 @@ export function validateSceneReply(raw: unknown, workspace: Workspace): ScenePro
 export async function callMetaScene(
   config: MetaConfig,
   workspace: Workspace,
-  input: { image: string; context?: string },
-): Promise<SceneProposal & { mode: 'meta' }> {
+  input: { image: string; context?: string; signal?: AbortSignal },
+): Promise<
+  SceneProposal & { mode: 'meta'; timings: MetaRequestTimings & { objectCount: number } }
+> {
   const sharedWorkspace = modelWorkspace(workspace);
   const context = {
     devices: sharedWorkspace.devices.map(modelContextItem),
@@ -277,18 +303,68 @@ export async function callMetaScene(
   ];
   const parsed = await requestMeta(
     config,
-    { messages, name: 'desktwin_scene', schema: sceneResponseSchema, maxTokens: 12000 },
+    {
+      messages,
+      name: 'desktwin_scene',
+      schema: sceneResponseSchema,
+      maxTokens: 12000,
+      signal: input.signal,
+    },
     (raw) => validateSceneReply(raw, sharedWorkspace),
   );
-  return { ...parsed, mode: 'meta' };
+  return {
+    ...parsed.value,
+    mode: 'meta',
+    timings: { ...parsed.timings, objectCount: parsed.value.objects.length },
+  };
+}
+
+/** An uncooperative fetch/stream must not retain a local request slot after cancellation. */
+function abortable<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+  onLateValue?: (value: T) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let canceled = false;
+    const abort = () => {
+      canceled = true;
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason ?? new DOMException('Request canceled.', 'AbortError'));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        if (canceled) onLateValue?.(value);
+        else resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort);
+        if (!canceled) reject(error);
+      },
+    );
+  });
+}
+
+function cancelBody(response: Response) {
+  // Do not await an upstream cancellation handshake to release the local request slot.
+  void response.body?.cancel().catch(() => undefined);
 }
 
 /** Chat and photo requests use the same bounded, server-only provider transport. */
 async function requestMeta<T>(
   config: MetaConfig,
-  input: { messages: unknown[]; name: string; schema: unknown; maxTokens: number },
+  input: {
+    messages: unknown[];
+    name: string;
+    schema: unknown;
+    maxTokens: number;
+    signal?: AbortSignal;
+  },
   validate: (raw: unknown) => T,
-): Promise<T> {
+): Promise<{ value: T; timings: MetaRequestTimings }> {
   if (!config.apiKey) throw new ApiError(503, 'The Meta API key is not configured.');
   let base: URL;
   try {
@@ -306,64 +382,117 @@ async function requestMeta<T>(
   )
     throw new ApiError(503, 'The Meta API server configuration is invalid.');
   const fetcher = config.fetchImpl || fetch;
-  let response: Response;
+  const deadline = new AbortController();
+  const timeout = setTimeout(
+    () => deadline.abort(new DOMException('Provider deadline exceeded.', 'TimeoutError')),
+    config.timeoutMs ?? 35000,
+  );
+  timeout.unref();
+  const signal = input.signal ? AbortSignal.any([input.signal, deadline.signal]) : deadline.signal;
+  const started = performance.now();
+  let providerFinished: number | undefined;
+  let validationStarted: number | undefined;
+  let responseBytes = 0;
+  let response: Response | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let bodyComplete = false;
+  let outcome: MetaRequestMeasurement['outcome'] = 'provider-error';
+  const timings = (): MetaRequestTimings => {
+    const now = performance.now();
+    const elapsed = (duration: number) => Math.round(Math.max(0, duration));
+    return {
+      providerMs: elapsed((providerFinished ?? now) - started),
+      validationMs: validationStarted === undefined ? 0 : elapsed(now - validationStarted),
+      totalMs: elapsed(now - started),
+      responseBytes,
+    };
+  };
   try {
-    response = await fetcher(`${base.toString().replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(config.timeoutMs ?? 35000),
-      redirect: 'error',
-      body: JSON.stringify({
-        model: config.model,
-        messages: input.messages,
-        max_completion_tokens: input.maxTokens,
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: input.name, strict: true, schema: input.schema },
-        },
+    signal.throwIfAborted();
+    response = await abortable(
+      fetcher(`${base.toString().replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+        signal,
+        redirect: 'error',
+        body: JSON.stringify({
+          model: config.model,
+          messages: input.messages,
+          max_completion_tokens: input.maxTokens,
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: input.name, strict: true, schema: input.schema },
+          },
+        }),
       }),
-    });
-  } catch (error) {
-    if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
-      throw new ApiError(504, 'The Meta response timed out. Your workspace was not changed.');
-    throw new ApiError(502, 'Could not connect to Meta. Check the API key and network settings.');
-  }
-  if (!response.ok) {
-    await response.body?.cancel();
-    const message =
-      response.status === 401 || response.status === 403
-        ? 'Meta authentication failed. Check the server API key.'
-        : response.status === 429
-          ? 'A Meta usage or request limit was reached. Check billing and rate limits.'
-          : `The Meta request failed (HTTP ${response.status}). Check the model name and API settings.`;
-    throw new ApiError(response.status === 429 ? 429 : 502, message);
-  }
-  try {
+      signal,
+      cancelBody,
+    );
+    if (!response.ok) {
+      const message =
+        response.status === 401 || response.status === 403
+          ? 'Meta authentication failed. Check the server API key.'
+          : response.status === 429
+            ? 'A Meta usage or request limit was reached. Check billing and rate limits.'
+            : `The Meta request failed (HTTP ${response.status}). Check the model name and API settings.`;
+      throw new ApiError(response.status === 429 ? 429 : 502, message);
+    }
+    outcome = 'invalid-response';
     if (Number(response.headers.get('content-length') || 0) > 1_000_000)
       throw new Error('Too large');
-    const reader = response.body!.getReader();
+    reader = response.body!.getReader();
     const chunks: Uint8Array[] = [];
-    let size = 0;
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await abortable(reader.read(), signal);
       if (done) break;
-      size += value.length;
-      if (size > 1_000_000) {
-        await reader.cancel();
-        throw new Error('Too large');
-      }
+      responseBytes += value.length;
+      if (responseBytes > 1_000_000) throw new Error('Too large');
       chunks.push(value);
     }
+    bodyComplete = true;
+    providerFinished = performance.now();
+    validationStarted = providerFinished;
     const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || payload?.choices?.[0]?.finish_reason === 'length')
       throw new Error('Incomplete model output');
-    return validate(JSON.parse(content));
+    const value = validate(JSON.parse(content));
+    signal.throwIfAborted();
+    outcome = 'success';
+    return { value, timings: timings() };
   } catch (error) {
+    if (input.signal?.aborted) {
+      outcome = 'canceled';
+      throw new ApiError(499, 'The request was canceled. Your workspace was not changed.');
+    }
+    if (
+      deadline.signal.aborted ||
+      (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
+    ) {
+      outcome = 'timeout';
+      throw new ApiError(504, 'The Meta response timed out. Your workspace was not changed.');
+    }
     if (error instanceof ApiError) throw error;
+    if (outcome === 'provider-error')
+      throw new ApiError(502, 'Could not connect to Meta. Check the API key and network settings.');
     throw new ApiError(
       502,
       'The model response could not be safely interpreted. No changes were applied.',
     );
+  } finally {
+    clearTimeout(timeout);
+    if (reader) {
+      if (!bodyComplete) void reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    } else if (response && !bodyComplete) cancelBody(response);
+    try {
+      config.onRequestMeasurement?.({
+        request: input.name === 'desktwin_scene' ? 'photo' : 'chat',
+        outcome,
+        ...timings(),
+      });
+    } catch {
+      // Optional aggregate instrumentation cannot change a request's outcome.
+    }
   }
 }

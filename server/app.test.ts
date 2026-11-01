@@ -313,7 +313,18 @@ describe('local API and Meta boundary', () => {
     const before = structuredClone(input.workspace);
     const res = await post(url, '/api/photo', input);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ...expected, mode: 'meta' });
+    const { timings, ...proposal } = await res.json();
+    expect(proposal).toEqual({ ...expected, mode: 'meta' });
+    expect(timings).toEqual({
+      providerMs: expect.any(Number),
+      validationMs: expect.any(Number),
+      totalMs: expect.any(Number),
+      responseBytes: expect.any(Number),
+      objectCount: expected.objects.length,
+    });
+    expect(
+      Object.values(timings).every((value) => Number.isFinite(value) && Number(value) >= 0),
+    ).toBe(true);
     expect(input.workspace).toEqual(before);
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
     expect(body.response_format.json_schema.name).toBe('desktwin_scene');
@@ -340,6 +351,9 @@ describe('local API and Meta boundary', () => {
     expect(prompt).toContain('not real-world measurements');
     expect(prompt).toContain('supportId');
     expect(prompt).toContain('imageRegion');
+    expect(prompt).toContain('DIRECT supporting surface');
+    expect(prompt).toContain('keyboard -> mat -> desk -> floor');
+    expect(prompt).toContain('Prefer parts=[]');
     const dimensions = JSON.parse(prompt.split('TEMPLATE DIMENSIONS (unscaled scene units):\n')[1]);
     expect(dimensions).toEqual(
       expect.arrayContaining([
@@ -355,6 +369,7 @@ describe('local API and Meta boundary', () => {
         expect.objectContaining({ kind: 'trackpad', width: 0.5 }),
         expect.objectContaining({ kind: 'tablet', width: 0.82 }),
         expect.objectContaining({ kind: 'light-bar', width: 1.4 }),
+        expect.objectContaining({ kind: 'mat', supportTop: 0.0275 }),
       ]),
     );
     const itemSchema = body.response_format.json_schema.schema.properties.objects.items;
