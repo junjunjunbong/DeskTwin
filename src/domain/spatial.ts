@@ -181,6 +181,9 @@ type Surface = {
   height: number;
   box: Box | null;
   covering?: boolean;
+  /** Actual solid faces beneath a thin covering. Partial contact with the
+   * covering must not create support beyond these underlying faces. */
+  coveringSupports?: Surface[];
   maxOverhangFraction?: number;
   overhangKinds?: Item['kind'][];
 };
@@ -262,8 +265,15 @@ function placementSurfaces(w: Workspace, item: Item): Surface[] {
 /** Only thin, horizontal mats are walk-over support layers. Thick or tilted custom
  * mats remain ordinary solid obstacles, as do every other object and device. */
 function coveringSurfaces(w: Workspace, excluded: Set<string> = new Set()): Surface[] {
-  return w.objects.flatMap((item) => {
-    if (item.kind !== 'mat' || excluded.has(item.id)) return [];
+  const mats = w.objects.filter((item) => item.kind === 'mat' && !excluded.has(item.id));
+  if (!mats.length) return [];
+  const solids = surfaces(w);
+  const solidBodies = new Map(
+    items(w)
+      .filter((item) => solidSupportKinds.has(item.kind))
+      .map((item) => [item.id, body(item)]),
+  );
+  return mats.flatMap((item) => {
     const b = body(item);
     if (b.bounds.max.y - b.bounds.min.y > 0.06) return [];
     const horizontal = b.boxes.every((box) =>
@@ -272,9 +282,19 @@ function coveringSurfaces(w: Workspace, excluded: Set<string> = new Set()): Surf
       ),
     );
     if (!horizontal) return [];
+    const coveringSupports = solids.filter(
+      (target) =>
+        fitsBody(b, target) &&
+        restingOn(b, target) &&
+        (target.id === 'floor' || pairCollisions(b, solidBodies.get(target.id)!).length === 0),
+    );
     // Each box retains its real height/footprint: a thin border or disconnected
     // custom part cannot lend the rest of the mat an invented support surface.
-    return supportSurfaces(item).map((target) => ({ ...target, covering: true }));
+    return supportSurfaces(item).map((target) => ({
+      ...target,
+      covering: true,
+      coveringSupports,
+    }));
   });
 }
 
@@ -360,7 +380,7 @@ function resolveCoveringMove(
   const resting = coverings
     .filter(
       (target) =>
-        footprintContact(endBody, target) &&
+        supportedFootprint(endBody, target) &&
         (!attached ||
           (target.height >= attached.height - EPS && target.height <= attached.height + 0.08)),
     )
@@ -540,9 +560,17 @@ function fitsBody(b: Body, target: Surface): boolean {
   return true;
 }
 function supportedFootprint(b: Body, target: Surface): boolean {
-  // Thin coverings permit partial contact. Solid surfaces use their explicit,
-  // kind-specific contact policy, including only a bounded laptop/stand overhang.
-  return target.covering ? footprintContact(b, target) : fitsBody(b, target);
+  // A thin mat may cover only part of a contact base when a verified solid face
+  // beneath it still supports the complete base. A sliver of mat at a desk edge
+  // cannot authorize an arbitrarily large extension beyond the desk itself.
+  if (target.covering && !fitsBody(b, target))
+    return (
+      footprintContact(b, target) &&
+      !!target.coveringSupports?.some((underlying) => fitsBody(b, underlying))
+    );
+  // Solid surfaces use the explicit kind-specific contact policy, including
+  // only the bounded laptop/stand overhang.
+  return fitsBody(b, target);
 }
 function restingOn(b: Body, target: Surface): boolean {
   const gap = b.bounds.min.y - target.height - GAP;
@@ -553,14 +581,18 @@ function restingOn(b: Body, target: Surface): boolean {
     (target.id === 'floor' && b.item.placement.y === 0 && gap > 0 && gap < 0.051)
   );
 }
-function setHeight(item: Item, target: Surface): void {
+function restingRootHeight(item: Item, target: Surface): number {
   const delta = target.height + GAP - getItemBounds(item).min.y;
-  if (Math.abs(delta) < 1e-10) return;
+  if (Math.abs(delta) < 1e-10) return item.placement.y;
   let height = item.placement.y + delta;
   if (target.id === 'floor' && height > -0.051 && height < 0) height = 0;
+  return height >= -EPS ? Math.max(0, height) : height;
+}
+function setHeight(item: Item, target: Surface): void {
+  const height = restingRootHeight(item, target);
   if (height < -EPS || height > 5.5)
     throw new Error('This shape cannot rest on that surface within the scene height limit.');
-  item.placement.y = Math.max(0, height);
+  item.placement.y = height;
 }
 
 function descendants(w: Workspace, id: string): Set<string> {
@@ -725,9 +757,7 @@ export function resolveSpatialEdit(
             coveringIds.has(target.id)) &&
           gap >= -EPS &&
           gap <= REST_TOLERANCE &&
-          (coveringIds.has(target.id)
-            ? footprintContact(oldBody, target)
-            : fitsBody(oldBody, target))
+          supportedFootprint(oldBody, target)
         );
       })
       .sort((a, b) => b.height - a.height)[0];
@@ -934,8 +964,14 @@ export function resolveSpatialEdit(
   return { workspace: previous, blocked: false, reason: '' };
 }
 
-/** Place deliberately on a support. This is an explicit relocation, not a physical animation. */
-export function snapToSurface(workspace: Workspace, id: string, surfaceId: string): Workspace {
+/** Prepare an editable preview relocation before its support descendants refit.
+ * This pure helper does not authorize application: review must revalidate the
+ * complete draft, and ordinary editing must use snapToSurface below. */
+export function prepareSurfacePlacement(
+  workspace: Workspace,
+  id: string,
+  surfaceId: string,
+): { draft: Workspace; surfaceId: string } {
   const candidate = structuredClone(workspace);
   const item = find(candidate, id);
   const targets = placementSurfaces(candidate, item)
@@ -956,10 +992,11 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
       (layer) =>
         layer.height >= target.height - EPS &&
         layer.height <= target.height + 0.08 &&
-        footprintContact(body(item), layer),
+        supportedFootprint(body(item), layer),
     )
     .sort((a, b) => b.height - a.height)[0];
-  if (covering && item.kind !== 'mat' && item.kind !== 'desk') setHeight(item, covering);
+  const covered = covering && item.kind !== 'mat' && item.kind !== 'desk';
+  if (covered) setHeight(item, covering);
   const attachedDesk = candidate.objects.find(
     (object) => object.id === item.attachment?.parentId && object.kind === 'desk',
   );
@@ -976,7 +1013,13 @@ export function snapToSurface(workspace: Workspace, id: string, surfaceId: strin
     target.height >= attachedSurface.height - EPS &&
     fits(item, attachedSurface);
   if (item.attachment?.parentId !== surfaceId && !keepsDeskAttachment) item.attachment = null;
-  const result = resolveSpatialEdit(workspace, candidate, id, { sweep: false });
+  return { draft: candidate, surfaceId: covered ? covering.id : target.id };
+}
+
+/** Place deliberately on a support. This is an explicit relocation, not a physical animation. */
+export function snapToSurface(workspace: Workspace, id: string, surfaceId: string): Workspace {
+  const candidate = prepareSurfacePlacement(workspace, id, surfaceId);
+  const result = resolveSpatialEdit(workspace, candidate.draft, id, { sweep: false });
   if (result.blocked) throw new Error(result.reason);
   return result.workspace;
 }
@@ -1338,7 +1381,13 @@ export function fitSceneProposalForReview(
   draft: Workspace,
   changedIds: Iterable<string>,
   relations: Iterable<SceneSupportRelation> = [],
-  options: { carryFrom?: Workspace; lockedIds?: Iterable<string> } = {},
+  options: {
+    carryFrom?: Workspace;
+    lockedIds?: Iterable<string>;
+    /** Bounds the complete correction across fitting stages against a fixed
+     * photo seed or a newly confirmed user-action reference. */
+    heightReferences?: Iterable<{ itemId: string; y: number; maxDisplacement: number }>;
+  } = {},
 ): { draft: Workspace; issues: ScenePlacementIssue[] } {
   const result = structuredClone(draft);
   const changed = new Set(changedIds);
@@ -1346,6 +1395,9 @@ export function fitSceneProposalForReview(
   const supports = new Map(explicitSupports.map(({ itemId, surfaceId }) => [itemId, surfaceId]));
   const supportMetadata = new Map(explicitSupports.map((relation) => [relation.itemId, relation]));
   const locked = new Set(options.lockedIds ?? []);
+  const heightReferences = new Map(
+    [...(options.heightReferences ?? [])].map((reference) => [reference.itemId, reference]),
+  );
   const budgetIssues: ScenePlacementIssue[] = [];
   const planned = new Map<string, string>();
   for (const item of items(draft).filter((candidate) => changed.has(candidate.id))) {
@@ -1377,11 +1429,17 @@ export function fitSceneProposalForReview(
       const limit =
         relation?.maxHeightAdjustment ??
         (deliberateSupport ? Infinity : DEFAULT_SCENE_HEIGHT_ADJUSTMENT);
+      const reference = heightReferences.get(id);
+      const outsideReference =
+        !!reference &&
+        !!target &&
+        Math.abs(restingRootHeight(item, target) - reference.y) > reference.maxDisplacement + EPS;
       if (
         target &&
         supportedFootprint(body(item), target) &&
         !locked.has(id) &&
-        heightAdjustment <= limit + EPS
+        heightAdjustment <= limit + EPS &&
+        !outsideReference
       ) {
         try {
           setHeight(item, target);
@@ -1392,8 +1450,7 @@ export function fitSceneProposalForReview(
         target &&
         supportedFootprint(body(item), target) &&
         !locked.has(id) &&
-        heightAdjustment > limit + EPS &&
-        !restingOn(body(item), target)
+        (outsideReference || (heightAdjustment > limit + EPS && !restingOn(body(item), target)))
       ) {
         budgetIssues.push({
           itemId: id,

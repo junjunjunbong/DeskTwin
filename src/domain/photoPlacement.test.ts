@@ -9,6 +9,7 @@ import {
 import { defaultPhotoRepairPolicy } from './photoPlacement';
 import {
   repairSceneReview,
+  applySceneReviewSupportEdit,
   rebindSceneReviewDevice,
   sceneReviewSupports,
   refreshSceneReview,
@@ -18,7 +19,7 @@ import {
   setSceneCandidateSupport,
 } from './sceneReview';
 import { getItemBounds } from './spatial';
-import { createDemoWorkspace, createSceneObject, type Workspace } from './workspace';
+import { applyCommand, createDemoWorkspace, createSceneObject, type Workspace } from './workspace';
 
 function empty(): Workspace {
   return {
@@ -313,6 +314,116 @@ describe('bounded repair invariants and review state', () => {
     expect(confirmed.issues).toEqual([]);
   });
 
+  it('does not reset an unlocked user-edited major support or referenced anchor to its photo X/Z', () => {
+    const base = empty();
+    let deskReview = buildScenePreview(base, proposal(['desk', 'keyboard']));
+    deskReview = applySceneReviewSupportEdit(deskReview, base, {
+      type: 'update-object',
+      id: 'photo-desk',
+      patch: { placement: { x: 0.1 } },
+    })!;
+    deskReview = setSceneCandidateLocks(deskReview, base, 'desk', { position: false });
+    const repairedDesk = repairSceneReview(deskReview, base);
+    expect(find(repairedDesk.draft, 'desk').placement.x).toBe(0.1);
+    expect(
+      repairedDesk.candidates.find((candidate) => candidate.kind === 'desk')?.seed?.placement.x,
+    ).toBe(0);
+    const input = proposal(['desk']);
+    input.objects.push(item('monitor', 'monitor', { x: 0, y: 2.51, z: -0.6, rotation: 0 }));
+    input.objects.push(
+      item('light', 'light-bar', { x: 0, y: 4, z: -0.6, rotation: 0 }, undefined, 'monitor'),
+    );
+    let anchorReview = buildScenePreview(base, input);
+    anchorReview = applySceneReviewSupportEdit(anchorReview, base, {
+      type: 'update-device',
+      id: 'photo-monitor',
+      patch: { placement: { x: 0.1 } },
+    })!;
+    anchorReview = setSceneCandidateLocks(anchorReview, base, 'monitor', { position: false });
+    expect(find(repairSceneReview(anchorReview, base).draft, 'monitor').placement.x).toBe(0.1);
+  });
+
+  it('limits cumulative model height changes across desk fitting and mat promotion to the original reference', () => {
+    const base = empty();
+    const input = proposal(['desk', 'mat', 'keyboard']);
+    input.objects.find((entry) => entry.kind === 'keyboard')!.placement.y = 2.36;
+    const review = buildScenePreview(base, input);
+    const keyboard = review.candidates.find((candidate) => candidate.kind === 'keyboard')!;
+    expect(keyboard.seed?.placement.y).toBe(2.36);
+    expect(keyboard.heightReference).toEqual({ y: 2.36, source: 'model' });
+    expect(find(review.draft, 'keyboard').placement.y - 2.36).toBeLessThanOrEqual(0.12 + 1e-8);
+    expect(review.issues).toContainEqual(
+      expect.objectContaining({ itemId: keyboard.sceneId, rootCause: 'height-budget' }),
+    );
+    const repeated = repairSceneReview(repairSceneReview(review, base), base);
+    expect(geometry(repeated.draft)).toEqual(geometry(review.draft));
+    expect(repeated.issues).toContainEqual(
+      expect.objectContaining({ itemId: keyboard.sceneId, rootCause: 'height-budget' }),
+    );
+    expect(() => validateSceneReviewForApply(repeated, base)).toThrow(/height|resting/);
+    const confirmed = setSceneCandidateSupport(repeated, base, 'keyboard', 'photo-mat');
+    expect(confirmed.issues).toEqual([]);
+    expect(
+      confirmed.candidates.find((candidate) => candidate.kind === 'keyboard')?.heightReference,
+    ).toEqual({ y: find(confirmed.draft, 'keyboard').placement.y, source: 'user' });
+    expect(
+      confirmed.candidates.find((candidate) => candidate.kind === 'keyboard')?.seed?.placement.y,
+    ).toBe(2.36);
+    expect(geometry(repairSceneReview(confirmed, base).draft)).toEqual(geometry(confirmed.draft));
+  });
+
+  it.each([0.12, 0.1202])(
+    'checks the cumulative two-stage height boundary at %s scene units',
+    (heightChange) => {
+      const base = empty();
+      const input = proposal(['desk', 'mat', 'keyboard']);
+      const target = find(buildScenePreview(base, input).draft, 'keyboard').placement.y;
+      input.objects.find((entry) => entry.kind === 'keyboard')!.placement.y = target - heightChange;
+      const review = buildScenePreview(base, input);
+      if (heightChange <= 0.12) {
+        expect(review.issues).toEqual([]);
+        expect(find(review.draft, 'keyboard').placement.y).toBeCloseTo(target, 8);
+      } else {
+        expect(review.issues).toContainEqual(
+          expect.objectContaining({ itemId: 'photo-keyboard', rootCause: 'height-budget' }),
+        );
+        expect(find(review.draft, 'keyboard').placement.y).toBeLessThan(target);
+      }
+    },
+  );
+
+  it('allows user support and parent edits beyond the model height budget, then uses the new reference on repeat', () => {
+    const base = empty();
+    const initial = buildScenePreview(base, proposal(['desk', 'stand', 'laptop']));
+    const floor = setSceneCandidateSupport(initial, base, 'laptop', 'floor');
+    expect(
+      Math.abs(find(floor.draft, 'laptop').placement.y - find(initial.draft, 'laptop').placement.y),
+    ).toBeGreaterThan(0.12);
+    expect(floor.issues).toEqual([]);
+    expect(geometry(repairSceneReview(floor, base).draft)).toEqual(geometry(floor.draft));
+    const grown = applySceneReviewSupportEdit(initial, base, {
+      type: 'update-object',
+      id: 'photo-stand',
+      patch: { visual: { scale: { y: 1.4 } } },
+    })!;
+    expect(
+      find(grown.draft, 'laptop').placement.y - find(initial.draft, 'laptop').placement.y,
+    ).toBeGreaterThan(0.12);
+    expect(grown.issues).toEqual([]);
+    expect(
+      grown.candidates.find((candidate) => candidate.kind === 'laptop')?.heightReference?.source,
+    ).toBe('user');
+    expect(
+      grown.candidates.find((candidate) => candidate.kind === 'laptop')?.seed?.placement.y,
+    ).toBe(initial.candidates.find((candidate) => candidate.kind === 'laptop')?.seed?.placement.y);
+    const repeated = repairSceneReview(repairSceneReview(grown, base), base);
+    expect(repeated.issues).toEqual([]);
+    expect(geometry(repeated.draft)).toEqual(geometry(grown.draft));
+    expect(
+      getItemBounds(find(revertSceneRepair(repeated, base).draft, 'laptop')).min.y,
+    ).toBeCloseTo(getItemBounds(find(grown.draft, 'laptop-stand')).max.y + 0.001, 6);
+  });
+
   it('does not move locked children when their support changes, and reports the remaining conflict', () => {
     const base = empty();
     let review = buildScenePreview(base, proposal(['desk', 'mat', 'keyboard']));
@@ -362,6 +473,251 @@ describe('bounded repair invariants and review state', () => {
       supportSource: 'user',
       locks: { support: true },
     });
+  });
+
+  it('accepts a support height edit, refits only unlocked descendants, and preserves the user edit on undo', () => {
+    const base = empty();
+    const initial = buildScenePreview(base, proposal(['desk', 'stand', 'laptop', 'keyboard']));
+    const keyboard = structuredClone(find(initial.draft, 'keyboard'));
+    const command = {
+      type: 'update-object' as const,
+      id: 'photo-stand',
+      patch: { visual: { scale: { y: 1.2 } } },
+    };
+    // The regular editor rejects before the dependent laptop can be fitted.
+    expect(() => applyCommand(initial.draft, command)).toThrow(/intersect|overlap/i);
+    const changed = applySceneReviewSupportEdit(initial, base, command)!;
+    expect(changed).not.toBeNull();
+    expect(find(changed.draft, 'laptop-stand').visual.scale.y).toBe(1.2);
+    expect(find(changed.draft, 'laptop-stand').placement).toEqual(
+      find(initial.draft, 'laptop-stand').placement,
+    );
+    expect(getItemBounds(find(changed.draft, 'laptop')).min.y).toBeCloseTo(
+      getItemBounds(find(changed.draft, 'laptop-stand')).max.y + 0.001,
+      6,
+    );
+    expect(find(changed.draft, 'keyboard')).toEqual(keyboard);
+    expect(
+      changed.candidates.find((candidate) => candidate.kind === 'laptop')?.locks?.position,
+    ).not.toBe(true);
+    expect(changed.adjustments).toContainEqual(
+      expect.objectContaining({
+        itemId: 'photo-laptop',
+        reason: 'Updated height after its support was edited.',
+      }),
+    );
+    expect(() => validateSceneReviewForApply(changed, base)).not.toThrow();
+    const reset = revertSceneRepair(changed, base);
+    expect(find(reset.draft, 'laptop-stand')).toEqual(find(changed.draft, 'laptop-stand'));
+    expect(getItemBounds(find(reset.draft, 'laptop')).min.y).toBeCloseTo(
+      getItemBounds(find(reset.draft, 'laptop-stand')).max.y + 0.001,
+      6,
+    );
+    expect(() => validateSceneReviewForApply(reset, base)).not.toThrow();
+    const locked = setSceneCandidateLocks(changed, base, 'laptop', { position: true });
+    const conflict = applySceneReviewSupportEdit(locked, base, {
+      ...command,
+      patch: { visual: { scale: { y: 1.4 } } },
+    })!;
+    expect(find(conflict.draft, 'laptop-stand').visual.scale.y).toBe(1.4);
+    expect(find(conflict.draft, 'laptop').placement).toEqual(
+      find(locked.draft, 'laptop').placement,
+    );
+    expect(
+      conflict.issues.some(
+        (issue) => issue.itemId === 'photo-laptop' && /locked/.test(issue.message),
+      ),
+    ).toBe(true);
+    expect(() => validateSceneReviewForApply(conflict, base)).toThrow(/placement/);
+  });
+
+  it('propagates a user support height edit through multiple levels in dependency order', () => {
+    const base = empty();
+    const input = proposal(['desk', 'stand', 'laptop']);
+    const lower = input.objects.find((candidate) => candidate.id === 'stand')!;
+    lower.kind = 'monitor-riser';
+    lower.scale = { x: 1.2, y: 1, z: 1.5 };
+    const upper = item(
+      'upper-stand',
+      'laptop-stand',
+      { x: 2, y: 3.02, z: -0.1, rotation: -15 },
+      { x: 0.8, y: 0.8, z: 0.8 },
+      'stand',
+    );
+    const laptop = input.objects.find((candidate) => candidate.kind === 'laptop')!;
+    laptop.supportId = upper.id;
+    laptop.placement.y = 3.35;
+    input.objects = [
+      laptop,
+      upper,
+      lower,
+      input.objects.find((candidate) => candidate.kind === 'desk')!,
+    ];
+    let initial = buildScenePreview(base, input);
+    initial = setSceneCandidateSupport(initial, base, 'stand', 'photo-desk');
+    expect(initial.issues).toEqual([]);
+    const changed = applySceneReviewSupportEdit(initial, base, {
+      type: 'update-object',
+      id: 'photo-stand',
+      patch: { visual: { scale: { y: 1.4 } } },
+    })!;
+    const upperItem = changed.draft.objects.find((entry) => entry.id === 'photo-upper-stand')!;
+    const lowerItem = changed.draft.objects.find((entry) => entry.id === 'photo-stand')!;
+    expect(getItemBounds(upperItem).min.y).toBeCloseTo(getItemBounds(lowerItem).max.y + 0.001, 6);
+    expect(getItemBounds(find(changed.draft, 'laptop')).min.y).toBeCloseTo(
+      getItemBounds(upperItem).max.y + 0.001,
+      6,
+    );
+    expect(changed.issues).toEqual([]);
+    expect(
+      changed.candidates
+        .filter((candidate) => ['upper-stand', 'laptop'].includes(candidate.proposalId))
+        .every((candidate) => !candidate.locks?.position),
+    ).toBe(true);
+  });
+
+  it('handles bounded custom support parts while rejecting stale and invalid shape edits', () => {
+    const base = empty();
+    const initial = buildScenePreview(base, proposal(['desk', 'stand', 'laptop']));
+    const custom = applySceneReviewSupportEdit(initial, base, {
+      type: 'update-object',
+      id: 'photo-stand',
+      patch: {
+        parts: [
+          { position: { x: 0, y: 0.4, z: 0 }, size: { x: 2, y: 0.8, z: 1.5 }, color: '#808080' },
+        ],
+        shapeMode: 'custom',
+      },
+    })!;
+    expect(custom.issues).toEqual([]);
+    const grown = applySceneReviewSupportEdit(custom, base, {
+      type: 'update-part',
+      id: 'photo-stand',
+      index: 0,
+      expectedLength: 1,
+      patch: { position: { y: 0.5 }, size: { y: 1 } },
+    })!;
+    expect(grown.issues).toEqual([]);
+    expect(getItemBounds(find(grown.draft, 'laptop')).min.y).toBeCloseTo(
+      getItemBounds(find(grown.draft, 'laptop-stand')).max.y + 0.001,
+      6,
+    );
+    const reset = revertSceneRepair(grown, base);
+    expect(find(reset.draft, 'laptop-stand').parts).toEqual(
+      find(grown.draft, 'laptop-stand').parts,
+    );
+    expect(getItemBounds(find(reset.draft, 'laptop')).min.y).toBeCloseTo(
+      getItemBounds(find(reset.draft, 'laptop-stand')).max.y + 0.001,
+      6,
+    );
+    const before = structuredClone(grown);
+    expect(() =>
+      applySceneReviewSupportEdit(grown, base, {
+        type: 'update-part',
+        id: 'photo-stand',
+        index: 0,
+        expectedLength: 2,
+        patch: { size: { y: 1.1 } },
+      }),
+    ).toThrow(/shape changed/);
+    expect(() =>
+      applySceneReviewSupportEdit(grown, base, {
+        type: 'update-object',
+        id: 'photo-stand',
+        patch: { visual: { scale: { y: Infinity } } },
+      }),
+    ).toThrow();
+    expect(grown).toEqual(before);
+  });
+
+  it('does not invent horizontal carrying for photo support relations', () => {
+    const base = empty();
+    const initial = buildScenePreview(base, proposal(['desk', 'stand', 'laptop']));
+    const changed = applySceneReviewSupportEdit(initial, base, {
+      type: 'update-object',
+      id: 'photo-stand',
+      patch: { placement: { x: -2 } },
+    })!;
+    expect(find(changed.draft, 'laptop-stand').placement.x).toBe(-2);
+    expect(find(changed.draft, 'laptop').placement).toEqual(
+      find(initial.draft, 'laptop').placement,
+    );
+    expect(changed.issues).toContainEqual(
+      expect.objectContaining({
+        itemId: 'photo-laptop',
+        rootCause: 'overhang',
+        relatedItemId: 'photo-stand',
+      }),
+    );
+    expect(() => validateSceneReviewForApply(changed, base)).toThrow(/placement/);
+    expect(
+      applySceneReviewSupportEdit(initial, base, { type: 'move-object', id: 'photo-stand', x: -2 }),
+    ).toBeNull();
+    expect(
+      applySceneReviewSupportEdit(initial, base, {
+        type: 'update-device',
+        id: 'photo-laptop',
+        patch: { placement: { x: -2 } },
+      }),
+    ).toBeNull();
+  });
+
+  it('preserves locked desk-attached children and does not mark carried changes as user edits', () => {
+    const base = empty();
+    const input = proposal(['desk']);
+    input.objects.push(item('monitor', 'monitor', { x: 0.5, y: 2.51, z: 0, rotation: 0 }));
+    const initial = buildScenePreview(base, input);
+    const attached = refreshSceneReview(
+      initial,
+      base,
+      applyCommand(initial.draft, {
+        type: 'attach-object',
+        id: 'photo-monitor',
+        parentId: 'photo-desk',
+      }),
+    );
+    const unlocked = setSceneCandidateLocks(attached, base, 'monitor', {
+      position: false,
+      rotation: false,
+    });
+    const carried = applySceneReviewSupportEdit(unlocked, base, {
+      type: 'update-object',
+      id: 'photo-desk',
+      patch: { placement: { x: 0.1 } },
+    })!;
+    expect(find(carried.draft, 'monitor').placement.x).toBeCloseTo(
+      find(unlocked.draft, 'monitor').placement.x + 0.1,
+      6,
+    );
+    expect(
+      carried.candidates.find((candidate) => candidate.kind === 'monitor')?.locks?.position,
+    ).not.toBe(true);
+    const locked = setSceneCandidateLocks(unlocked, base, 'monitor', { position: true });
+    const raised = applySceneReviewSupportEdit(locked, base, {
+      type: 'update-object',
+      id: 'photo-desk',
+      patch: { visual: { scale: { y: 1.1 } } },
+    })!;
+    expect(find(raised.draft, 'monitor').placement).toEqual(
+      find(locked.draft, 'monitor').placement,
+    );
+    expect(
+      raised.issues.some(
+        (issue) => issue.itemId === 'photo-monitor' && /locked/.test(issue.message),
+      ),
+    ).toBe(true);
+    const rotationLocked = setSceneCandidateLocks(unlocked, base, 'monitor', { rotation: true });
+    const rotated = applySceneReviewSupportEdit(rotationLocked, base, {
+      type: 'update-object',
+      id: 'photo-desk',
+      patch: { placement: { rotation: 10 } },
+    })!;
+    expect(find(rotated.draft, 'monitor').placement.rotation).toBe(
+      find(unlocked.draft, 'monitor').placement.rotation,
+    );
+    expect(
+      rotated.candidates.find((candidate) => candidate.kind === 'monitor')?.locks?.position,
+    ).not.toBe(true);
   });
 
   it('keeps saved user geometry fixed when the bounded search cannot clear it', () => {

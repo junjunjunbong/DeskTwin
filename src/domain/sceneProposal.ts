@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { diagnosisDeviceIds } from './diagnosis';
 import {
   photoPlacementSeed,
+  photoPlacementHeightReferences,
   photoPlacementSupports,
   repairPhotoLayout,
   type PhotoPlacementAdjustment,
@@ -9,6 +10,7 @@ import {
   type PhotoPlacementSeed,
   type PhotoRepairSummary,
   type PhotoSupportSource,
+  type PhotoHeightReference,
 } from './photoPlacement';
 import {
   fitSceneProposalForReview,
@@ -116,6 +118,7 @@ export type SceneReviewCandidate = {
   locks?: Partial<PhotoPlacementLocks>;
   /** Never replaced by automatic fitting or a later user edit. Review-only metadata. */
   seed?: PhotoPlacementSeed;
+  heightReference?: PhotoHeightReference;
   /** Unsaved edited geometry retained while this candidate is excluded. */
   excludedItem?: Device | SceneObject;
   excludedIndex?: number;
@@ -141,6 +144,8 @@ export type ScenePreview = {
   originalDraft?: Workspace;
   adjustments?: PhotoPlacementAdjustment[];
   repairSummary?: PhotoRepairSummary;
+  /** User-edited support geometry remains an anchor when automatic changes are undone. */
+  editedSupportIds?: string[];
 };
 export type SceneReviewMetadata = Pick<ScenePreview, 'candidates' | 'observations'>;
 
@@ -225,14 +230,17 @@ export function sceneReviewPlacementIssues(
           ...issue,
           message: `${issue.message} Position is locked; unlock it or adjust the other object.`,
         };
-      if (
-        candidate &&
-        candidate.supportSource !== 'user' &&
-        issue.rootCause === 'height' &&
-        issue.relatedItemId
-      ) {
+      if (candidate && issue.rootCause === 'height' && issue.relatedItemId) {
         const contact = evaluateSceneSupport(draft, issue.itemId, issue.relatedItemId);
-        if (Math.abs(contact.heightDelta) > DEFAULT_SCENE_HEIGHT_ADJUSTMENT)
+        const item = [...draft.objects, ...draft.devices].find(
+          (entry) => entry.id === issue.itemId,
+        )!;
+        const referenceY =
+          candidate.heightReference?.y ?? candidate.seed?.placement.y ?? item.placement.y;
+        if (
+          Math.abs(item.placement.y + contact.heightDelta - referenceY) >
+          DEFAULT_SCENE_HEIGHT_ADJUSTMENT
+        )
           return {
             ...issue,
             rootCause: 'height-budget' as const,
@@ -475,12 +483,15 @@ export function buildScenePreview(
         [...next.objects, ...next.devices].find((item) => item.id === sceneId)!,
         object.supportId ?? null,
       ),
+      heightReference: { y: object.placement.y, source: 'model' },
       imageRegion: object.imageRegion ?? null,
     });
   }
   const bounded = WorkspaceSchema.parse(next);
   const supports = sceneReviewSupports(candidates);
-  const fitted = fitSceneProposalForReview(source, bounded, changedIds, supports);
+  const fitted = fitSceneProposalForReview(source, bounded, changedIds, supports, {
+    heightReferences: photoPlacementHeightReferences(candidates),
+  });
   if (options.repair !== false) {
     const resolvedCandidates = inferSceneCoveringSupports(fitted.draft, candidates);
     const repaired = repairPhotoLayout(source, fitted.draft, resolvedCandidates);

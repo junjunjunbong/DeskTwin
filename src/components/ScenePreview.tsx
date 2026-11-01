@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Check, Cube, X } from '@phosphor-icons/react';
 import {
   applyCommand,
@@ -18,8 +18,13 @@ import {
 } from '../domain/sceneProposal';
 import {
   addSceneReviewCandidate,
+  applySceneReviewSupportEdit,
   rebindSceneReviewDevice,
   refreshSceneReview,
+  repairSceneReview,
+  revertSceneRepair,
+  originalSceneReviewDraft,
+  setSceneCandidateLocks,
   setSceneCandidateIncluded,
   setSceneCandidateSupport,
   validateSceneReviewForApply,
@@ -27,6 +32,7 @@ import {
 } from '../domain/sceneReview';
 import { getSurfaceTargets } from '../domain/spatial';
 import { photoReviewPresets } from '../domain/photoPresets';
+import { groupSceneReviewIssues } from '../domain/sceneReviewIssues';
 import { Modal } from './ui';
 import { CommitTextInput } from './CommitInput';
 import { TransformEditor, type VisualPatch } from './TransformEditor';
@@ -51,6 +57,9 @@ export function ScenePreview({
   initialObservations = [],
   initialCandidates,
   initialIssues,
+  initialOriginalDraft,
+  initialAdjustments,
+  initialRepairSummary,
 }: {
   base: Workspace;
   initialDraft: Workspace;
@@ -63,12 +72,18 @@ export function ScenePreview({
   initialObservations?: SceneDeviceObservation[];
   initialCandidates: SceneReviewState['candidates'];
   initialIssues: SceneReviewState['issues'];
+  initialOriginalDraft?: SceneReviewState['originalDraft'];
+  initialAdjustments?: SceneReviewState['adjustments'];
+  initialRepairSummary?: SceneReviewState['repairSummary'];
 }) {
   const [review, setReview] = useState<SceneReviewState>({
     draft: initialDraft,
     observations: initialObservations,
     candidates: initialCandidates,
     issues: initialIssues,
+    originalDraft: initialOriginalDraft ?? structuredClone(initialDraft),
+    adjustments: initialAdjustments,
+    repairSummary: initialRepairSummary,
   });
   const [selection, setSelection] = useState<Selection>(
     initialCandidates[0]
@@ -83,7 +98,12 @@ export function ScenePreview({
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<DeviceKind | ObjectKind>('generic');
   const [newPreset, setNewPreset] = useState('');
+  const [showingOriginal, setShowingOriginal] = useState(false);
   const { draft, observations, candidates, issues } = review;
+  const originalDraft = useMemo(() => originalSceneReviewDraft(review), [review.originalDraft]);
+  const shownDraft = showingOriginal ? originalDraft : draft;
+  const issueGroups = groupSceneReviewIssues(issues);
+  const adjustedIds = new Set(review.adjustments?.map((adjustment) => adjustment.itemId) ?? []);
   const candidate = candidates.find((entry) => entry.proposalId === selection?.proposalId);
   const selected = candidate
     ? candidate.included
@@ -94,7 +114,9 @@ export function ScenePreview({
   const item = items.find((entry) => entry.id === selected);
   const observation = observations.find((entry) => entry.sceneId === selected);
   const unresolved = observations.filter((entry) => entry.needsRecordChoice);
-  const itemIssues = issues.filter((issue) => issue.itemId === selected);
+  const itemIssueGroups = issueGroups.filter(
+    (group) => selected && group.itemIds.includes(selected),
+  );
   const supportTargets = item ? getSurfaceTargets(draft, item.id) : [];
   const intendedSupportId = candidate?.supportId
     ? (candidates.find((entry) => entry.proposalId === candidate.supportId && entry.included)
@@ -113,6 +135,7 @@ export function ScenePreview({
     );
   }
   function changeReview(change: (state: SceneReviewState) => SceneReviewState) {
+    if (showingOriginal) return false;
     try {
       const next = change(review);
       setReview(next);
@@ -127,8 +150,44 @@ export function ScenePreview({
   }
   function command(c: WorkspaceCommand) {
     return !!changeReview((state) => {
-      let next = refreshSceneReview(state, base, applyCommand(state.draft, c));
-      if (c.type === 'snap-object' || (c.type === 'attach-object' && c.parentId)) {
+      let next = applySceneReviewSupportEdit(state, base, c);
+      const handledSupportEdit = !!next;
+      if (!next) {
+        const edited = applyCommand(state.draft, c);
+        // Existing desk carrying is still a Workspace command. A parent gesture
+        // must not overwrite review-only locks on a different candidate.
+        const directlyEditedId = 'id' in c ? c.id : null;
+        for (const candidate of state.candidates) {
+          if (!candidate.included || candidate.sceneId === directlyEditedId) continue;
+          const before = [...state.draft.objects, ...state.draft.devices].find(
+            (item) => item.id === candidate.sceneId,
+          );
+          const after = [...edited.objects, ...edited.devices].find(
+            (item) => item.id === candidate.sceneId,
+          );
+          if (!before || !after) continue;
+          if (
+            (candidate.locks?.position &&
+              ['x', 'y', 'z'].some(
+                (axis) =>
+                  before.placement[axis as 'x' | 'y' | 'z'] !==
+                  after.placement[axis as 'x' | 'y' | 'z'],
+              )) ||
+            (candidate.locks?.rotation && before.placement.rotation !== after.placement.rotation) ||
+            (candidate.locks?.scale &&
+              JSON.stringify(before.visual.scale) !== JSON.stringify(after.visual.scale))
+          ) {
+            throw new Error(
+              `${before.name} has locked edits. Unlock them before moving its attached desk.`,
+            );
+          }
+        }
+        next = refreshSceneReview(state, base, edited);
+      }
+      if (
+        !handledSupportEdit &&
+        (c.type === 'snap-object' || (c.type === 'attach-object' && c.parentId))
+      ) {
         const changedCandidate = next.candidates.find(
           (entry) => entry.included && entry.sceneId === c.id,
         );
@@ -169,25 +228,80 @@ export function ScenePreview({
           keeps its saved record. Your workspace stays unchanged until you confirm.
         </p>
       </div>
+      <section className="preview-repair-tools" aria-label="Photo placement adjustments">
+        <div className="preview-repair-buttons">
+          <button
+            type="button"
+            className="text-button"
+            disabled={showingOriginal || stale || applying}
+            onClick={() => changeReview((state) => repairSceneReview(state, base))}
+          >
+            Fit small gaps
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            aria-pressed={showingOriginal}
+            onClick={() => setShowingOriginal((value) => !value)}
+          >
+            {showingOriginal ? 'Show reviewed layout' : 'Show original estimate'}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={showingOriginal || stale || applying || adjustedIds.size === 0}
+            onClick={() => changeReview((state) => revertSceneRepair(state, base))}
+          >
+            Undo automatic adjustments
+          </button>
+        </div>
+        <p className="micro-note" role="status">
+          {showingOriginal
+            ? 'Original photo estimate · read only. Return to the reviewed layout to edit or apply.'
+            : adjustedIds.size
+              ? `${adjustedIds.size} ${adjustedIds.size === 1 ? 'object adjusted' : 'objects adjusted'}. Small support and gap corrections keep sizes and orientation. Your locked edits stay in place.`
+              : 'Small gap fitting preserves sizes, orientation, saved objects and your locked edits.'}
+        </p>
+        {!showingOriginal && review.repairSummary?.status === 'needs-review' && (
+          <p className="micro-note">
+            {review.repairSummary.stopped === 'budget'
+              ? 'Automatic fitting reached its search limit.'
+              : 'Some placement problems have no valid automatic correction within the movement limits.'}{' '}
+            Review the remaining support or overlap before applying.
+          </p>
+        )}
+      </section>
       <div className="scene-preview-layout">
         <div className="preview-scene" aria-label="Proposed 3D scene">
           <Suspense fallback={<p>Preparing the 3D preview...</p>}>
             <DeskCanvas
-              workspace={draft}
-              selected={selected}
-              mode="edit"
+              workspace={shownDraft}
+              selected={
+                [...shownDraft.objects, ...shownDraft.devices].some(
+                  (entry) => entry.id === selected,
+                )
+                  ? selected
+                  : null
+              }
+              mode={showingOriginal ? 'desk' : 'edit'}
               onSelect={selectScene}
               onMove={(id, placement, dragPath) => {
-                command({ type: 'move-object', id, placement, dragPath });
+                if (!showingOriginal) command({ type: 'move-object', id, placement, dragPath });
               }}
             />
           </Suspense>
           <PreviewPhotoReference photo={photo} candidate={candidate} />
           <span className="preview-scene-note">
-            Drag objects to move · Drag empty space to rotate
+            {showingOriginal
+              ? 'Original estimate · rotate to compare'
+              : 'Drag objects to move · Drag empty space to rotate'}
           </span>
         </div>
-        <div className="preview-inspector">
+        <fieldset
+          className="preview-inspector"
+          disabled={showingOriginal}
+          aria-label="Edit reviewed layout"
+        >
           <PreviewObjectList
             candidates={candidates}
             draft={draft}
@@ -456,15 +570,28 @@ export function ScenePreview({
                     </select>
                   </label>
                 )}
-                {itemIssues.length > 0 && (
+                {itemIssueGroups.length > 0 && (
                   <section
                     className="preview-placement-issues"
                     aria-label="Selected object review issues"
                   >
                     <h4>Placement needs review</h4>
                     <ul>
-                      {itemIssues.map((issue, index) => (
-                        <li key={`${issue.code}-${index}`}>{issue.message}</li>
+                      {itemIssueGroups.map((group) => (
+                        <li key={group.id}>
+                          {group.primary.message}
+                          {group.details.map((detail) => (
+                            <span key={detail.message}> {detail.message}</span>
+                          ))}
+                          {group.overlaps.length > 0 && (
+                            <span>
+                              {' '}
+                              Check this support first; {group.overlaps.length} related{' '}
+                              {group.overlaps.length === 1 ? 'overlap will' : 'overlaps will'} be
+                              checked again.
+                            </span>
+                          )}
+                        </li>
                       ))}
                     </ul>
                     <p>
@@ -501,11 +628,64 @@ export function ScenePreview({
                       ))}
                     </select>
                     <span className="micro-note">
-                      Choosing a support adjusts height without moving the object to a different
-                      surface to hide an overlap.
+                      {candidate.supportSource === 'user'
+                        ? 'Support chosen by you.'
+                        : candidate.supportSource === 'geometry'
+                          ? 'Support inferred from geometry; check this estimate.'
+                          : 'Model support estimate; not yet confirmed.'}{' '}
+                      Choosing a support confirms it and fits the height unless position is locked.
                     </span>
                   </label>
                 )}
+                {candidate && (
+                  <fieldset
+                    className="preview-placement-locks"
+                    aria-label="Automatic placement locks"
+                  >
+                    <legend>Keep my edits</legend>
+                    {(
+                      [
+                        ['position', 'Lock position'],
+                        ['rotation', 'Lock rotation'],
+                        ['scale', 'Lock size'],
+                        ['support', 'Lock support'],
+                      ] as const
+                    ).map(([field, label]) => (
+                      <label key={field}>
+                        <input
+                          type="checkbox"
+                          checked={!!candidate.locks?.[field]}
+                          onChange={(event) =>
+                            changeReview((state) =>
+                              setSceneCandidateLocks(state, base, candidate.proposalId, {
+                                [field]: event.target.checked,
+                              }),
+                            )
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
+                    <p className="micro-note">
+                      Edits lock automatically. Gap fitting always preserves size and rotation.
+                    </p>
+                  </fieldset>
+                )}
+                {candidate &&
+                  review.adjustments?.some(
+                    (adjustment) => adjustment.itemId === candidate.sceneId,
+                  ) && (
+                    <details className="preview-adjustment-details">
+                      <summary>Automatic adjustments for this object</summary>
+                      <ul>
+                        {review.adjustments
+                          .filter((adjustment) => adjustment.itemId === candidate.sceneId)
+                          .map((adjustment, index) => (
+                            <li key={`${adjustment.field}-${index}`}>{adjustment.reason}</li>
+                          ))}
+                      </ul>
+                    </details>
+                  )}
                 <TransformEditor
                   placement={item.placement}
                   visual={item.visual}
@@ -551,7 +731,7 @@ export function ScenePreview({
               <p className="muted">Select an object in the scene or the list to adjust it.</p>
             )}
           </div>
-        </div>
+        </fieldset>
       </div>
       <div className="preview-actions">
         <p className="micro-note">
@@ -578,13 +758,17 @@ export function ScenePreview({
         {issues.length > 0 && (
           <div className="preview-issues-summary" role="status">
             <p>
-              {issues.length} placement {issues.length === 1 ? 'issue needs' : 'issues need'} review
-              before applying. Fix the intended support or placement, or exclude the candidate.
+              {issueGroups.length} placement{' '}
+              {issueGroups.length === 1 ? 'problem needs' : 'problems need'} review before applying.
+              Fix the intended support or placement, or exclude the candidate.
             </p>
             <button
               type="button"
               className="text-button"
-              onClick={() => selectScene(issues[0].itemId)}
+              onClick={() => {
+                setShowingOriginal(false);
+                selectScene(issueGroups[0].primary.itemId);
+              }}
             >
               Review placement issue
             </button>
@@ -604,9 +788,18 @@ export function ScenePreview({
           </button>
           <button
             className="button primary"
-            disabled={stale || applying || unresolved.length > 0 || issues.length > 0}
+            disabled={
+              showingOriginal || stale || applying || unresolved.length > 0 || issues.length > 0
+            }
             onClick={async () => {
-              if (applying || stale || unresolved.length > 0 || issues.length > 0) return;
+              if (
+                showingOriginal ||
+                applying ||
+                stale ||
+                unresolved.length > 0 ||
+                issues.length > 0
+              )
+                return;
               setApplying(true);
               try {
                 validateSceneReviewForApply(review, base);

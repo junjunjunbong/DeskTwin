@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import legacy from '../../tests/fixtures/workspace-v1.json';
+import { getTemplateParts } from './geometry';
 import {
   applyCommand,
   createDemoWorkspace,
@@ -22,6 +23,7 @@ import {
   getItemBounds,
   rebaseAttachedPlacement,
   resolveSpatialEdit,
+  prepareSurfacePlacement,
   snapToSurface,
   validateSceneCollisions,
   evaluateSceneSupport,
@@ -1133,6 +1135,78 @@ describe('shared photo contact policies', () => {
     expect(snapped.devices[0].placement).toEqual(fit.draft.devices[0].placement);
     expect(searched.devices[0].placement).toEqual(fit.draft.devices[0].placement);
     expect(validateSceneCollisions(snapped)).toEqual([]);
+    const prepared = prepareSurfacePlacement(fit.draft, 'keyboard', 'desk');
+    expect(prepared.surfaceId).toBe('mat');
+    expect(prepared.draft.devices[0].placement).toEqual(fit.draft.devices[0].placement);
+  });
+
+  it('keeps preview relocation separate from ordinary snapping collision validation', () => {
+    const draft = deskAndMat();
+    draft.objects = draft.objects.filter((item) => item.id === 'desk');
+    const blocker = cube('blocker', 0);
+    blocker.placement.y = 2.4855;
+    draft.objects.push(blocker);
+    draft.devices = [device('keyboard', 'keyboard', 0, 5)];
+    const before = structuredClone(draft);
+    const prepared = prepareSurfacePlacement(draft, 'keyboard', 'desk');
+    expect(prepared.surfaceId).toBe('desk');
+    expect(draft).toEqual(before);
+    expect(getSceneCollisionPairs(prepared.draft)).toContainEqual(
+      expect.objectContaining({ itemIds: ['blocker', 'keyboard'] }),
+    );
+    expect(() => snapToSurface(draft, 'keyboard', 'desk')).toThrow(/intersect/);
+  });
+
+  it('does not let partial mat contact authorize an unsupported extension beyond the desk', () => {
+    const draft = deskAndMat();
+    draft.objects[1].placement.x = 2.16;
+    draft.devices.push(device('keyboard', 'keyboard', 4.1, 2.504));
+    const relations = [
+      { itemId: 'desk', surfaceId: 'floor' },
+      { itemId: 'mat', surfaceId: 'desk' },
+      { itemId: 'keyboard', surfaceId: 'mat' },
+    ];
+    // The mat is entirely on the 7.42-wide desk, but most of the keyboard's
+    // 1.35-wide base extends past the desk's right edge at x=3.71.
+    expect(evaluateSceneSupport(draft, 'mat', 'desk').footprintValid).toBe(true);
+    expect(evaluateSceneSupport(draft, 'keyboard', 'mat').footprintValid).toBe(false);
+    const fit = fitSceneProposalForReview(empty([]), draft, ['desk', 'mat', 'keyboard'], relations);
+    expect(fit.draft.devices[0].placement.x).toBe(4.1);
+    expect(fit.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'keyboard', rootCause: 'overhang' }),
+    );
+    expect(getScenePlacementIssues(empty([]), fit.draft, ['keyboard'], relations)).toContainEqual(
+      expect.objectContaining({ itemId: 'keyboard', rootCause: 'overhang' }),
+    );
+    // Explicit manual placement and vacant-position search may relocate, but
+    // neither may keep the same unsupported partial contact.
+    for (const placed of [
+      snapToSurface(fit.draft, 'keyboard', 'mat'),
+      findFreePlacement(fit.draft, 'keyboard', { surfaceId: 'mat' }),
+    ]) {
+      expect(placed.devices[0].placement.x).not.toBe(4.1);
+      expect(evaluateSceneSupport(placed, 'keyboard', 'mat').footprintValid).toBe(true);
+      expect(getItemBounds(placed.devices[0]).max.x).toBeLessThanOrEqual(3.71 + 0.00001);
+      expect(validateSceneCollisions(placed)).toEqual([]);
+    }
+    // The shared desk boundary accepts an exact edge and rejects crossing it.
+    draft.devices[0].placement.x = 3.71 - 1.35 / 2;
+    expect(evaluateSceneSupport(draft, 'keyboard', 'mat').footprintValid).toBe(true);
+    draft.devices[0].placement.x += 0.0001;
+    expect(evaluateSceneSupport(draft, 'keyboard', 'mat').footprintValid).toBe(false);
+  });
+
+  it('requires a verifiable solid under partial covering contact while allowing a floor rug', () => {
+    const draft = deskAndMat();
+    draft.devices.push(device('keyboard', 'keyboard', 1.7, 2.504));
+    draft.objects = draft.objects.filter((item) => item.id !== 'desk');
+    expect(evaluateSceneSupport(draft, 'keyboard', 'mat').footprintValid).toBe(false);
+    draft.objects[0].placement.y = 0.001;
+    draft.devices[0].placement.y = 0.0195;
+    expect(evaluateSceneSupport(draft, 'keyboard', 'mat')).toMatchObject({
+      footprintValid: true,
+      resting: true,
+    });
   });
 
   it('still searches the desk after every partial-contact position on an occupied mat is blocked', () => {
@@ -1197,6 +1271,19 @@ describe('shared photo contact policies', () => {
     offset.devices[0].placement.x += 0.03 * Math.cos((-15 * Math.PI) / 180);
     offset.devices[0].placement.z -= 0.03 * Math.sin((-15 * Math.PI) / 180);
     expect(evaluateSceneSupport(offset, 'laptop', 'stand').footprintValid).toBe(false);
+  });
+
+  it('applies the overhang boundary in depth and does not grant it to custom laptop geometry', () => {
+    const draft = standAndLaptop();
+    // The stand's local depth is 0.84, so 0.042 per edge allows a 0.924 base.
+    draft.devices[0].visual.scale.z = 0.924 / 0.93;
+    expect(evaluateSceneSupport(draft, 'laptop', 'stand').footprintValid).toBe(true);
+    draft.devices[0].visual.scale.z = 0.926 / 0.93;
+    expect(evaluateSceneSupport(draft, 'laptop', 'stand').footprintValid).toBe(false);
+    const custom = standAndLaptop();
+    custom.devices[0].shapeMode = 'custom';
+    custom.devices[0].parts = getTemplateParts('laptop');
+    expect(evaluateSceneSupport(custom, 'laptop', 'stand').footprintValid).toBe(false);
   });
 
   it('keeps exact solid collision checks for an allowed support pair', () => {
@@ -1361,6 +1448,64 @@ describe('shared photo contact policies', () => {
     expect(locked.issues).toContainEqual(
       expect.objectContaining({ itemId: 'keyboard', rootCause: 'height' }),
     );
+  });
+
+  it('bounds cumulative height correction across supports against a fixed reference and uses the real floor clamp', () => {
+    const draft = deskAndMat();
+    draft.devices = [device('keyboard', 'keyboard', 0, 2.36)];
+    const reference = { itemId: 'keyboard', y: 2.36, maxDisplacement: 0.12 };
+    const first = fitSceneProposalForReview(
+      empty([]),
+      draft,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'desk', source: 'model' }],
+      { heightReferences: [reference] },
+    );
+    expect(first.draft.devices[0].placement.y).toBeCloseTo(2.4755, 8);
+    const matRelation = [{ itemId: 'keyboard', surfaceId: 'mat', source: 'geometry' as const }];
+    const second = fitSceneProposalForReview(empty([]), first.draft, ['keyboard'], matRelation, {
+      heightReferences: [reference],
+    });
+    // Each individual step is below 0.12, but their total would be 0.144.
+    expect(second.draft.devices[0].placement.y).toBe(first.draft.devices[0].placement.y);
+    expect(second.issues).toContainEqual(
+      expect.objectContaining({ itemId: 'keyboard', rootCause: 'height-budget' }),
+    );
+    const boundary = fitSceneProposalForReview(empty([]), first.draft, ['keyboard'], matRelation, {
+      heightReferences: [{ ...reference, y: 2.384 }],
+    });
+    expect(boundary.draft.devices[0].placement.y).toBeCloseTo(2.504, 8);
+    expect(boundary.issues).toEqual([]);
+    const overBoundary = fitSceneProposalForReview(
+      empty([]),
+      first.draft,
+      ['keyboard'],
+      matRelation,
+      { heightReferences: [{ ...reference, y: 2.3839 }] },
+    );
+    expect(overBoundary.issues).toContainEqual(
+      expect.objectContaining({ rootCause: 'height-budget' }),
+    );
+    // An explicit user action deliberately omits the automatic reference guard.
+    const chosen = fitSceneProposalForReview(
+      empty([]),
+      first.draft,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'mat', source: 'user' }],
+    );
+    expect(chosen.issues).toEqual([]);
+    expect(chosen.draft.devices[0].placement.y).toBeCloseTo(2.504, 8);
+    const floor = empty([]);
+    floor.devices = [device('keyboard', 'keyboard', 0, 0)];
+    const clamped = fitSceneProposalForReview(
+      empty([]),
+      floor,
+      ['keyboard'],
+      [{ itemId: 'keyboard', surfaceId: 'floor' }],
+      { heightReferences: [{ itemId: 'keyboard', y: 0, maxDisplacement: 0 }] },
+    );
+    expect(clamped.draft.devices[0].placement.y).toBe(0);
+    expect(clamped.issues).toEqual([]);
   });
 
   it('preserves a usable lower face and chooses the nearest valid face on a multi-level custom support', () => {

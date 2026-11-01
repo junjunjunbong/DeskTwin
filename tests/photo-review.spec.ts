@@ -49,9 +49,25 @@ async function seed(page: Page, workspace: Workspace) {
     { key: storageKey, workspace },
   );
 }
-async function openPreview(page: Page, fixture = proposal()) {
+async function openPreview(
+  page: Page,
+  fixture = proposal(),
+  timings: unknown = {
+    providerMs: 15,
+    validationMs: 2,
+    totalMs: 17,
+    responseBytes: 800,
+    objectCount: fixture.objects.length,
+  },
+) {
   await page.route('**/api/photo', (route) =>
-    route.fulfill({ json: { mode: 'meta', ...fixture } }),
+    route.fulfill({
+      json: {
+        mode: 'meta',
+        ...fixture,
+        ...(timings === null ? {} : { timings }),
+      },
+    }),
   );
   await page.goto('/');
   await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
@@ -90,6 +106,50 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ page }) => {
   expect((page as Page & { reviewErrors?: string[] }).reviewErrors).toEqual([]);
 });
+
+test('photo processing times distinguish preparation, response checks and scene fitting without saving', async ({
+  page,
+}) => {
+  const modal = await openPreview(page);
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+  const timings = page.getByLabel('Photo processing times');
+  await timings.getByText('View processing times', { exact: true }).click();
+  await expect(timings).toContainText(/Photo preparation: \d+(?:\.\d+)? (?:ms|s)/);
+  await expect(timings).toContainText('Model response: 15 ms');
+  await expect(timings).toContainText('Response checks: 2 ms');
+  await expect(timings).toContainText(/Local response checks: \d+(?:\.\d+)? (?:ms|s)/);
+  await expect(timings).toContainText(/Scene fitting: \d+(?:\.\d+)? (?:ms|s)/);
+  await expect(timings).toContainText(/Analysis to preview: \d+(?:\.\d+)? (?:ms|s)/);
+  expect(await saved(page)).toBeNull();
+});
+
+for (const [description, timings] of [
+  ['missing', null],
+  [
+    'invalid',
+    {
+      providerMs: -1,
+      validationMs: 'not a number',
+      totalMs: 10,
+      responseBytes: 10,
+      objectCount: 3,
+    },
+  ],
+] as const) {
+  test(`${description} timing metadata keeps the frozen proposal compatible and uses observed request time`, async ({
+    page,
+  }) => {
+    const modal = await openPreview(page, proposal(), timings);
+    await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+    await modal.getByRole('button', { name: 'Discard preview' }).click();
+    const breakdown = page.getByLabel('Photo processing times');
+    await breakdown.getByText('View processing times', { exact: true }).click();
+    await expect(breakdown).toContainText(/Analysis request: \d+(?:\.\d+)? (?:ms|s)/);
+    await expect(breakdown).not.toContainText('Model response:');
+    await expect(breakdown).not.toContainText('NaN');
+    expect(await saved(page)).toBeNull();
+  });
+}
 
 test('candidate edits survive exclusion and restore without writing before confirmation', async ({
   page,
@@ -235,15 +295,263 @@ test('overlapping photo estimates stay visible for review and block confirmation
     modal.getByRole('checkbox', { name: 'Include Overlapping plant in scene' }),
   ).toBeChecked();
   await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+  await expect(modal.locator('.preview-issues-summary')).toContainText(
+    '1 placement problem needs review',
+  );
+  await modal.getByRole('button', { name: 'Fit small gaps', exact: true }).click();
+  await expect(modal.locator('.preview-issues-summary')).toContainText(
+    '1 placement problem needs review',
+  );
   await modal.getByRole('button', { name: 'Review placement issue', exact: true }).click();
   await expect(modal.getByRole('region', { name: 'Selected object review issues' })).toContainText(
     'overlaps',
   );
+  await expect(
+    modal.getByRole('region', { name: 'Selected object review issues' }).locator('li'),
+  ).toHaveCount(1);
   expect(await saved(page)).toBeNull();
   await modal.getByRole('checkbox', { name: 'Include Overlapping plant in scene' }).uncheck();
   await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
   await modal.getByRole('button', { name: 'Discard preview' }).click();
   expect(await saved(page)).toBeNull();
+});
+
+function gapProposal(): SceneProposal {
+  return {
+    message: 'Sanitized spacing regression. Geometry acceptance is not photo fidelity.',
+    objects: [
+      candidate('desk', 'desk', 'Photo desk', 0, 0, 0),
+      candidate('keyboard', 'keyboard', 'Photo keyboard', -0.05, 0.4, 2.4735),
+      {
+        ...candidate('wrist-rest', 'wrist-rest', 'Photo wrist rest', -0.05, 0.7, 2.4835),
+        scale: { x: 0.9, y: 1, z: 1 },
+      },
+    ],
+  };
+}
+
+test('automatic gap fitting can be compared, undone and reapplied without saving the preview', async ({
+  page,
+}) => {
+  const modal = await openPreview(page, gapProposal());
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo wrist rest · Wrist rest' });
+  const z = modal.getByRole('slider', { name: 'Preview object front / back position' });
+  const fittedZ = await z.inputValue();
+  await expect(modal.getByRole('region', { name: 'Photo placement adjustments' })).toContainText(
+    'adjusted',
+  );
+  await modal.getByRole('button', { name: 'Show original estimate', exact: true }).click();
+  await expect(z).toBeDisabled();
+  await expect(modal.getByLabel('Preview object name')).toBeDisabled();
+  await expect(
+    modal.getByRole('checkbox', { name: 'Include Photo keyboard in scene' }),
+  ).toBeDisabled();
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+  await expect(modal.getByRole('button', { name: 'Fit small gaps', exact: true })).toBeDisabled();
+  await expect(
+    modal.getByText('Original estimate · rotate to compare', { exact: true }),
+  ).toBeVisible();
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: 'Show reviewed layout', exact: true }).click();
+  await expect(z).toHaveValue(fittedZ);
+  await modal.getByRole('button', { name: 'Undo automatic adjustments', exact: true }).click();
+  await expect(z).toHaveValue('0.7');
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+  await expect(
+    modal.getByRole('button', { name: 'Undo automatic adjustments', exact: true }),
+  ).toBeDisabled();
+  await modal.getByRole('button', { name: 'Fit small gaps', exact: true }).click();
+  await expect(z).toHaveValue(fittedZ);
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  const applied = (await saved(page))!;
+  expect(applied.objects.find((item) => item.kind === 'wrist-rest')?.visual.scale.x).toBe(0.9);
+  expect(JSON.stringify(applied)).not.toMatch(
+    /supportSource|originalDraft|repairSummary|adjustments|seed/,
+  );
+});
+
+test('manual position, rotation, size and support survive automatic repair and undo', async ({
+  page,
+}) => {
+  const modal = await openPreview(page, gapProposal());
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo keyboard · Keyboard' });
+  const x = modal.getByRole('slider', { name: 'Preview object left / right position' });
+  const yaw = modal.getByRole('slider', { name: 'Preview object rotation' });
+  const scale = modal.getByLabel('Preview object width scale');
+  // Move clear of the wrist rest before rotating; ordinary editing still rejects real overlap.
+  await x.fill('-1.5');
+  await expect(x).toHaveValue('-1.5');
+  await yaw.fill('4');
+  await expect(yaw).toHaveValue('4');
+  await scale.fill('0.95');
+  await scale.press('Enter');
+  await modal.getByLabel('Preview intended support').selectOption('floor');
+  for (const name of ['Lock position', 'Lock rotation', 'Lock size', 'Lock support']) {
+    await expect(modal.getByRole('checkbox', { name, exact: true })).toBeChecked();
+  }
+  await expect(modal.getByRole('region', { name: 'Selected object review issues' })).toContainText(
+    'locked',
+  );
+  for (const name of ['Fit small gaps', 'Undo automatic adjustments']) {
+    await modal.getByRole('button', { name, exact: true }).click();
+    await expect(x).toHaveValue('-1.5');
+    await expect(yaw).toHaveValue('4');
+    await expect(scale).toHaveValue('0.95');
+    await expect(modal.getByLabel('Preview intended support')).toHaveValue('floor');
+    await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+  }
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+});
+
+test('small-screen placement comparison and locks preserve the primary 3D scene', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const modal = await openPreview(page, gapProposal());
+  const scene = modal.locator('.preview-scene');
+  const bounds = await scene.boundingBox();
+  expect(bounds?.height).toBeGreaterThanOrEqual(260);
+  await modal.getByRole('button', { name: 'Show original estimate', exact: true }).click();
+  await modal.getByRole('button', { name: 'Show reviewed layout', exact: true }).click();
+  await modal
+    .getByLabel('Preview object', { exact: true })
+    .selectOption({ label: 'Photo keyboard · Keyboard' });
+  await modal.getByRole('checkbox', { name: 'Lock position', exact: true }).check();
+  await modal.getByRole('button', { name: 'Fit small gaps', exact: true }).click();
+  await expect(modal.getByRole('checkbox', { name: 'Lock position', exact: true })).toBeChecked();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await scene.scrollIntoViewIfNeeded();
+  await testInfo.attach('mobile-photo-review', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  });
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+  expect(await saved(page)).toBeNull();
+});
+
+test('editing a support in the inspector updates only unlocked children and preserves the edit on undo', async ({
+  page,
+}) => {
+  const fixture: SceneProposal = {
+    message: 'Synthetic support edit regression.',
+    objects: [
+      candidate('desk', 'desk', 'Photo desk', 0, 0, 0),
+      {
+        ...candidate('stand', 'laptop-stand', 'Photo stand', 2, -0.1, 2.4835),
+        scale: { x: 0.8, y: 0.8, z: 0.8 },
+      },
+      {
+        ...candidate('laptop', 'laptop', 'Photo laptop', 2, -0.1, 2.8128),
+        scale: { x: 0.95, y: 0.9, z: 0.95 },
+        supportId: 'stand',
+      },
+    ],
+  };
+  const modal = await openPreview(page, fixture);
+  const select = modal.getByLabel('Preview object', { exact: true });
+  const height = modal.getByRole('slider', { name: 'Preview object height position' });
+  await select.selectOption({ label: 'Photo laptop · Laptop' });
+  const initialHeight = Number(await height.inputValue());
+  await select.selectOption({ label: 'Photo stand · Laptop stand' });
+  const scale = modal.getByLabel('Preview object height scale');
+  await scale.fill('1.2');
+  await scale.press('Enter');
+  await expect(scale).toHaveValue('1.2');
+  await expect(modal.getByRole('checkbox', { name: 'Lock size', exact: true })).toBeChecked();
+  await select.selectOption({ label: 'Photo laptop · Laptop' });
+  const fittedHeight = await height.inputValue();
+  expect(Number(fittedHeight)).toBeGreaterThan(initialHeight + 0.15);
+  await expect(
+    modal.getByRole('checkbox', { name: 'Lock position', exact: true }),
+  ).not.toBeChecked();
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+  await modal.getByRole('button', { name: 'Undo automatic adjustments', exact: true }).click();
+  await expect(height).toHaveValue(fittedHeight);
+  await select.selectOption({ label: 'Photo stand · Laptop stand' });
+  await expect(scale).toHaveValue('1.2');
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+  await select.selectOption({ label: 'Photo laptop · Laptop' });
+  await modal.getByRole('checkbox', { name: 'Lock position', exact: true }).check();
+  await select.selectOption({ label: 'Photo stand · Laptop stand' });
+  await scale.fill('1.4');
+  await scale.press('Enter');
+  await expect(scale).toHaveValue('1.4');
+  await select.selectOption({ label: 'Photo laptop · Laptop' });
+  await expect(height).toHaveValue(fittedHeight);
+  await expect(modal.getByRole('region', { name: 'Selected object review issues' })).toContainText(
+    'locked',
+  );
+  await modal.getByRole('button', { name: 'Fit small gaps', exact: true }).click();
+  await expect(height).toHaveValue(fittedHeight);
+  await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: 'Discard preview' }).click();
+});
+
+test('Place on surface moves a support before checking its child and preserves a locked child for review', async ({
+  page,
+}) => {
+  const fixture: SceneProposal = {
+    message: 'Synthetic parent surface placement with a thin mat.',
+    objects: [
+      candidate('desk', 'desk', 'Photo desk', 0, 0, 0),
+      {
+        ...candidate('mat', 'mat', 'Photo mat', 2, -0.1, 2.4835),
+        scale: { x: 0.7, y: 1, z: 1.5 },
+      },
+      {
+        ...candidate('stand', 'laptop-stand', 'Photo stand', 2, -0.1, 2.4835),
+        scale: { x: 0.8, y: 0.8, z: 0.8 },
+      },
+      {
+        ...candidate('laptop', 'laptop', 'Photo laptop', 2, -0.1, 2.8128),
+        scale: { x: 0.95, y: 0.9, z: 0.95 },
+        supportId: 'stand',
+      },
+    ],
+  };
+  for (const lockChild of [false, true]) {
+    const modal = await openPreview(page, fixture);
+    // Restore the model's intersecting estimates so the manual surface path,
+    // rather than the initial automatic fitter, must resolve the parent/child.
+    await modal.getByRole('button', { name: 'Undo automatic adjustments', exact: true }).click();
+    const select = modal.getByLabel('Preview object', { exact: true });
+    const height = modal.getByRole('slider', { name: 'Preview object height position' });
+    await select.selectOption({ label: 'Photo laptop · Laptop' });
+    const originalHeight = await height.inputValue();
+    if (lockChild)
+      await modal.getByRole('checkbox', { name: 'Lock position', exact: true }).check();
+    await select.selectOption({ label: 'Photo stand · Laptop stand' });
+    await modal.getByLabel('Preview object surface', { exact: true }).selectOption('photo-mat');
+    await modal.getByRole('button', { name: 'Place on surface', exact: true }).click();
+    await expect(modal.getByLabel('Preview intended support')).toHaveValue('photo-mat');
+    await expect(modal.getByRole('checkbox', { name: 'Lock support', exact: true })).toBeChecked();
+    await select.selectOption({ label: 'Photo laptop · Laptop' });
+    if (lockChild) {
+      await expect(height).toHaveValue(originalHeight);
+      await expect(
+        modal.getByRole('region', { name: 'Selected object review issues' }),
+      ).toContainText('locked');
+      await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeDisabled();
+    } else {
+      expect(Number(await height.inputValue())).toBeGreaterThan(Number(originalHeight) + 0.02);
+      await expect(
+        modal.getByRole('checkbox', { name: 'Lock position', exact: true }),
+      ).not.toBeChecked();
+      await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
+    }
+    expect(await saved(page)).toBeNull();
+    await modal.getByRole('button', { name: 'Discard preview' }).click();
+    expect(await saved(page)).toBeNull();
+  }
 });
 
 test('review controls and reference comparison remain usable on a narrow screen', async ({

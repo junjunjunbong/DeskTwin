@@ -1,5 +1,6 @@
 import {
   fitSceneProposalForReview,
+  DEFAULT_SCENE_HEIGHT_ADJUSTMENT,
   getItemBounds,
   getSceneCollisionPairs,
   getScenePlacementIssues,
@@ -22,6 +23,11 @@ export type PhotoPlacementSeed = {
   readonly scale: Readonly<Item['visual']['scale']>;
   readonly supportId: string | null;
 };
+export type PhotoHeightReference = {
+  /** Root Y, independent from the immutable original photo seed. */
+  y: number;
+  source: 'model' | 'user';
+};
 export type PhotoPlacementCandidate = {
   proposalId: string;
   sceneId: string;
@@ -30,6 +36,7 @@ export type PhotoPlacementCandidate = {
   supportSource?: PhotoSupportSource;
   locks?: Partial<PhotoPlacementLocks>;
   seed?: PhotoPlacementSeed;
+  heightReference?: PhotoHeightReference;
 };
 export type PhotoPlacementAdjustment = {
   itemId: string;
@@ -96,6 +103,16 @@ export function photoPlacementSeed(item: Item, supportId: string | null): PhotoP
     scale: Object.freeze({ ...item.visual.scale }),
     supportId,
   };
+}
+
+/** Automatic fits share one cumulative vertical budget across fitting stages and retries. */
+export function photoPlacementHeightReferences(candidates: PhotoPlacementCandidate[]) {
+  return candidates.flatMap((candidate) => {
+    const y = candidate.heightReference?.y ?? candidate.seed?.placement.y;
+    return candidate.included && y !== undefined
+      ? [{ itemId: candidate.sceneId, y, maxDisplacement: DEFAULT_SCENE_HEIGHT_ADJUSTMENT }]
+      : [];
+  });
 }
 
 function supportDimensions(draft: Workspace, id: string, relations: SceneSupportRelation[]) {
@@ -185,6 +202,14 @@ export function repairPhotoLayout(
   const changed = included.map((candidate) => candidate.sceneId).sort();
   const relations = photoPlacementSupports(candidates);
   const anchors = new Set(relations.map((relation) => relation.surfaceId));
+  const movable = new Set(
+    included
+      .filter((candidate) => {
+        const item = itemIn(input, candidate.sceneId)!;
+        return !candidate.locks?.position && !anchors.has(item.id) && !supportKinds.has(item.kind);
+      })
+      .map((candidate) => candidate.sceneId),
+  );
   const seeds = new Map(
     included.map((candidate) => [
       candidate.sceneId,
@@ -194,6 +219,7 @@ export function repairPhotoLayout(
   const lockedIds = included
     .filter((candidate) => candidate.locks?.position)
     .map((candidate) => candidate.sceneId);
+  const heightReferences = photoPlacementHeightReferences(candidates);
   const movementLimits = new Map(
     included.map((candidate) => [
       candidate.sceneId,
@@ -215,7 +241,7 @@ export function repairPhotoLayout(
   // Preserve current Y: it includes a user's support choice and its propagated height.
   const canonical = structuredClone(input);
   for (const candidate of included) {
-    if (candidate.locks?.position) continue;
+    if (!movable.has(candidate.sceneId)) continue;
     const current = itemIn(canonical, candidate.sceneId)!;
     const seed = seeds.get(candidate.sceneId)!;
     current.placement.x = seed.placement.x;
@@ -224,6 +250,7 @@ export function repairPhotoLayout(
   let draft = fitSceneProposalForReview(base, canonical, changed, relations, {
     carryFrom: canonical,
     lockedIds,
+    heightReferences,
   }).draft;
   const originalPairs = getSceneCollisionPairs(draft, base).filter((pair) =>
     pair.itemIds.some((id) => changed.includes(id)),
@@ -237,14 +264,6 @@ export function repairPhotoLayout(
     initialIssues
       .filter((issue) => issue.code !== 'collision')
       .map((issue) => `${issue.itemId}:${issue.message}`),
-  );
-  const movable = new Set(
-    included
-      .filter((candidate) => {
-        const item = itemIn(draft, candidate.sceneId)!;
-        return !candidate.locks?.position && !anchors.has(item.id) && !supportKinds.has(item.kind);
-      })
-      .map((candidate) => candidate.sceneId),
   );
   let currentScore = score(base, draft, changed, relations, seeds);
   let evaluations = 0;
@@ -351,6 +370,7 @@ export function repairPhotoLayout(
           const fitted = fitSceneProposalForReview(base, trial, changed, relations, {
             carryFrom: draft,
             lockedIds,
+            heightReferences,
           }).draft;
           if (!acceptable(fitted)) continue;
           const candidateScore = score(base, fitted, changed, relations, seeds);

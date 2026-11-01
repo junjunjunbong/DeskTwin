@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, X, Sparkle, Plus, Check, ArrowRight } from '@phosphor-icons/react';
+import { z } from 'zod';
 import { modelWorkspace } from '../domain/workspacePrivacy';
 import { type Workspace } from '../domain/workspace';
 import {
@@ -10,6 +11,25 @@ import {
 import { ScenePreview } from './ScenePreview';
 import { PHOTO_ACCEPT, preparePhoto } from '../domain/photoInput';
 export { preparePhoto } from '../domain/photoInput';
+
+// Optional transport metadata stays outside the proposal contract. Old frozen
+// replies remain usable, and malformed measurements never become UI durations.
+const responseTimingsSchema = z
+  .object({
+    providerMs: z.number().finite().nonnegative(),
+    validationMs: z.number().finite().nonnegative(),
+    totalMs: z.number().finite().nonnegative(),
+    responseBytes: z.number().int().nonnegative(),
+    objectCount: z.number().int().min(1).max(32),
+  })
+  .refine((value) => value.providerMs + value.validationMs <= value.totalMs + 1);
+
+function elapsedLabel(milliseconds: number) {
+  return milliseconds < 1000
+    ? `${Math.round(milliseconds)} ms`
+    : `${(milliseconds / 1000).toFixed(2)} s`;
+}
+
 interface Props {
   workspace: Workspace;
   photo: string | null;
@@ -45,8 +65,12 @@ export function PhotoPanel({
   const [pending, setPending] = useState(false);
   const [phase, setPhase] = useState<'analyzing' | 'fitting' | null>(null);
   const analysisStarted = useRef(0);
+  const preparedPhotoTiming = useRef<{ photo: string; milliseconds: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [timingSummary, setTimingSummary] = useState('');
+  const [timingBreakdown, setTimingBreakdown] = useState<{ label: string; milliseconds: number }[]>(
+    [],
+  );
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<
@@ -83,6 +107,7 @@ export function PhotoPanel({
     setPending(false);
     setPhase(null);
     setTimingSummary('');
+    setTimingBreakdown([]);
     setPreparing(false);
     setResult(null);
   }
@@ -113,25 +138,61 @@ export function PhotoPanel({
         }),
       });
       const data = await res.json();
+      const requestFinished = performance.now();
       if (token !== version.current) return;
       if (!res.ok) throw new Error(data.error || 'Analysis failed.');
       if (data.mode !== 'meta')
         throw new Error('The photo response was not a Meta scene proposal.');
       // Transport measurements are separate from scene data. Older frozen replies omit them.
       const { mode: _mode, timings: _timings, ...proposal } = data;
+      const validationStarted = performance.now();
       const parsed = SceneProposalSchema.safeParse(proposal);
       if (!parsed.success)
         throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
+      const localValidationMs = performance.now() - validationStarted;
+      const serverTimings = responseTimingsSchema.safeParse(_timings);
       setPhase('fitting');
       // Yield once before local fitting so cancellation and the actual stage can be reflected.
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       if (token !== version.current) return;
       controller.signal.throwIfAborted();
+      const fittingStarted = performance.now();
       const preview = buildScenePreview(base, parsed.data);
+      const previewReady = performance.now();
+      const preparationMs =
+        preparedPhotoTiming.current?.photo === photo
+          ? preparedPhotoTiming.current.milliseconds
+          : null;
+      const measuredServer =
+        serverTimings.success && serverTimings.data.objectCount === parsed.data.objects.length
+          ? serverTimings.data
+          : null;
       setResult({ base, ...preview, message: parsed.data.message });
       setTimingSummary(
-        `Preview prepared in ${((performance.now() - analysisStarted.current) / 1000).toFixed(1)} s · ${preview.candidates.length} candidate objects.`,
+        `Preview prepared in ${((previewReady - analysisStarted.current) / 1000).toFixed(1)} s · ${preview.candidates.length} candidate objects.`,
       );
+      setTimingBreakdown([
+        ...(preparationMs === null
+          ? []
+          : [{ label: 'Photo preparation', milliseconds: preparationMs }]),
+        ...(measuredServer
+          ? [
+              { label: 'Model response', milliseconds: measuredServer.providerMs },
+              { label: 'Response checks', milliseconds: measuredServer.validationMs },
+            ]
+          : [
+              {
+                label: 'Analysis request',
+                milliseconds: requestFinished - analysisStarted.current,
+              },
+            ]),
+        { label: 'Local response checks', milliseconds: localValidationMs },
+        { label: 'Scene fitting', milliseconds: previewReady - fittingStarted },
+        {
+          label: 'Analysis to preview',
+          milliseconds: previewReady - analysisStarted.current,
+        },
+      ]);
     } catch (e) {
       if (token !== version.current) return;
       setError(
@@ -203,6 +264,8 @@ export function PhotoPanel({
               const token = version.current;
               const controller = new AbortController();
               preparation.current = controller;
+              preparedPhotoTiming.current = null;
+              const preparationStarted = performance.now();
               setPreparing(true);
               setError('');
               setConsent(false);
@@ -210,7 +273,13 @@ export function PhotoPanel({
               onPhoto(null);
               try {
                 const data = await preparePhoto(file, controller.signal);
-                if (token === version.current) onPhoto(data);
+                if (token === version.current) {
+                  preparedPhotoTiming.current = {
+                    photo: data,
+                    milliseconds: performance.now() - preparationStarted,
+                  };
+                  onPhoto(data);
+                }
               } catch (e) {
                 if (token === version.current)
                   setError(e instanceof Error ? e.message : 'Could not read the photo.');
@@ -277,6 +346,22 @@ export function PhotoPanel({
                 </p>
               )}
               {!pending && timingSummary && <p className="micro-note">{timingSummary}</p>}
+              {!pending && timingBreakdown.length > 0 && (
+                <details className="micro-note" aria-label="Photo processing times">
+                  <summary>View processing times</summary>
+                  <ul>
+                    {timingBreakdown.map(({ label, milliseconds }) => (
+                      <li key={label}>
+                        {label}: {elapsedLabel(milliseconds)}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    Photo preparation happens before analysis. The analysis total includes the
+                    request and local processing, and ends when the preview is ready to display.
+                  </p>
+                </details>
+              )}
               {pending && (
                 <button className="text-button" onClick={cancel}>
                   Cancel analysis
@@ -349,6 +434,7 @@ export function PhotoPanel({
               className="text-button danger-text"
               onClick={() => {
                 cancel();
+                preparedPhotoTiming.current = null;
                 onPhoto(null);
                 setConsent(false);
                 setError('');
@@ -367,6 +453,9 @@ export function PhotoPanel({
           initialObservations={result.observations}
           initialCandidates={result.candidates}
           initialIssues={result.issues}
+          initialOriginalDraft={result.originalDraft}
+          initialAdjustments={result.adjustments}
+          initialRepairSummary={result.repairSummary}
           current={workspace}
           storageConflict={storageConflict}
           message={result.message}
