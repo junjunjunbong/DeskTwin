@@ -8,11 +8,11 @@ DeskTwin은 책상을 넓게 보여주는 **실제 3D voxel 작업실**과, 기�
 
 ![View 모드의 예시 책상과 오른쪽 고정 Workspace overview 패널](docs/screenshots/workspace-overview-desktop.png)
 
-> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 2026-11-01에 별도 승인한 Meta 대화 1건과 사진 분석 2건이 응답 검증을 통과했습니다. 개선한 사진 흐름은 기본 35초 제한에서 시간 초과가 났고, 테스트에서만 제한을 늘려 받은 결과에도 배치 문제가 남아 적용은 차단됐습니다. 일반적인 사진 품질과 물리적 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [사진 검토 개선과 검증 범위](docs/PHOTO_REVIEW.md), [이전 워크플로 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
+> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 2026-11-01에 별도 승인한 Meta 대화 1건과 사진 분석 2건이 응답 검증을 통과했습니다. 당시 사진 흐름은 기본 35초 제한에서 시간 초과가 났고, 테스트에서만 제한을 늘려 받은 결과에도 배치 문제가 남아 적용은 차단됐습니다. 이후 저장된 19개 응답의 수치 재현은 [공동 기하 보정과 사진 피팅](docs/PHOTO_REFERENCE_FITTING.md)으로 독립 적용 검사를 통과했습니다. 새 실사진 품질과 물리적 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [사진 검토 개선과 검증 범위](docs/PHOTO_REVIEW.md), [이전 워크플로 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
 
 ## 빠르게 실행하기
 
-Node.js 22.12 이상이 필요합니다. 이번 검증 환경은 Node.js 22.22.3과 Chromium입니다. 의존성 버전은 `package-lock.json`에 고정되어 있습니다.
+Node.js 22.12 이상이 필요합니다. 최신 사진 공동 보정 검증은 Node.js 26.0.0과 Chromium에서 실행했으며, 초기 검증 기록은 Node.js 22.22.3 환경입니다. 의존성 버전은 `package-lock.json`에 고정되어 있습니다.
 
 ```bash
 git clone https://github.com/junjunjunbong/DeskTwin.git
@@ -189,7 +189,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 이후 구현한 [제한된 사진 배치 보정](docs/PHOTO_PLACEMENT_REPAIR.md)은 위 세 재현 사례와 mock·로컬 fixture로 검증했습니다. 접촉·받침 판정, 수정값 보존, 작은 간격 보정과 취소 전파를 개선했지만 새로운 실사진 품질 향상이나 실제 API 지연 개선을 입증한 것은 아닙니다. 서버 35초·브라우저 40초 제한을 유지하며, preview 받침 관계는 영속 Workspace graph로 저장하지 않습니다.
 
-[사진 기준 자동 피팅](docs/PHOTO_REFERENCE_FITTING.md)은 사진 속 물체 영역과 템플릿으로 비교 시점을 추정하고 배치를 맞춥니다. 좌표·모서리·시야각 입력 단계는 없습니다. **Compare with your photo**에서 비교하고, **Match photo again**으로 로컬 재시도하거나 **Undo photo match**로 되돌립니다. 근거가 부족하면 기존 preview를 유지합니다. 전체 19개 응답의 재생 결과와 남은 충돌은 검증 문서에 구분해 기록합니다.
+[사진 기준 자동 피팅](docs/PHOTO_REFERENCE_FITTING.md)은 사진 속 물체 영역과 템플릿으로 비교 시점을 한 번 추정한 뒤, 받침·충돌을 공동 보정하고 같은 시점에서 사진 정렬을 개선합니다. 좌표·모서리·시야각 입력 단계는 없습니다. **Compare with your photo**에서 비교하고, **Match photo again**으로 로컬 재시도하거나 **Undo photo match**로 되돌립니다. 근거가 부족하면 기존 preview를 유지합니다. 전체 19개 수치 재현은 객체·크기·회전을 유지하면서 충돌 0쌍, 받침 문제 0건으로 독립 적용 검사를 통과합니다. 동일 시점의 이미지 근거 오차 개선과 실사진 유사도 검증은 구분하며, 이동 제한·잠금·되돌리기 검증과 남은 한계는 문서에 기록합니다.
 
 ## 데모 순서
 

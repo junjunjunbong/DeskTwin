@@ -22,6 +22,7 @@ import {
   type SceneReviewCandidate,
 } from './sceneProposal';
 import {
+  evaluateSceneSupport,
   fitSceneProposalForReview,
   prepareSurfacePlacement,
   rebaseAttachedPlacement,
@@ -489,7 +490,7 @@ export function revertSceneRepair(state: SceneReviewState, base: Workspace): Sce
   if (state.photoAlignment) state = undoScenePhotoFit(state, base);
   let draft = structuredClone(state.draft);
   const editedSupports = new Set(state.editedSupportIds ?? []);
-  const candidates = state.candidates.map((candidate) => {
+  let candidates = state.candidates.map((candidate) => {
     if (!candidate.included || !candidate.seed) return candidate;
     const item = itemIn(draft, candidate.sceneId);
     if (item && !candidate.locks?.position && !editedSupports.has(candidate.sceneId)) {
@@ -507,7 +508,11 @@ export function revertSceneRepair(state: SceneReviewState, base: Workspace): Sce
         : state.candidates.find(
             (entry) => entry.proposalId === seedSupport || entry.seed?.sceneId === seedSupport,
           );
-    return candidate.locks?.support || candidate.supportSource === 'user'
+    return candidate.locks?.support ||
+      candidate.locks?.position ||
+      editedSupports.has(candidate.sceneId) ||
+      candidate.heightReference?.source === 'user' ||
+      candidate.supportSource === 'user'
       ? candidate
       : {
           ...candidate,
@@ -515,6 +520,9 @@ export function revertSceneRepair(state: SceneReviewState, base: Workspace): Sce
           supportSource: 'model' as const,
         };
   });
+  const rollback = preserveProtectedSupportGroups(state, draft, candidates);
+  draft = rollback.draft;
+  candidates = rollback.candidates;
   const relations = sceneReviewSupports(candidates);
   const affected = supportSubtree(relations, [
     ...editedSupports,
@@ -537,7 +545,9 @@ export function revertSceneRepair(state: SceneReviewState, base: Workspace): Sce
       {
         carryFrom: draft,
         lockedIds: candidates
-          .filter((candidate) => candidate.locks?.position)
+          .filter(
+            (candidate) => candidate.locks?.position || rollback.retained.has(candidate.sceneId),
+          )
           .map((candidate) => candidate.sceneId),
       },
     ).draft;
@@ -562,9 +572,197 @@ function beforePhotoFit(state: SceneReviewState): Workspace {
     const before = saved?.before ?? itemIn(alignment.beforeDraft, candidate.sceneId);
     const after = saved?.after ?? itemIn(alignment.afterDraft, candidate.sceneId);
     if (!current || !before || !after) continue;
-    restorePhotoFields(current, before, after, candidate);
+    restorePhotoFields(current, before, after, candidate, photoHeightEdited(state, candidate));
   }
   return draft;
+}
+
+type PhotoSupportState = Pick<SceneReviewCandidate, 'supportId' | 'supportSource'>;
+
+function photoHeightEdited(state: SceneReviewState, candidate: SceneReviewCandidate): boolean {
+  if (candidate.heightReference?.source !== 'user') return false;
+  const snapshot = state.photoAlignment?.supports?.find(
+    (entry) => entry.proposalId === candidate.proposalId,
+  );
+  // Older in-memory snapshots did not record height provenance; preserve it.
+  return (
+    !snapshot ||
+    !('heightReference' in snapshot) ||
+    !same(candidate.heightReference, snapshot.heightReference)
+  );
+}
+
+/** Undo is a joint endpoint too. Retain a dependency group only when rolling it
+ * back would invalidate a protected child's current contact. Excluded items are
+ * checked in a temporary view so restoring them cannot expose a broken support.
+ * The retained geometry becomes the next fit's before snapshot, so retries do
+ * not keep walking parents away from their original bounded variables. */
+function preserveProtectedSupportGroups(
+  state: SceneReviewState,
+  draft: Workspace,
+  inputCandidates: SceneReviewCandidate[],
+) {
+  let candidates = inputCandidates;
+  const currentRelations = sceneReviewSupports(
+    state.candidates.map((candidate) => ({ ...candidate, included: true })),
+  );
+  const retained = new Set<string>();
+  const protectedIds = new Set(
+    state.candidates
+      .filter(
+        (candidate) =>
+          candidate.locks?.position ||
+          candidate.locks?.rotation ||
+          candidate.locks?.scale ||
+          candidate.locks?.support ||
+          candidate.supportSource === 'user' ||
+          photoHeightEdited(state, candidate),
+      )
+      .map((candidate) => candidate.sceneId),
+  );
+  function withExcluded(workspace: Workspace, entries: SceneReviewCandidate[]): Workspace {
+    const missing = entries.flatMap((candidate) =>
+      candidate.excludedItem && !itemIn(workspace, candidate.sceneId)
+        ? [candidate.excludedItem]
+        : [],
+    );
+    return {
+      ...workspace,
+      devices: [...workspace.devices, ...missing.filter((item): item is Device => 'model' in item)],
+      objects: [
+        ...workspace.objects,
+        ...missing.filter((item): item is SceneObject => !('model' in item)),
+      ],
+    };
+  }
+  const current = withExcluded(state.draft, state.candidates);
+  for (let pass = 0; pass < state.candidates.length; pass++) {
+    let changed = false;
+    for (const id of [...protectedIds]) {
+      const relation = currentRelations.find((entry) => entry.itemId === id);
+      if (!relation || !itemIn(current, id)) continue;
+      const nextRelations = sceneReviewSupports(
+        candidates.map((candidate) => ({ ...candidate, included: true })),
+      );
+      const nextRelation = nextRelations.find((entry) => entry.itemId === id);
+      const next = withExcluded(draft, candidates);
+      if (!nextRelation || !itemIn(next, id)) continue;
+      const oldContact = evaluateSceneSupport(current, id, relation.surfaceId);
+      const contact = evaluateSceneSupport(next, id, nextRelation.surfaceId);
+      if (
+        !oldContact.available ||
+        (contact.available &&
+          contact.footprintError <= oldContact.footprintError + 1e-8 &&
+          Math.abs(contact.heightDelta) <= Math.max(0.005, Math.abs(oldContact.heightDelta)) + 1e-8)
+      )
+        continue;
+      const parent = state.candidates.find((candidate) => candidate.sceneId === relation.surfaceId);
+      const oldParent = parent && itemIn(current, parent.sceneId);
+      const nextParent = parent && itemIn(next, parent.sceneId);
+      const root =
+        oldParent && nextParent && !same(geometry(oldParent), geometry(nextParent))
+          ? parent!.sceneId
+          : id;
+      const group = supportSubtree(currentRelations, [root]);
+      for (const member of group) {
+        if (retained.has(member)) continue;
+        const before = itemIn(current, member);
+        const item = itemIn(draft, member);
+        const candidate = state.candidates.find((entry) => entry.sceneId === member);
+        if (!before || !candidate) continue;
+        const restore = (target: Item) => {
+          target.placement = { ...before.placement };
+          target.visual.scale = { ...before.visual.scale };
+        };
+        if (item) restore(item);
+        candidates = candidates.map((entry) => {
+          if (entry.sceneId !== member) return entry;
+          const excludedItem = entry.excludedItem && structuredClone(entry.excludedItem);
+          if (excludedItem) restore(excludedItem);
+          return {
+            ...entry,
+            supportId: candidate.supportId,
+            supportSource: candidate.supportSource,
+            ...(excludedItem ? { excludedItem } : {}),
+          };
+        });
+        retained.add(member);
+        protectedIds.add(member);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return { draft, candidates, retained };
+}
+
+/** Stable proposal references survive exclusions and saved-record rebinding. */
+function photoSupportState(
+  candidate: SceneReviewCandidate,
+  candidates: SceneReviewCandidate[],
+): PhotoSupportState {
+  const parent = candidates.find(
+    (entry) =>
+      entry.proposalId === candidate.supportId ||
+      entry.sceneId === candidate.supportId ||
+      (entry.seed?.sceneId !== undefined && entry.seed.sceneId === candidate.supportId),
+  );
+  return {
+    supportId: parent?.proposalId ?? candidate.supportId,
+    supportSource: candidate.supportSource,
+  };
+}
+
+function beforePhotoSupports(
+  state: SceneReviewState,
+  includeExcluded = false,
+): SceneReviewCandidate[] {
+  return state.candidates.map((candidate) => {
+    const snapshot = state.photoAlignment?.supports?.find(
+      (entry) => entry.proposalId === candidate.proposalId,
+    );
+    if (
+      !snapshot ||
+      (!candidate.included && !includeExcluded) ||
+      candidate.locks?.support ||
+      // A covering change and its contact height are one automatic edit. If
+      // later edits protect that height, retain the matching support as well.
+      candidate.locks?.position ||
+      photoHeightEdited(state, candidate) ||
+      candidate.supportSource === 'user' ||
+      !same(photoSupportState(candidate, state.candidates), snapshot.after)
+    )
+      return candidate;
+    return { ...candidate, ...snapshot.before };
+  });
+}
+
+function photoSupportSnapshots(
+  state: SceneReviewState,
+  beforeCandidates: SceneReviewCandidate[],
+  afterCandidates: SceneReviewCandidate[],
+) {
+  return state.candidates.map((candidate) => {
+    const saved = state.photoAlignment?.supports?.find(
+      (entry) => entry.proposalId === candidate.proposalId,
+    );
+    const before = beforeCandidates.find((entry) => entry.proposalId === candidate.proposalId)!;
+    const after = afterCandidates.find((entry) => entry.proposalId === candidate.proposalId)!;
+    return {
+      proposalId: candidate.proposalId,
+      before:
+        !candidate.included && saved
+          ? structuredClone(saved.before)
+          : photoSupportState(before, beforeCandidates),
+      after:
+        !candidate.included && saved
+          ? structuredClone(saved.after)
+          : photoSupportState(after, afterCandidates),
+      heightReference: structuredClone(
+        !candidate.included && saved ? saved.heightReference : candidate.heightReference,
+      ),
+    };
+  });
 }
 
 function restorePhotoFields(
@@ -572,12 +770,13 @@ function restorePhotoFields(
   before: Item,
   after: Item,
   candidate: SceneReviewState['candidates'][number],
+  preserveHeight: boolean,
 ) {
   if (!candidate.locks?.position) {
     for (const axis of ['x', 'y', 'z'] as const)
       if (
         Math.abs(current.placement[axis] - after.placement[axis]) < 1e-8 &&
-        !(axis === 'y' && candidate.heightReference?.source === 'user')
+        !(axis === 'y' && preserveHeight)
       )
         current.placement[axis] = before.placement[axis];
   }
@@ -624,9 +823,15 @@ export function fitSceneReviewToPhoto(
   base: Workspace,
   reference: PhotoReference,
 ): SceneReviewState {
-  const input = beforePhotoFit(state);
-  const fit = fitPhotoLayout(base, input, state.candidates, reference);
-  const refreshed = refreshSceneReview(state, base, fit.draft, { origin: 'geometry' });
+  const { draft: input, candidates } = preserveProtectedSupportGroups(
+    state,
+    beforePhotoFit(state),
+    beforePhotoSupports(state),
+  );
+  const fit = fitPhotoLayout(base, input, candidates, reference);
+  const refreshed = refreshSceneReview({ ...state, candidates: fit.candidates }, base, fit.draft, {
+    origin: 'geometry',
+  });
   return {
     ...refreshed,
     photoReference: {
@@ -641,12 +846,15 @@ export function fitSceneReviewToPhoto(
       camera: fit.camera,
       beforeError: fit.beforeError,
       afterError: fit.afterError,
+      afterRepairError: fit.afterRepairError,
+      repairSummary: fit.repairSummary,
       evaluations: fit.evaluations,
       changedIds: fit.changedIds,
       warnings: fit.warnings,
       beforeDraft: fit.beforeDraft,
       afterDraft: structuredClone(refreshed.draft),
       items: photoFitSnapshots(state, fit.beforeDraft, refreshed.draft),
+      supports: photoSupportSnapshots(state, candidates, refreshed.candidates),
     },
   };
 }
@@ -683,9 +891,15 @@ export function autoFitSceneReviewToPhoto(
         'The model reference was uncertain. This view was instead inferred from the visible object regions and template estimates.';
     }
   }
-  const input = beforePhotoFit(state);
-  const fit = fitPhotoLayoutFromRegions(base, input, state.candidates, aspect);
-  const refreshed = refreshSceneReview(state, base, fit.draft, { origin: 'geometry' });
+  const { draft: input, candidates } = preserveProtectedSupportGroups(
+    state,
+    beforePhotoFit(state),
+    beforePhotoSupports(state),
+  );
+  const fit = fitPhotoLayoutFromRegions(base, input, candidates, aspect);
+  const refreshed = refreshSceneReview({ ...state, candidates: fit.candidates }, base, fit.draft, {
+    origin: 'geometry',
+  });
   return {
     ...refreshed,
     photoAlignment: {
@@ -693,6 +907,8 @@ export function autoFitSceneReviewToPhoto(
       camera: fit.camera,
       beforeError: fit.beforeError,
       afterError: fit.afterError,
+      afterRepairError: fit.afterRepairError,
+      repairSummary: fit.repairSummary,
       evaluations: fit.evaluations,
       changedIds: fit.changedIds,
       warnings: automaticPhotoWarnings([
@@ -702,6 +918,7 @@ export function autoFitSceneReviewToPhoto(
       beforeDraft: fit.beforeDraft,
       afterDraft: structuredClone(refreshed.draft),
       items: photoFitSnapshots(state, fit.beforeDraft, refreshed.draft),
+      supports: photoSupportSnapshots(state, candidates, refreshed.candidates),
     },
   };
 }
@@ -720,26 +937,34 @@ function automaticPhotoWarnings(warnings: string[]): string[] {
 export function undoScenePhotoFit(state: SceneReviewState, base: Workspace): SceneReviewState {
   if (!state.photoAlignment) return state;
   const excluded = photoFitSnapshots(state);
-  const candidates = state.candidates.map((candidate) => {
+  const requestedCandidates = beforePhotoSupports(state, true).map((candidate) => {
     const snapshot = excluded.find((entry) => entry.proposalId === candidate.proposalId);
     if (!snapshot || !candidate.excludedItem) return candidate;
     const excludedItem = structuredClone(candidate.excludedItem);
-    restorePhotoFields(excludedItem, snapshot.before, snapshot.after, candidate);
+    restorePhotoFields(
+      excludedItem,
+      snapshot.before,
+      snapshot.after,
+      candidate,
+      photoHeightEdited(state, candidate),
+    );
     return { ...candidate, excludedItem };
   });
-  const draft = beforePhotoFit(state);
+  const { draft, candidates, retained } = preserveProtectedSupportGroups(
+    state,
+    beforePhotoFit(state),
+    requestedCandidates,
+  );
   const fitted = fitSceneProposalForReview(
     base,
     draft,
-    state.candidates
-      .filter((candidate) => candidate.included)
-      .map((candidate) => candidate.sceneId),
-    sceneReviewSupports(state.candidates),
+    candidates.filter((candidate) => candidate.included).map((candidate) => candidate.sceneId),
+    sceneReviewSupports(candidates),
     {
-      lockedIds: state.candidates
-        .filter((candidate) => candidate.locks?.position)
+      lockedIds: candidates
+        .filter((candidate) => candidate.locks?.position || retained.has(candidate.sceneId))
         .map((candidate) => candidate.sceneId),
-      heightReferences: state.candidates.flatMap((candidate) =>
+      heightReferences: candidates.flatMap((candidate) =>
         candidate.heightReference
           ? [{ itemId: candidate.sceneId, y: candidate.heightReference.y, maxDisplacement: 0.12 }]
           : [],

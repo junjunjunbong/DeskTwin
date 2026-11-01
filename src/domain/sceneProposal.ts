@@ -199,6 +199,16 @@ export type ScenePreview = {
     warnings: string[];
     beforeDraft: Workspace;
     afterDraft: Workspace;
+    /** Joint geometry repair and image refinement share the recorded camera. */
+    afterRepairError?: number;
+    repairSummary?: PhotoRepairSummary;
+    supports?: {
+      proposalId: string;
+      before: Pick<SceneReviewCandidate, 'supportId' | 'supportSource'>;
+      after: Pick<SceneReviewCandidate, 'supportId' | 'supportSource'>;
+      /** Distinguish earlier user heights from edits made after this fit. */
+      heightReference?: PhotoHeightReference;
+    }[];
     items?: {
       proposalId: string;
       before: Device | SceneObject;

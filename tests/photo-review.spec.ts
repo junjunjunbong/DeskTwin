@@ -368,6 +368,8 @@ test('automatic gap fitting can be compared, undone and reapplied without saving
   await expect(modal.getByRole('button', { name: 'Confirm and apply scene' })).toBeEnabled();
   expect(await saved(page)).toBeNull();
   await modal.getByRole('button', { name: 'Confirm and apply scene' }).click();
+  // Saving waits for the cross-tab Web Lock; a click can finish before the write.
+  await expect(modal).toBeHidden();
   const applied = (await saved(page))!;
   expect(applied.objects.find((item) => item.kind === 'wrist-rest')?.visual.scale.x).toBe(0.9);
   expect(JSON.stringify(applied)).not.toMatch(

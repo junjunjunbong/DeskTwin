@@ -6,6 +6,7 @@ import {
   getScenePlacementIssues,
   type ScenePlacementIssue,
   type SceneSupportRelation,
+  type SceneCollisionPair,
 } from './spatial';
 import { WorkspaceSchema, type Device, type SceneObject, type Workspace } from './workspace';
 
@@ -141,15 +142,16 @@ function supportDimensions(draft: Workspace, id: string, relations: SceneSupport
   return { width: 8.6, depth: 5.6 };
 }
 
-function score(
+export function scorePhotoLayout(
   base: Workspace,
   draft: Workspace,
   changed: string[],
   relations: SceneSupportRelation[],
   seeds: Map<string, PhotoPlacementSeed>,
+  cached?: { issues: ScenePlacementIssue[]; pairs: SceneCollisionPair[] },
 ): number[] {
-  const issues = getScenePlacementIssues(base, draft, changed, relations);
-  const pairs = getSceneCollisionPairs(draft, base).filter((pair) =>
+  const issues = cached?.issues ?? getScenePlacementIssues(base, draft, changed, relations);
+  const pairs = (cached?.pairs ?? getSceneCollisionPairs(draft, base)).filter((pair) =>
     pair.itemIds.some((id) => changed.includes(id)),
   );
   const displacement = allItems(draft).reduce((sum, item) => {
@@ -168,7 +170,7 @@ function score(
   ];
 }
 
-function less(a: number[], b: number[]): boolean {
+export function lessPhotoLayoutScore(a: number[], b: number[]): boolean {
   for (let i = 0; i < a.length; i++) {
     if (close(a[i], b[i])) continue;
     return a[i] < b[i];
@@ -265,7 +267,7 @@ export function repairPhotoLayout(
       .filter((issue) => issue.code !== 'collision')
       .map((issue) => `${issue.itemId}:${issue.message}`),
   );
-  let currentScore = score(base, draft, changed, relations, seeds);
+  let currentScore = scorePhotoLayout(base, draft, changed, relations, seeds);
   let evaluations = 0;
   let sweeps = 0;
   let stopped: PhotoRepairSummary['stopped'] = 'no-improvement';
@@ -373,8 +375,8 @@ export function repairPhotoLayout(
             heightReferences,
           }).draft;
           if (!acceptable(fitted)) continue;
-          const candidateScore = score(base, fitted, changed, relations, seeds);
-          if (less(candidateScore, bestScore)) {
+          const candidateScore = scorePhotoLayout(base, fitted, changed, relations, seeds);
+          if (lessPhotoLayoutScore(candidateScore, bestScore)) {
             best = fitted;
             bestScore = candidateScore;
           }

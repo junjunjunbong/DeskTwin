@@ -19,6 +19,7 @@ import {
   getScenePlacementIssues,
 } from './spatial';
 import { WorkspaceSchema, type Device, type SceneObject, type Workspace } from './workspace';
+import { repairPhotoJointLayout } from './photoJointRepair';
 
 type Item = Device | SceneObject;
 export type PhotoFitCandidate = PhotoPlacementCandidate & {
@@ -29,6 +30,7 @@ export type PhotoFitCandidate = PhotoPlacementCandidate & {
 };
 export type PhotoFitPolicy = {
   maxEvaluations: number;
+  maxRepairEvaluations: number;
   maxSweeps: number;
   maxPositionFraction: number;
   maxScaleFraction: number;
@@ -36,6 +38,7 @@ export type PhotoFitPolicy = {
 };
 const defaults: PhotoFitPolicy = {
   maxEvaluations: 256,
+  maxRepairEvaluations: 2048,
   maxSweeps: 4,
   maxPositionFraction: 0.15,
   maxScaleFraction: 0.2,
@@ -109,13 +112,13 @@ export function photoAlignmentError(
   );
 }
 
-/** Fit only an in-memory preview. The calibrated desk, retained objects and user
- * locks are anchors. Every accepted update reduces image loss without adding or
- * worsening geometric violations; independent apply validation remains required. */
-export function fitPhotoLayout(
+/** Fit only an in-memory preview. First repair support and component geometry,
+ * then reduce image loss with the same source camera. The reference, retained
+ * objects and user locks are anchors; independent apply validation is required. */
+export function fitPhotoLayout<C extends PhotoFitCandidate>(
   base: Workspace,
   input: Workspace,
-  candidates: PhotoFitCandidate[],
+  candidates: C[],
   reference: PhotoReference,
   policy: Partial<PhotoFitPolicy> = {},
 ) {
@@ -144,10 +147,10 @@ export function fitPhotoLayout(
 }
 
 /** Inferred source view from object observations; no user coordinate input. */
-export function fitPhotoLayoutFromRegions(
+export function fitPhotoLayoutFromRegions<C extends PhotoFitCandidate>(
   base: Workspace,
   input: Workspace,
-  candidates: PhotoFitCandidate[],
+  candidates: C[],
   aspect: number,
   policy: Partial<PhotoFitPolicy> = {},
 ) {
@@ -172,10 +175,10 @@ export function fitPhotoLayoutFromRegions(
   );
 }
 
-function fitAgainstPhotoView(
+function fitAgainstPhotoView<C extends PhotoFitCandidate>(
   base: Workspace,
   input: Workspace,
-  candidates: PhotoFitCandidate[],
+  candidates: C[],
   camera: PhotoCamera,
   anchorId: string | undefined,
   viewWarnings: string[],
@@ -187,22 +190,22 @@ function fitAgainstPhotoView(
     if (
       !Number.isFinite(value) ||
       value < 0 ||
-      ((key === 'maxEvaluations' || key === 'maxSweeps') && !Number.isInteger(value))
+      ((key === 'maxEvaluations' || key === 'maxRepairEvaluations' || key === 'maxSweeps') &&
+        !Number.isInteger(value))
     )
       throw new Error('Photo fitting limits must be finite, nonnegative values.');
   if (
     settings.maxEvaluations > 2048 ||
+    settings.maxRepairEvaluations > 4096 ||
     settings.maxSweeps > 16 ||
-    settings.maxPositionFraction > 0.3 ||
+    settings.maxPositionFraction > 0.15 ||
     settings.maxScaleFraction > 0.3 ||
     settings.maxRotationDegrees > 20
   )
     throw new Error('Photo fitting exceeds the supported preview search limits.');
-  const included = candidates.filter(
+  let included = candidates.filter(
     (candidate) => candidate.included && itemIn(input, candidate.sceneId),
   );
-  const byId = new Map(included.map((candidate) => [candidate.sceneId, candidate]));
-  const relations = photoPlacementSupports(included);
   const changed = included.map((candidate) => candidate.sceneId);
   const observed = included.filter(
     (candidate) =>
@@ -223,7 +226,25 @@ function fitAgainstPhotoView(
     );
   let draft = WorkspaceSchema.parse(structuredClone(input));
   const beforeError = photoAlignmentError(draft, observed, camera);
-  let currentError = beforeError;
+  // Infer the camera once, before any repair. Geometry repair can cross an image
+  // loss plateau; the following photo search uses this same fixed source view.
+  const repair = repairPhotoJointLayout(base, draft, candidates, {
+    anchorId,
+    imageError: (next) => photoAlignmentError(next, observed, camera),
+    maxEvaluations:
+      settings.maxEvaluations && settings.maxSweeps ? settings.maxRepairEvaluations : 0,
+    maxSweeps: 12,
+    maxPositionFraction: settings.maxPositionFraction,
+  });
+  draft = repair.draft;
+  candidates = repair.candidates;
+  included = candidates.filter(
+    (candidate) => candidate.included && itemIn(draft, candidate.sceneId),
+  );
+  const byId = new Map(included.map((candidate) => [candidate.sceneId, candidate]));
+  const relations = photoPlacementSupports(included);
+  let currentError = photoAlignmentError(draft, observed, camera);
+  const afterRepairError = currentError;
   let evaluations = 0;
   const scaleAnchor =
     draft.objects.find((item) => item.kind === 'desk') ?? itemIn(draft, anchorId ?? '');
@@ -494,6 +515,9 @@ function fitAgainstPhotoView(
     camera,
     beforeError,
     afterError: currentError,
+    afterRepairError,
+    candidates,
+    repairSummary: repair.summary,
     evaluations,
     changedIds,
     warnings,
