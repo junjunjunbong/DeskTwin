@@ -978,6 +978,45 @@ hr {
   align-items: center;
   gap: 7px;
 }
+.photo-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #dce5f1;
+  border-radius: 10px;
+  background: #f6f9fd;
+  color: #40566b;
+  font-size: 12px;
+}
+.photo-progress-indicator {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 2px solid #cbd9e8;
+  border-top-color: #426b9e;
+  border-radius: 50%;
+  animation: photo-progress-spin 1s linear infinite;
+}
+.photo-progress p {
+  margin: 3px 0 0;
+}
+.photo-progress .text-button {
+  margin-left: auto;
+  min-height: 44px;
+}
+@keyframes photo-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-progress-indicator {
+    animation: none;
+  }
+}
 .loading-dot {
   width: 6px;
   height: 6px;

@@ -107,6 +107,129 @@ test.afterEach(async ({ page }) => {
   expect((page as Page & { reviewErrors?: string[] }).reviewErrors).toEqual([]);
 });
 
+test('photo request remains active until the 65-second browser deadline', async ({ page }) => {
+  await page.addInitScript((fixture) => {
+    const originalFetch = window.fetch;
+    let attempts = 0;
+    window.fetch = (input, init) => {
+      if (input === '/api/photo') {
+        attempts++;
+        if (attempts > 1)
+          return Promise.resolve(
+            new Response(JSON.stringify({ mode: 'meta', ...fixture }), {
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          );
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      }
+      return originalFetch(input, init);
+    };
+  }, proposal());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 20;
+    canvas.height = 12;
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-timeout.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  });
+  await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  const analyze = page.getByRole('button', { name: 'Create scene preview with Meta' });
+  await expect(analyze).toBeEnabled();
+  const start = new Date('2026-01-01T00:00:00Z');
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(start);
+  await analyze.click();
+  const progress = page.getByLabel('Photo analysis progress');
+  await expect(progress).toContainText('Analyzing the photo');
+  await expect(progress.getByRole('button', { name: 'Cancel analysis' })).toBeVisible();
+  const timeout = page.getByRole('alert');
+  await page.clock.fastForward(64999);
+  await expect(timeout).toHaveCount(0);
+  await expect(progress).toContainText('64 s elapsed');
+  await page.clock.fastForward(1);
+  await expect(timeout).toContainText('Photo analysis timed out. Your workspace was not changed.');
+  await expect(timeout).toContainText('retry using the same photo and notes');
+  await page.getByRole('button', { name: 'Retry photo analysis' }).click();
+  await page.clock.runFor(10);
+  await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toBeVisible();
+});
+
+test('photo analysis can be canceled on a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch;
+    window.fetch = (input, init) =>
+      input === '/api/photo'
+        ? new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          })
+        : originalFetch(input, init);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 20;
+    canvas.height = 12;
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-cancel.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  });
+  await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  const cancel = page.getByRole('button', { name: 'Cancel analysis' });
+  await expect(cancel).toBeVisible();
+  await cancel.focus();
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByLabel('Photo analysis progress')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeEnabled();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('a server timeout offers a manual retry without losing photo consent', async ({ page }) => {
+  await page.route('**/api/photo', (route) =>
+    route.fulfill({
+      status: 504,
+      json: { error: 'The Meta response timed out. Your workspace was not changed.' },
+    }),
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 20;
+    canvas.height = 12;
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-server-timeout.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  });
+  const consent = page.getByRole('checkbox', { name: /I agree to send this photo/ });
+  await consent.check();
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await expect(page.getByRole('alert')).toContainText('retry using the same photo and notes');
+  await expect(consent).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Retry photo analysis' })).toBeEnabled();
+});
+
 test('photo processing times distinguish preparation, response checks and scene fitting without saving', async ({
   page,
 }) => {

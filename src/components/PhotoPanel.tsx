@@ -73,6 +73,7 @@ export function PhotoPanel({
   );
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
+  const [timedOut, setTimedOut] = useState(false);
   const [result, setResult] = useState<
     | (ReturnType<typeof buildScenePreview> & {
         base: Workspace;
@@ -117,13 +118,14 @@ export function PhotoPanel({
     const token = version.current;
     const controller = new AbortController();
     request.current = controller;
-    const timeout = setTimeout(() => controller.abort(), 40000);
+    const timeout = setTimeout(() => controller.abort(), 65000);
     const base = structuredClone(workspace);
     analysisStarted.current = performance.now();
     setElapsedSeconds(0);
     setPending(true);
     setPhase('analyzing');
     setError('');
+    setTimedOut(false);
     setApplied(false);
     try {
       const res = await fetch('/api/photo', {
@@ -140,7 +142,10 @@ export function PhotoPanel({
       const data = await res.json();
       const requestFinished = performance.now();
       if (token !== version.current) return;
-      if (!res.ok) throw new Error(data.error || 'Analysis failed.');
+      if (!res.ok) {
+        if (res.status === 504) setTimedOut(true);
+        throw new Error(data.error || 'Analysis failed.');
+      }
       if (data.mode !== 'meta')
         throw new Error('The photo response was not a Meta scene proposal.');
       // Transport measurements are separate from scene data. Older frozen replies omit them.
@@ -195,6 +200,7 @@ export function PhotoPanel({
       ]);
     } catch (e) {
       if (token !== version.current) return;
+      if (controller.signal.aborted) setTimedOut(true);
       setError(
         controller.signal.aborted
           ? 'Photo analysis timed out. Your workspace was not changed.'
@@ -268,6 +274,7 @@ export function PhotoPanel({
               const preparationStarted = performance.now();
               setPreparing(true);
               setError('');
+              setTimedOut(false);
               setConsent(false);
               setApplied(false);
               onPhoto(null);
@@ -337,13 +344,23 @@ export function PhotoPanel({
                   ? phase === 'fitting'
                     ? 'Preparing the scene preview...'
                     : 'Meta is analyzing the photo...'
-                  : 'Create scene preview with Meta'}
+                  : timedOut
+                    ? 'Retry photo analysis'
+                    : 'Create scene preview with Meta'}
               </button>
               {pending && (
-                <p className="micro-note" role="status" aria-label="Photo analysis progress">
-                  {phase === 'fitting' ? 'Fitting the proposed scene' : 'Analyzing the photo'} ·{' '}
-                  {elapsedSeconds} s elapsed
-                </p>
+                <div className="photo-progress" aria-label="Photo analysis progress">
+                  <span className="photo-progress-indicator" aria-hidden="true" />
+                  <div>
+                    <strong role="status">
+                      {phase === 'fitting' ? 'Preparing the scene preview' : 'Analyzing the photo'}
+                    </strong>
+                    <p aria-live="off">{elapsedSeconds} s elapsed</p>
+                  </div>
+                  <button className="text-button" onClick={cancel}>
+                    Cancel analysis
+                  </button>
+                </div>
               )}
               {!pending && timingSummary && <p className="micro-note">{timingSummary}</p>}
               {!pending && timingBreakdown.length > 0 && (
@@ -362,11 +379,6 @@ export function PhotoPanel({
                   </p>
                 </details>
               )}
-              {pending && (
-                <button className="text-button" onClick={cancel}>
-                  Cancel analysis
-                </button>
-              )}
             </>
           ) : (
             <div className="integration-note">
@@ -383,6 +395,7 @@ export function PhotoPanel({
           {error && (
             <p role="alert" className="form-error">
               {error}
+              {timedOut && ' You can retry using the same photo and notes.'}
             </p>
           )}
           {applied && (

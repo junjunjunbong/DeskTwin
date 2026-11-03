@@ -308,6 +308,7 @@ export async function callMetaScene(
     {
       messages,
       name: 'desktwin_scene',
+      defaultTimeoutMs: 60000,
       schema: sceneResponseSchema,
       maxTokens: 12000,
       signal: input.signal,
@@ -363,6 +364,7 @@ async function requestMeta<T>(
     name: string;
     schema: unknown;
     maxTokens: number;
+    defaultTimeoutMs?: number;
     signal?: AbortSignal;
   },
   validate: (raw: unknown) => T,
@@ -387,7 +389,7 @@ async function requestMeta<T>(
   const deadline = new AbortController();
   const timeout = setTimeout(
     () => deadline.abort(new DOMException('Provider deadline exceeded.', 'TimeoutError')),
-    config.timeoutMs ?? 35000,
+    config.timeoutMs ?? input.defaultTimeoutMs ?? 35000,
   );
   timeout.unref();
   const signal = input.signal ? AbortSignal.any([input.signal, deadline.signal]) : deadline.signal;
