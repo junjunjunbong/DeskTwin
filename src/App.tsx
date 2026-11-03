@@ -151,6 +151,25 @@ export default function App() {
     setPanel('setup');
     setDetailsExpanded(true);
   }
+  const removableSamples = store.workspace.devices.length - retainedDevices(store.workspace).length;
+  function clearSamples() {
+    return safe(async () => {
+      const devices = retainedDevices(store.workspace);
+      const ids = new Set(devices.map((d) => d.id));
+      const saved = await store.replace({
+        ...store.workspace,
+        devices,
+        connections: store.workspace.connections.filter((c) => ids.has(c.from) && ids.has(c.to)),
+      });
+      if (!saved) return false;
+      setToast(
+        'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
+      );
+    });
+  }
+  async function startOwnDesk() {
+    if (await clearSamples()) openSetup();
+  }
   function submit(e: FormEvent) {
     e.preventDefault();
     send(prompt);
@@ -661,6 +680,8 @@ export default function App() {
                 onAddObject={() => setDialog('object')}
                 onConnect={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
                 onSetup={openSetup}
+                removableSamples={removableSamples}
+                onStartOwnDesk={startOwnDesk}
                 hardwareSummary={
                   <HardwareSummary
                     hardware={hardware}
@@ -903,23 +924,7 @@ export default function App() {
                   }}
                   storageConflict={store.conflict}
                   onRefresh={assistant.refreshHealth}
-                  onClearDemo={() =>
-                    safe(async () => {
-                      const devices = retainedDevices(store.workspace);
-                      const ids = new Set(devices.map((d) => d.id));
-                      const saved = await store.replace({
-                        ...store.workspace,
-                        devices,
-                        connections: store.workspace.connections.filter(
-                          (c) => ids.has(c.from) && ids.has(c.to),
-                        ),
-                      });
-                      if (!saved) return false;
-                      setToast(
-                        'Unused example devices removed. Devices with user reports were kept. You can undo this change.',
-                      );
-                    })
-                  }
+                  onClearDemo={clearSamples}
                 />
               </Suspense>
             )}

@@ -150,6 +150,27 @@ test('supports manual connections and undo', async ({ page }) => {
   stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.connections).toHaveLength(7);
 });
+test('a first visit starts an own desk from the example without losing furniture', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  const start = overview.getByRole('region', { name: 'Start your own desk' });
+  await expect(start.getByText('This is an example desk')).toBeVisible();
+  await expect(start).toContainText('8 sample devices');
+  await start.getByRole('button', { name: 'Start my own desk' }).click();
+  await expect(page.getByRole('complementary', { name: 'Desk setup panel' })).toBeVisible();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(0);
+  const stored = (await saved(page))!;
+  expect(stored.connections).toHaveLength(0);
+  expect(stored.objects.length).toBe(createDemoWorkspace().objects.length);
+  await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  await expect(overview.getByRole('region', { name: 'Start your own desk' })).toHaveCount(0);
+  await expect(overview.getByRole('region', { name: 'Get started with your desk' })).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(8);
+  await expect(overview.getByRole('region', { name: 'Start your own desk' })).toBeVisible();
+});
 test('rejects invalid import without replacing the workspace', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Open settings' }).click();

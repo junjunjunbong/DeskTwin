@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   CheckCircle,
   Question,
@@ -39,6 +39,8 @@ export function WorkspaceOverview({
   onAddObject,
   onConnect,
   onSetup,
+  removableSamples = 0,
+  onStartOwnDesk,
   hardwareSummary,
   renderHardwareStatus,
 }: {
@@ -49,9 +51,13 @@ export function WorkspaceOverview({
   onAddObject: () => void;
   onConnect: () => void;
   onSetup?: () => void;
+  removableSamples?: number;
+  onStartOwnDesk?: () => Promise<void>;
   hardwareSummary?: ReactNode;
   renderHardwareStatus?: (device: Device) => ReactNode;
 }) {
+  const [starting, setStarting] = useState(false);
+  const exampleDesk = removableSamples > 0 && !!onStartOwnDesk;
   const issues = workspace.devices.filter((device) => device.status === 'reported-issue');
   const working = workspace.devices.filter((device) => device.status === 'reported-working').length;
   const unknown = workspace.devices.filter((device) => device.status === 'unknown').length;
@@ -60,7 +66,11 @@ export function WorkspaceOverview({
       <div className="panel-heading">
         <div>
           <span className="eyebrow">
-            {mode === 'edit' ? 'MAKE IT YOURS' : 'YOUR DESK AT A GLANCE'}
+            {mode === 'edit'
+              ? 'MAKE IT YOURS'
+              : exampleDesk
+                ? 'EXAMPLE DESK'
+                : 'YOUR DESK AT A GLANCE'}
           </span>
           <h2>{mode === 'edit' ? 'Edit your workspace' : 'Workspace overview'}</h2>
         </div>
@@ -72,14 +82,41 @@ export function WorkspaceOverview({
             ? 'Select an object to move it, adjust its shape, or change its color. Drag directly in the scene.'
             : 'Select a device to inspect its evidence, recorded connections, and user reports.'}
         </p>
-        {onSetup && (
-          <section className="setup-intro" aria-label="Get started with your desk">
-            <strong>Make this your desk</strong>
-            <p>Review devices, confirm connections, then work through a display issue.</p>
-            <button className="button primary full" onClick={onSetup}>
-              Open setup guide <ArrowRight size={16} />
+        {exampleDesk ? (
+          <section className="setup-intro example-start" aria-label="Start your own desk">
+            <strong>This is an example desk</strong>
+            <p>
+              {removableSamples} sample{' '}
+              {removableSamples === 1 ? 'device and its' : 'devices and their'} links are
+              placeholders, not your hardware. Start your own desk to remove them, then add your
+              devices with a photo or by hand. Furniture stays, and you can undo.
+            </p>
+            <button
+              className="button primary full"
+              disabled={starting}
+              onClick={async () => {
+                setStarting(true);
+                try {
+                  await onStartOwnDesk?.();
+                } finally {
+                  setStarting(false);
+                }
+              }}
+            >
+              {starting ? 'Clearing examples...' : 'Start my own desk'} <ArrowRight size={16} />
             </button>
+            <small>Or select an example device to look around first.</small>
           </section>
+        ) : (
+          onSetup && (
+            <section className="setup-intro" aria-label="Get started with your desk">
+              <strong>Make this your desk</strong>
+              <p>Review devices, confirm connections, then work through a display issue.</p>
+              <button className="button primary full" onClick={onSetup}>
+                Open setup guide <ArrowRight size={16} />
+              </button>
+            </section>
+          )
         )}
         <div className="overview-totals" aria-label="Workspace counts">
           <div>

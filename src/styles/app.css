@@ -2449,6 +2449,12 @@ hr {
   line-height: 1.5;
   font-size: 12px;
 }
+.setup-intro small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted, #756f63);
+  font-size: 11px;
+}
 .focused-path-banner {
   display: flex;
   align-items: center;
