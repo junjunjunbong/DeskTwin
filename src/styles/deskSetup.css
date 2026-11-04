@@ -208,6 +208,16 @@
 .desk-setup-edge > .text-button {
   margin-top: 6px;
 }
+.desk-setup-suggestions {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.desk-setup-suggestions .button.full {
+  margin-top: 0;
+  white-space: normal;
+  text-align: center;
+}
 .desk-setup-checks {
   display: grid;
   gap: 8px;

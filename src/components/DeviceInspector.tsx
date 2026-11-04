@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { X, Link, Trash, Check, PencilSimple, ChatCircleDots } from '@phosphor-icons/react';
 import type { ConnectionFocusPath } from '../domain/connectionView';
 import { DeviceIcon } from './ui';
@@ -30,6 +30,8 @@ interface Props {
   onReviewConnections?: () => void;
   hardwareDetails?: ReactNode;
   drafts: ReturnType<typeof useDeviceDrafts>;
+  focusCheck?: boolean;
+  onCheckFocused?: () => void;
 }
 export function DeviceInspector({
   device: d,
@@ -45,6 +47,8 @@ export function DeviceInspector({
   onReviewConnections,
   hardwareDetails,
   drafts,
+  focusCheck = false,
+  onCheckFocused,
 }: Props) {
   const draft = drafts.drafts[d.id];
   const { name, model, status, statusNote: note } = draft?.values ?? deviceDetails(d);
@@ -54,12 +58,20 @@ export function DeviceInspector({
   const [removingConnection, setRemovingConnection] = useState<string | null>(null);
   const [removalPending, setRemovalPending] = useState(false);
   const [removalError, setRemovalError] = useState('');
+  const diagnosticRef = useRef<HTMLDivElement>(null);
+  const checkFocusedRef = useRef(onCheckFocused);
+  checkFocusedRef.current = onCheckFocused;
   useEffect(() => {
     if (mode !== 'edit') {
       setRemovingConnection(null);
       setRemovalError('');
     }
   }, [mode]);
+  useEffect(() => {
+    if (!focusCheck) return;
+    if (d.kind === 'monitor') diagnosticRef.current?.scrollIntoView({ block: 'start' });
+    checkFocusedRef.current?.();
+  }, [focusCheck, d.id, d.kind]);
   const links = workspace.connections.filter((c) => c.from === d.id || c.to === d.id);
   return (
     <aside className="floating-panel inspector" aria-label="Selected device">
@@ -386,14 +398,16 @@ export function DeviceInspector({
           </button>
         )}
         {d.kind === 'monitor' && (
-          <DiagnosticPanel
-            key={d.id}
-            device={d}
-            workspace={workspace}
-            onCommand={async (c) => (await onCommand(c)) !== false}
-            onFocusPath={onFocusPath}
-            onReviewConnections={onReviewConnections}
-          />
+          <div ref={diagnosticRef}>
+            <DiagnosticPanel
+              key={d.id}
+              device={d}
+              workspace={workspace}
+              onCommand={async (c) => (await onCommand(c)) !== false}
+              onFocusPath={onFocusPath}
+              onReviewConnections={onReviewConnections}
+            />
+          </div>
         )}
         <div hidden={mode !== 'edit'}>
           {deleting ? (

@@ -30,7 +30,7 @@ import {
   CaretUp,
   Eye,
 } from '@phosphor-icons/react';
-import { useWorkspace, downloadFile } from './domain/useWorkspace';
+import { useWorkspace, downloadFile, STORAGE_KEY } from './domain/useWorkspace';
 import { useAssistant } from './domain/useAssistant';
 import { useHardware } from './domain/useHardware';
 import { portableWorkspace } from './domain/workspacePrivacy';
@@ -55,6 +55,7 @@ import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs
 import { Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
 import { DeskSetupPanel } from './components/DeskSetupPanel';
+import { setupConnectionForPair } from './domain/deskSetup';
 import type { ConnectionFocusPath } from './domain/connectionView';
 import {
   AddObjectDialog,
@@ -88,6 +89,8 @@ export default function App() {
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [photoContext, setPhotoContext] = useState('');
   const [focusPath, setFocusPath] = useState<ConnectionFocusPath | null>(null);
+  const [setupStep, setSetupStep] = useState<0 | 1 | 2>(0);
+  const [checkFocusId, setCheckFocusId] = useState<string | null>(null);
   const scene = useRef<CanvasHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -135,10 +138,23 @@ export default function App() {
     setFocusPath(path);
     setShowConnections(true);
   }
-  function openSetup() {
+  function openSetup(step: 0 | 1 | 2 = 0) {
+    setSetupStep(step);
     setSelected(null);
     setPanel('setup');
     setDetailsExpanded(true);
+  }
+  function focusSavedConnection(from: string, to: string) {
+    let current = workspace;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) current = parseWorkspace(JSON.parse(raw));
+    } catch {
+      current = workspace;
+    }
+    const edge = setupConnectionForPair(current, from, to);
+    if (!edge) return;
+    showPath({ deviceIds: [from, to], connectionIds: [edge.id] });
   }
   const removableSamples = store.workspace.devices.length - retainedDevices(store.workspace).length;
   function clearSamples() {
@@ -383,7 +399,7 @@ export default function App() {
               className={`nav-button ${panel === 'setup' ? 'active' : ''}`}
               aria-label="Setup guide"
               title="Setup guide"
-              onClick={openSetup}
+              onClick={() => openSetup()}
             >
               <Check size={22} />
             </button>
@@ -628,7 +644,7 @@ export default function App() {
                 onAdd={() => setDialog('device')}
                 onAddObject={() => setDialog('object')}
                 onConnect={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
-                onSetup={openSetup}
+                onSetup={() => openSetup()}
                 removableSamples={removableSamples}
                 onStartOwnDesk={startOwnDesk}
                 hardwareSummary={
@@ -661,7 +677,9 @@ export default function App() {
                   openPanel('assistant');
                 }}
                 onFocusPath={showPath}
-                onReviewConnections={openSetup}
+                onReviewConnections={() => openSetup()}
+                focusCheck={checkFocusId === device.id}
+                onCheckFocused={() => setCheckFocusId(null)}
                 hardwareDetails={
                   <DeviceHardwareStatus
                     device={device}
@@ -708,11 +726,17 @@ export default function App() {
                 onPhoto={() => openPanel('photo')}
                 onAddDevice={() => setDialog('device')}
                 onSelect={select}
-                onTroubleshoot={(id) => select(id)}
+                onTroubleshoot={(id) => {
+                  setMode('desk');
+                  setCheckFocusId(id);
+                  select(id);
+                }}
                 onClose={() => setPanel(null)}
                 editing={mode === 'edit'}
                 onEditConnections={() => setMode('edit')}
                 photoContext={photoContext}
+                initialStep={setupStep}
+                onConnectionSaved={focusSavedConnection}
               />
             )}
             {panel === 'assistant' && (
@@ -797,7 +821,7 @@ export default function App() {
                   onAdd={() => setDialog('device')}
                   onContinue={(context) => {
                     setPhotoContext(context);
-                    openSetup();
+                    openSetup(1);
                   }}
                   onApply={async (draft, base, review) => {
                     if (
@@ -848,9 +872,11 @@ export default function App() {
         <div className="composer-bottom">
           <span className="privacy-note">
             <span className="neutral-dot" />
-            {assistant.mode === 'demo'
-              ? 'Local demo · No external data sent'
-              : 'Meta model · Sends conversation and device setup'}
+            {assistant.mode === 'meta'
+              ? 'Meta model · Sends conversation and device setup'
+              : assistant.available
+                ? 'Chat: local demo · Photo analysis: Meta, after your consent'
+                : 'Local demo · No external data sent'}
           </span>
           <div className="quick-prompts">
             <button className="provider-toggle" onClick={() => setDialog('cloud')}>

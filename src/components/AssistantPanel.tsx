@@ -8,6 +8,8 @@ import {
 } from '../domain/assistantContext';
 import '../styles/assistantContext.css';
 import { statusLabels, type Connection, type Proposal, type Workspace } from '../domain/workspace';
+
+const focusedReplyIds = new Set<string>();
 interface Props {
   workspace: Workspace;
   messages: ChatMessage[];
@@ -83,6 +85,14 @@ export function AssistantPanel({
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages, pending]);
+  useEffect(() => {
+    const latest = messages.at(-1);
+    if (!latest || latest.role !== 'assistant' || !latest.focusDeviceId) return;
+    if (focusedReplyIds.has(latest.id)) return;
+    focusedReplyIds.add(latest.id);
+    const focus = assistantSceneFocus(workspace, latest.focusDeviceId);
+    if (focus) onFocusPath?.(focus);
+  }, [messages, workspace, onFocusPath]);
   const deviceName = (id: string) =>
     workspace.devices.find((d) => d.id === id)?.name || 'Deleted device';
   const title = (p: Proposal) =>

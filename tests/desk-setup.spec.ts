@@ -155,10 +155,17 @@ test('photo approval carries notes through reviewed connections, a saved monitor
     .getByRole('button', { name: 'Continue to device and connection review', exact: true })
     .click();
   const panel = page.getByRole('complementary', { name: 'Desk setup panel', exact: true });
-  await panel.getByRole('button', { name: '2. Connections', exact: true }).click();
+  await expect(panel.getByRole('button', { name: '2. Connections', exact: true })).toHaveAttribute(
+    'aria-current',
+    'step',
+  );
   await expect(panel).toContainText(note);
   expect((await saved(page)).connections).toHaveLength(0);
-  await panel.getByRole('button', { name: 'Review connection from my notes', exact: true }).click();
+  await panel
+    .getByRole('button', {
+      name: /^Review: Photo (?:dock|monitor) → Photo (?:dock|monitor) · HDMI$/,
+    })
+    .click();
   await expect(panel.getByLabel('Setup connector', { exact: true })).toHaveValue('HDMI');
   await panel.getByRole('button', { name: 'Edit connections', exact: true }).click();
   await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
@@ -356,4 +363,145 @@ test('setup stays inside the contextual panel on a narrow screen', async ({ page
   const scene = (await page.getByTestId('desk-canvas').boundingBox())!;
   expect(scene.height).toBeGreaterThan(100);
   await page.screenshot({ path: testInfo.outputPath('setup-mobile.png') });
+});
+
+test('photo notes open on connections, reveal the saved path, and scroll the monitor check into view', async ({
+  page,
+}) => {
+  const item = (
+    id: string,
+    kind: SceneProposalItem['kind'],
+    name: string,
+    x: number,
+    z: number,
+    y = 2.51,
+  ): SceneProposalItem => ({
+    id,
+    deviceId: null,
+    kind,
+    name,
+    placement: { x, y, z, rotation: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+    color: '#829575',
+    parts: [],
+    note: 'Synthetic photo fixture; approximate visual placement only.',
+  });
+  const fixture: SceneProposal = {
+    message: 'Review this synthetic photo scene.',
+    objects: [
+      item('desk', 'desk', 'Photo desk', 0, 0, 0),
+      item('left', 'monitor', 'Left computer monitor', -1.2, -0.9),
+      item('right', 'monitor', 'Right computer monitor', 1.6, -0.9),
+      item('dock', 'dock', 'Silver docking station', 0.2, 0.7),
+      item('laptop', 'laptop', 'Silver laptop', -2.8, 0.8),
+    ],
+  };
+  const note =
+    'The right monitor is connected to the dock with HDMI. The dock is connected to the laptop USB-C port. The right monitor shows nothing.';
+  await page.route('**/api/health', (route) =>
+    route.fulfill({ json: { mode: 'meta', model: 'visibility-fixture-only' } }),
+  );
+  await page.route('**/api/photo', (route) =>
+    route.fulfill({ json: { mode: 'meta', ...fixture } }),
+  );
+  await seed(page, createDemoWorkspace());
+  await expect(
+    page.getByText('Chat: local demo · Photo analysis: Meta, after your consent'),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const photo = page.getByRole('complementary', { name: 'Desk photo panel', exact: true });
+  const data = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    canvas.getContext('2d')!.fillRect(0, 0, 8, 8);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByLabel('Desk photo file').setInputFiles({
+    name: 'synthetic-visibility.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(data, 'base64'),
+  });
+  await photo.getByLabel('Device and connection notes', { exact: true }).fill(note);
+  await photo.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
+  await photo.getByRole('button', { name: 'Create scene preview with Meta', exact: true }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
+  const preview = page.getByRole('dialog', { name: 'Review your desk scene', exact: true });
+  await preview.getByRole('button', { name: 'Confirm and apply scene', exact: true }).click();
+  await expect(preview).toHaveCount(0);
+  await photo
+    .getByRole('button', { name: 'Continue to device and connection review', exact: true })
+    .click();
+  const panel = page.getByRole('complementary', { name: 'Desk setup panel', exact: true });
+  await expect(panel.getByRole('button', { name: '2. Connections', exact: true })).toHaveAttribute(
+    'aria-current',
+    'step',
+  );
+  await expect(panel).toContainText('The photo did not verify these connections.');
+  const hdmi = panel.getByRole('button', {
+    name: 'Review: Right computer monitor → Silver docking station · HDMI',
+    exact: true,
+  });
+  const usb = panel.getByRole('button', {
+    name: 'Review: Silver docking station → Silver laptop · USB-C',
+    exact: true,
+  });
+  await expect(hdmi).toBeVisible();
+  await expect(usb).toBeVisible();
+  await hdmi.click();
+  await expect(panel.getByLabel('Setup connector', { exact: true })).toHaveValue('HDMI');
+  await panel.getByRole('button', { name: 'Edit connections', exact: true }).click();
+  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
+  expect((await saved(page)).connections).toHaveLength(0);
+  await panel.getByRole('button', { name: 'Confirm connection', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'Show connections' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await expect(page.getByRole('region', { name: 'Focused connection path' })).toContainText(
+    'Right computer monitor',
+  );
+  await expect(page.getByRole('region', { name: 'Focused connection path' })).toContainText(
+    'Silver docking station',
+  );
+  await panel.getByRole('button', { name: 'Continue to a check', exact: true }).click();
+  await panel.getByRole('button', { name: /^Right computer monitor/ }).click();
+  await expect(
+    page
+      .getByRole('group', { name: 'Workspace mode' })
+      .getByRole('button', { name: 'View', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  const inspector = page.getByRole('complementary', { name: 'Selected device', exact: true });
+  await expect(
+    inspector.getByRole('button', { name: 'Troubleshoot monitor step by step', exact: true }),
+  ).toBeInViewport();
+});
+
+test('a local demo reply about the selected device focuses its recorded path', async ({ page }) => {
+  await seed(page, createDemoWorkspace());
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /Right monitor Monitor/ })
+    .click();
+  await expect(page.getByRole('region', { name: 'Focused connection path' })).toHaveCount(0);
+  await page
+    .getByRole('textbox', { name: 'Message DeskTwin' })
+    .fill('What should I check next for this monitor?');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const conversation = page.getByRole('complementary', {
+    name: 'DeskTwin conversation',
+    exact: true,
+  });
+  await expect(conversation.locator('.chat-message.assistant')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Focused connection path' })).toBeVisible();
+  await expect(
+    conversation.getByRole('button', {
+      name: 'Show current recorded path for Right monitor',
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Show connections' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
 });

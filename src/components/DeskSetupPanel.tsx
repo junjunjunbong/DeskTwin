@@ -4,7 +4,7 @@ import {
   setupConnectionCommand,
   setupConnectionForPair,
   setupConnectionQuestions,
-  setupSuggestionFromNotes,
+  setupSuggestionsFromNotes,
   type SetupConnectionDraft,
 } from '../domain/deskSetup';
 import { hardwareMatchCommand, linkedDevice } from '../domain/hardwareState';
@@ -32,6 +32,8 @@ export interface DeskSetupPanelProps {
   onTroubleshoot: (id: string) => void;
   onClose: () => void;
   photoContext?: string;
+  initialStep?: 0 | 1 | 2;
+  onConnectionSaved?: (from: string, to: string) => void;
 }
 
 type ConnectionReview = { draft: SetupConnectionDraft; previous: Connection | null };
@@ -64,8 +66,10 @@ export function DeskSetupPanel({
   onTroubleshoot,
   onClose,
   photoContext = '',
+  initialStep = 0,
+  onConnectionSaved,
 }: DeskSetupPanelProps) {
-  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [step, setStep] = useState<0 | 1 | 2>(initialStep);
   const questions = setupConnectionQuestions(workspace);
   const [draft, setDraft] = useState<SetupConnectionDraft>(() =>
     emptyDraft(questions[0]?.deviceId ?? workspace.devices[0]?.id),
@@ -82,7 +86,7 @@ export function DeskSetupPanel({
   const snapshot = hardware.snapshot;
   const confirmed = workspace.connections.filter((edge) => edge.source === 'user-reported');
   const samples = workspace.devices.filter((device) => device.source === 'demo');
-  const suggested = setupSuggestionFromNotes(photoContext, workspace);
+  const suggestions = setupSuggestionsFromNotes(photoContext, workspace);
   const name = (id: string) =>
     workspace.devices.find((device) => device.id === id)?.name ?? 'Removed device';
   const matchTarget = workspace.devices.find((device) => device.id === matchTargetId);
@@ -477,19 +481,25 @@ export function DeskSetupPanel({
                 <small>
                   Kept only in this open app. The photo did not verify these connections.
                 </small>
-                {suggested && (
-                  <button
-                    className="button secondary full"
-                    onClick={() => {
-                      setDraft(suggested);
-                      setReview(null);
-                      setError('');
-                    }}
-                  >
-                    Review connection from my notes
-                  </button>
+                {suggestions.length > 0 && (
+                  <div className="desk-setup-suggestions">
+                    {suggestions.map((suggestion) => (
+                      <button
+                        key={`${suggestion.from}:${suggestion.to}`}
+                        className="button secondary full"
+                        onClick={() => {
+                          setDraft(suggestion);
+                          setReview(null);
+                          setError('');
+                        }}
+                      >
+                        Review: {name(suggestion.from)} → {name(suggestion.to)} ·{' '}
+                        {suggestion.connector}
+                      </button>
+                    ))}
+                  </div>
                 )}
-                {!suggested && (
+                {suggestions.length === 0 && (
                   <p className="micro-note">
                     Select the two devices below to turn a connection you described into a record.
                   </p>
@@ -654,8 +664,10 @@ export function DeskSetupPanel({
                     void saveCommand(
                       () => setupConnectionCommand(workspace, review.draft, review.previous),
                       () => {
+                        const saved = review.draft;
                         setReview(null);
                         setDraft(emptyDraft());
+                        onConnectionSaved?.(saved.from, saved.to);
                       },
                       'Connection saved as user-reported. Working status is unchanged.',
                     )

@@ -327,7 +327,9 @@ test('Meta is off until explicitly enabled and provider errors preserve state', 
     await route.fulfill({ status: 502, json: { error: 'Test provider error' } });
   });
   await page.goto('/');
-  await expect(page.getByText('Local demo · No external data sent')).toBeVisible();
+  await expect(
+    page.getByText('Chat: local demo · Photo analysis: Meta, after your consent'),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Connect Meta API' }).click();
   await page.getByRole('button', { name: 'I understand what will be sent · Enable Meta' }).click();
   await page
