@@ -120,6 +120,7 @@ test('an open photo preview cannot overwrite a newer save from another tab', asy
   });
   await second.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await second.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await second.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const preview = second.getByRole('dialog', { name: 'Review your desk scene' });
   const apply = preview.getByRole('button', { name: 'Confirm and apply scene' });
   await expect(preview).toBeVisible();
@@ -267,6 +268,7 @@ test('a failed browser save keeps a photo preview open and does not consume an u
   });
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const preview = page.getByRole('dialog', { name: 'Review your desk scene' });
   await expect(preview).toBeVisible();
   const before = await page.evaluate((name) => localStorage.getItem(name), key);

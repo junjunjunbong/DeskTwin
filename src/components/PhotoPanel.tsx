@@ -8,6 +8,8 @@ import {
   buildScenePreview,
   type SceneReviewMetadata,
 } from '../domain/sceneProposal';
+import { setSceneCandidateIncluded, type SceneReviewState } from '../domain/sceneReview';
+import { PhotoObjectPicker } from './PhotoObjectPicker';
 import { ScenePreview } from './ScenePreview';
 import { PHOTO_ACCEPT, preparePhoto } from '../domain/photoInput';
 export { preparePhoto } from '../domain/photoInput';
@@ -79,6 +81,9 @@ export function PhotoPanel({
       })
     | null
   >(null);
+  const [stage, setStage] = useState<'pick' | 'review' | null>(null);
+  const [reviewState, setReviewState] = useState<SceneReviewState | null>(null);
+  const [pickerError, setPickerError] = useState('');
   const [applied, setApplied] = useState(false);
   useEffect(
     () => () => {
@@ -108,6 +113,43 @@ export function PhotoPanel({
     setTimingBreakdown([]);
     setPreparing(false);
     setResult(null);
+    setStage(null);
+    setReviewState(null);
+    setPickerError('');
+  }
+  function dismissResults() {
+    setResult(null);
+    setStage(null);
+    setReviewState(null);
+    setPickerError('');
+  }
+  function continueWith(included: ReadonlySet<string>) {
+    if (!result) return;
+    try {
+      let state: SceneReviewState = {
+        draft: result.draft,
+        observations: result.observations,
+        candidates: result.candidates,
+        issues: result.issues,
+        originalDraft: result.originalDraft,
+        adjustments: result.adjustments,
+        repairSummary: result.repairSummary,
+        photoReference: result.photoReference,
+      };
+      for (const candidate of result.candidates) {
+        if (included.has(candidate.proposalId)) continue;
+        state = setSceneCandidateIncluded(state, result.base, candidate.proposalId, false);
+      }
+      setReviewState(state);
+      setPickerError('');
+      setStage('review');
+    } catch (cause) {
+      setPickerError(
+        cause instanceof Error
+          ? cause.message.split('\n')[0]
+          : 'Could not apply the selected objects.',
+      );
+    }
   }
   async function analyze() {
     if (!photo || !consent || !available || pending || request.current) return;
@@ -170,6 +212,9 @@ export function PhotoPanel({
           ? serverTimings.data
           : null;
       setResult({ base, ...preview, message: parsed.data.message });
+      setReviewState(null);
+      setPickerError('');
+      setStage('pick');
       setTimingSummary(
         `Preview prepared in ${((previewReady - analysisStarted.current) / 1000).toFixed(1)} s · ${preview.candidates.length} candidate objects.`,
       );
@@ -434,25 +479,34 @@ export function PhotoPanel({
           )}
         </div>
       </aside>
-      {result && photo && (
+      {result && photo && stage === 'pick' && (
+        <PhotoObjectPicker
+          photo={photo}
+          candidates={result.candidates}
+          error={pickerError}
+          onDiscard={dismissResults}
+          onContinue={continueWith}
+        />
+      )}
+      {result && photo && stage === 'review' && reviewState && (
         <ScenePreview
           base={result.base}
-          initialDraft={result.draft}
-          initialObservations={result.observations}
-          initialCandidates={result.candidates}
-          initialIssues={result.issues}
-          initialOriginalDraft={result.originalDraft}
-          initialAdjustments={result.adjustments}
-          initialRepairSummary={result.repairSummary}
-          initialPhotoReference={result.photoReference}
+          initialDraft={reviewState.draft}
+          initialObservations={reviewState.observations}
+          initialCandidates={reviewState.candidates}
+          initialIssues={reviewState.issues}
+          initialOriginalDraft={reviewState.originalDraft}
+          initialAdjustments={reviewState.adjustments}
+          initialRepairSummary={reviewState.repairSummary}
+          initialPhotoReference={reviewState.photoReference}
           current={workspace}
           storageConflict={storageConflict}
           message={result.message}
           photo={photo}
-          onDiscard={() => setResult(null)}
+          onDiscard={dismissResults}
           onApply={async (draft, base, review) => {
             await onApply(draft, base, review);
-            setResult(null);
+            dismissResults();
             setApplied(true);
           }}
         />

@@ -49,6 +49,7 @@ test('the complete local photo response is repaired automatically, repeated and 
   });
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const modal = page.getByRole('dialog', { name: 'Review your desk scene' });
   await expect(modal).toBeVisible();
   await expect(modal.getByTestId('desk-canvas')).toBeVisible();

@@ -49,7 +49,7 @@ async function seed(page: Page, workspace: Workspace) {
     { key: storageKey, workspace },
   );
 }
-async function openPreview(
+async function openPicker(
   page: Page,
   fixture = proposal(),
   timings: unknown = {
@@ -59,6 +59,7 @@ async function openPreview(
     responseBytes: 800,
     objectCount: fixture.objects.length,
   },
+  notes = '',
 ) {
   await page.route('**/api/photo', (route) =>
     route.fulfill({
@@ -85,8 +86,26 @@ async function openPreview(
     mimeType: 'image/png',
     buffer: Buffer.from(image, 'base64'),
   });
+  if (notes) await page.getByLabel('Device and connection notes').fill(notes);
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose what to add' });
+  await expect(picker).toBeVisible();
+  return picker;
+}
+async function openPreview(
+  page: Page,
+  fixture = proposal(),
+  timings: unknown = {
+    providerMs: 15,
+    validationMs: 2,
+    totalMs: 17,
+    responseBytes: 800,
+    objectCount: fixture.objects.length,
+  },
+) {
+  const picker = await openPicker(page, fixture, timings);
+  await picker.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const modal = page.getByRole('dialog', { name: 'Review your desk scene' });
   await expect(modal).toBeVisible();
   await expect(modal.getByTestId('desk-canvas')).toBeVisible();
@@ -161,6 +180,7 @@ test('photo request remains active until the 65-second browser deadline', async 
   await expect(timeout).toContainText('retry using the same photo and notes');
   await page.getByRole('button', { name: 'Retry photo analysis' }).click();
   await page.clock.runFor(10);
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toBeVisible();
 });
 
@@ -698,4 +718,147 @@ test('review controls and reference comparison remain usable on a narrow screen'
   );
   await modal.getByRole('button', { name: 'Discard preview' }).click();
   expect(await saved(page)).toBeNull();
+});
+
+test('the object picker lists every found object before the 3D review', async ({ page }) => {
+  const base = createDemoWorkspace();
+  const savedMonitor = base.devices.find((item) => item.id === 'monitor-left')!;
+  savedMonitor.source = 'user-reported';
+  const fixture = proposal();
+  fixture.objects.find((item) => item.kind === 'monitor')!.deviceId = savedMonitor.id;
+  await seed(page, base);
+  const picker = await openPicker(page, fixture);
+  await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toHaveCount(0);
+  await expect(picker).toContainText(
+    'Meta found 3 objects in your photo. Uncheck anything you do not want in your desk scene. You can still change this in the next step.',
+  );
+  await expect(picker.getByRole('img', { name: 'Selected desk photo' })).toBeVisible();
+  for (const name of ['Photo desk', 'Photo monitor', 'Photo plant']) {
+    await expect(picker.getByRole('checkbox', { name: new RegExp(name) })).toBeChecked();
+  }
+  await expect(picker.getByText('Desk', { exact: true })).toBeVisible();
+  await expect(picker.getByText('Monitor', { exact: true })).toBeVisible();
+  await expect(picker.getByText('Plant', { exact: true })).toBeVisible();
+  await expect(picker.getByText('Updates your saved record', { exact: true })).toBeVisible();
+  const plant = picker.getByRole('checkbox', { name: /Photo plant/ });
+  await plant.focus();
+  await expect(plant).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(plant).not.toBeChecked();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  expect(await saved(page)).toEqual(base);
+});
+
+test('an unchecked object stays excluded, can be restored, and is absent after apply', async ({
+  page,
+}) => {
+  const picker = await openPicker(page);
+  await picker.getByRole('checkbox', { name: /Photo plant/ }).uncheck();
+  await picker.getByRole('button', { name: 'Continue with 2 objects', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Review your desk scene' });
+  await expect(modal).toBeVisible();
+  await expect(modal.getByTestId('desk-canvas')).toBeVisible();
+  const plant = modal.getByRole('checkbox', { name: 'Include Photo plant in scene' });
+  await expect(plant).not.toBeChecked();
+  expect(await saved(page)).toBeNull();
+  await modal.getByRole('button', { name: /Photo plant.*Excluded/ }).click();
+  await expect(modal.getByRole('region', { name: 'Excluded preview object' })).toBeVisible();
+  await modal.getByRole('button', { name: 'Restore to preview' }).click();
+  await expect(plant).toBeChecked();
+  expect(await saved(page)).toBeNull();
+  await plant.uncheck();
+  const apply = modal.getByRole('button', { name: 'Confirm and apply scene' });
+  await expect(apply).toBeEnabled();
+  await apply.click();
+  await expect(modal).toBeHidden();
+  const applied = (await saved(page))!;
+  expect([...applied.objects, ...applied.devices].some((item) => item.name === 'Photo plant')).toBe(
+    false,
+  );
+  expect(applied.objects.some((item) => item.name === 'Photo desk')).toBe(true);
+  expect(applied.devices.some((item) => item.name === 'Photo monitor')).toBe(true);
+});
+
+test('clear all disables continuing with the photo results', async ({ page }) => {
+  const picker = await openPicker(page);
+  const clear = picker.getByRole('button', { name: 'Clear all', exact: true });
+  await clear.focus();
+  await expect(clear).toBeFocused();
+  await page.keyboard.press('Enter');
+  const continueButton = picker.getByRole('button', {
+    name: 'Continue with 0 objects',
+    exact: true,
+  });
+  await expect(continueButton).toBeDisabled();
+  for (const name of ['Photo desk', 'Photo monitor', 'Photo plant']) {
+    await expect(picker.getByRole('checkbox', { name: new RegExp(name) })).not.toBeChecked();
+  }
+  const select = picker.getByRole('button', { name: 'Select all', exact: true });
+  await select.focus();
+  await page.keyboard.press('Enter');
+  await expect(
+    picker.getByRole('button', { name: 'Continue with 3 objects', exact: true }),
+  ).toBeEnabled();
+});
+
+test('discard photo results keeps the saved workspace and does not send another photo request', async ({
+  page,
+}) => {
+  let calls = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/photo') calls += 1;
+  });
+  const base = createDemoWorkspace();
+  await seed(page, base);
+  const notes = 'The closed laptop is my work computer.';
+  const picker = await openPicker(page, proposal(), undefined, notes);
+  expect(calls).toBe(1);
+  await picker.getByRole('button', { name: 'Discard photo results', exact: true }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toHaveCount(0);
+  expect(calls).toBe(1);
+  expect(await saved(page)).toEqual(base);
+  await expect(page.getByAltText('Desk reference photo selected by the user')).toBeVisible();
+  await expect(page.getByLabel('Device and connection notes')).toHaveValue(notes);
+  await expect(page.getByRole('checkbox', { name: /I agree to send this photo/ })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeEnabled();
+});
+
+test('the object picker scrolls its list without horizontal overflow on a phone', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = proposal();
+  for (let index = 0; index < 10; index += 1) {
+    fixture.objects.push(
+      candidate(
+        `mug-${index}`,
+        'mug',
+        `Photo mug ${index + 1}`,
+        -1.8 + (index % 5) * 0.9,
+        index < 5 ? 0.35 : 1.15,
+      ),
+    );
+  }
+  const picker = await openPicker(page, fixture);
+  const list = picker.getByRole('list', { name: 'Objects found in the photo' });
+  await expect(list.getByRole('checkbox')).toHaveCount(fixture.objects.length);
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight + 1)).toBe(
+    true,
+  );
+  const continueButton = picker.getByRole('button', { name: /^Continue with \d+ objects?$/ });
+  await expect(continueButton).toBeInViewport();
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(continueButton).toBeInViewport();
+  await expect(picker.getByRole('checkbox', { name: /Photo mug 10/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  expect(await picker.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
+    true,
+  );
 });

@@ -304,6 +304,7 @@ test('photo selection alone never sends an image; applying a scene needs a secon
   await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeDisabled();
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   await expect(page.getByRole('button', { name: 'Confirm and apply scene' })).toBeVisible();
   expect(calls).toBe(1);
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
