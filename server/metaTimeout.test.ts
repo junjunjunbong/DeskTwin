@@ -6,7 +6,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('provider deadlines', () => {
   it.each([
-    { request: 'photo', timeoutMs: undefined, deadline: 60000 },
+    { request: 'photo', timeoutMs: undefined, deadline: 120000 },
     { request: 'chat', timeoutMs: undefined, deadline: 35000 },
     { request: 'photo', timeoutMs: 1200, deadline: 1200 },
     { request: 'chat', timeoutMs: 1200, deadline: 1200 },

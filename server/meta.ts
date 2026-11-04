@@ -15,6 +15,7 @@ import {
 } from '../src/domain/workspace';
 import {
   buildSceneDraft,
+  normalizeSceneImageEvidence,
   PhotoObjectListSchema,
   SceneProposalSchema,
   type PhotoSelection,
@@ -276,7 +277,7 @@ export function validateSceneReply(
   workspace: Workspace,
   selection?: PhotoSelection,
 ): SceneProposal {
-  const proposal = SceneProposalSchema.parse(raw);
+  const proposal = SceneProposalSchema.parse(normalizeSceneImageEvidence(raw));
   if (selection) {
     const selected = new Map(selection.objects.map((object) => [object.id, object]));
     for (const object of proposal.objects) {
@@ -346,7 +347,7 @@ export async function callMetaScene(
     {
       messages,
       name: 'desktwin_scene',
-      defaultTimeoutMs: 60000,
+      defaultTimeoutMs: 120000,
       schema: sceneResponseSchema,
       maxTokens: 12000,
       signal: input.signal,
@@ -417,12 +418,12 @@ export async function callMetaPhotoObjects(
     {
       messages,
       name: 'desktwin_photo_objects',
-      defaultTimeoutMs: 30000,
+      defaultTimeoutMs: 90000,
       schema: photoObjectListResponseSchema,
-      maxTokens: 3000,
+      maxTokens: 8000,
       signal: input.signal,
     },
-    (raw) => PhotoObjectListSchema.parse(raw),
+    (raw) => PhotoObjectListSchema.parse(normalizeSceneImageEvidence(raw)),
   );
   const segmented = config.samEnabled
     ? await segmentPhotoObjects(config, input.image, parsed.value.objects, input.signal)

@@ -12,7 +12,9 @@ import {
   applySceneDraft,
   buildSceneDraft,
   buildScenePreview,
+  normalizeSceneImageEvidence,
   rebindSceneDevice,
+  SceneImageRegionSchema,
   SceneProposalSchema,
   type SceneProposal,
 } from './sceneProposal';
@@ -507,5 +509,193 @@ describe('photo scene draft isolation and evidence', () => {
     const fakeConnection = structuredClone(draft);
     fakeConnection.connections[0].connector = 'USB-C';
     expect(() => applySceneDraft(base, base, fakeConnection)).toThrow(/connections/);
+  });
+});
+
+describe('cropped image evidence', () => {
+  const corners = {
+    backLeft: { x: 0, y: 0.2 },
+    backRight: { x: 1, y: 0.2 },
+    frontRight: { x: 0.8, y: 0.9 },
+    frontLeft: { x: 0.15, y: 0.9 },
+  };
+
+  function withObject(patch: Partial<SceneProposal['objects'][number]>, index = 0): SceneProposal {
+    const input = proposal();
+    input.objects[index] = { ...input.objects[index], ...patch };
+    return input;
+  }
+
+  it('clips a region that crosses the frame and marks the object partial', () => {
+    const input = withObject({
+      imageRegion: { x: 0.77, y: 0.38, width: 0.27, height: 0.3 },
+      imageRegionVisibility: 'complete',
+      imageAnchor: { x: 0.9, y: 0.5 },
+    });
+    const before = structuredClone(input);
+    const normalized = normalizeSceneImageEvidence(input) as SceneProposal;
+    expect(input).toEqual(before);
+    const region = normalized.objects[0].imageRegion!;
+    expect(region.x).toBe(0.77);
+    expect(region.y).toBe(0.38);
+    expect(region.height).toBe(0.3);
+    expect(region.width).toBeCloseTo(0.23);
+    expect(region.x + region.width).toBeLessThanOrEqual(1);
+    expect(normalized.objects[0].imageRegionVisibility).toBe('partial');
+    expect(normalized.objects[0].imageAnchor).toEqual({ x: 0.9, y: 0.5 });
+    expect(normalized.objects[0].note).toBe(input.objects[0].note);
+    expect(normalized.objects[1]).toBe(input.objects[1]);
+    expect(() => SceneImageRegionSchema.parse(input.objects[0].imageRegion)).toThrow(
+      /within the reference image/,
+    );
+    expect(SceneProposalSchema.parse(normalized).objects[0].imageRegion?.width).toBeCloseTo(0.23);
+  });
+
+  it('clips a tiny float past the frame with the same rule', () => {
+    const input = withObject({
+      imageRegion: { x: 0, y: 0.2, width: 1.0000001, height: 0.3 },
+      imageRegionVisibility: 'unknown',
+    });
+    const normalized = normalizeSceneImageEvidence(input) as SceneProposal;
+    expect(normalized.objects[0].imageRegion).toEqual({ x: 0, y: 0.2, width: 1, height: 0.3 });
+    expect(normalized.objects[0].imageRegionVisibility).toBe('partial');
+    expect(SceneProposalSchema.parse(normalized)).toBeTruthy();
+  });
+
+  it('drops a region that misses the frame and only clears a complete visibility', () => {
+    const outside = { x: 1.2, y: 0.2, width: 0.3, height: 0.4 };
+    const complete = withObject({ imageRegion: outside, imageRegionVisibility: 'complete' });
+    const normalized = normalizeSceneImageEvidence(complete) as SceneProposal;
+    expect(normalized.objects[0].imageRegion).toBeNull();
+    expect(normalized.objects[0].imageRegionVisibility).toBe('unknown');
+    expect(SceneProposalSchema.parse(normalized)).toBeTruthy();
+
+    const partial = withObject({ imageRegion: outside, imageRegionVisibility: 'partial' });
+    expect(
+      (normalizeSceneImageEvidence(partial) as SceneProposal).objects[0].imageRegionVisibility,
+    ).toBe('partial');
+
+    const omitted = withObject({ imageRegion: { x: -1, y: 0.2, width: 0.4, height: 0.2 } });
+    const dropped = normalizeSceneImageEvidence(omitted) as SceneProposal;
+    expect(dropped.objects[0].imageRegion).toBeNull();
+    expect(dropped.objects[0].imageRegionVisibility).toBeUndefined();
+
+    const nonFinite = withObject({
+      imageRegion: { x: Number.NaN, y: 0.2, width: 0.2, height: 0.2 },
+      imageRegionVisibility: 'complete',
+      imageAnchor: { x: 0.4, y: Number.POSITIVE_INFINITY },
+    });
+    const cleared = normalizeSceneImageEvidence(nonFinite) as SceneProposal;
+    expect(cleared.objects[0].imageRegion).toBeNull();
+    expect(cleared.objects[0].imageRegionVisibility).toBe('unknown');
+    expect(cleared.objects[0].imageAnchor).toBeNull();
+  });
+
+  it('clips a negative origin to the frame edge and marks it partial', () => {
+    const input = withObject({
+      imageRegion: { x: -0.25, y: 0.25, width: 0.5, height: 0.5 },
+      imageRegionVisibility: 'complete',
+    });
+    const normalized = normalizeSceneImageEvidence(input) as SceneProposal;
+    expect(normalized.objects[0].imageRegion).toEqual({ x: 0, y: 0.25, width: 0.25, height: 0.5 });
+    expect(normalized.objects[0].imageRegionVisibility).toBe('partial');
+    const below = withObject({
+      imageRegion: { x: 0.25, y: 0.75, width: 0.25, height: 0.5 },
+      imageRegionVisibility: 'unknown',
+    });
+    const clipped = normalizeSceneImageEvidence(below) as SceneProposal;
+    expect(clipped.objects[0].imageRegion).toEqual({
+      x: 0.25,
+      y: 0.75,
+      width: 0.25,
+      height: 0.25,
+    });
+    expect(clipped.objects[0].imageRegionVisibility).toBe('partial');
+  });
+
+  it('drops an anchor or photo reference that leaves the frame without clamping it', () => {
+    const input = proposal();
+    input.objects[1] = {
+      ...input.objects[1],
+      id: 'desk-surface',
+      kind: 'desk',
+      name: 'Desk',
+      parts: [],
+      placement: { x: 0, y: 0, z: 0, rotation: 0 },
+    };
+    input.photoReference = { objectId: 'desk-surface', surface: 'tabletop', corners };
+    input.objects[0] = { ...input.objects[0], imageAnchor: { x: 0, y: 1 } };
+    expect(normalizeSceneImageEvidence(input)).toBe(input);
+    expect(SceneProposalSchema.parse(input).photoReference?.corners.backRight).toEqual({
+      x: 1,
+      y: 0.2,
+    });
+
+    const anchor = withObject({ imageAnchor: { x: 1.05, y: 0.4 } });
+    expect(
+      (normalizeSceneImageEvidence(anchor) as SceneProposal).objects[0].imageAnchor,
+    ).toBeNull();
+    const negative = withObject({ imageAnchor: { x: 0.2, y: -0.01 } });
+    expect(
+      (normalizeSceneImageEvidence(negative) as SceneProposal).objects[0].imageAnchor,
+    ).toBeNull();
+
+    const cropped = proposal();
+    cropped.photoReference = {
+      objectId: 'observed-monitor',
+      corners: { ...corners, backRight: { x: 1.04, y: 0.2 } },
+    };
+    const before = structuredClone(cropped);
+    const normalized = normalizeSceneImageEvidence(cropped) as SceneProposal;
+    expect(cropped).toEqual(before);
+    expect(normalized.photoReference).toBeNull();
+    expect(normalized.objects).toBe(cropped.objects);
+    expect(SceneProposalSchema.parse(normalized).photoReference).toBeNull();
+
+    const nonFinite = proposal();
+    nonFinite.photoReference = {
+      objectId: 'observed-monitor',
+      corners: { ...corners, frontLeft: { x: 0.15, y: Number.NaN } },
+    };
+    expect((normalizeSceneImageEvidence(nonFinite) as SceneProposal).photoReference).toBeNull();
+  });
+
+  it('leaves in-frame evidence and malformed non-objects untouched', () => {
+    const inside = withObject({
+      imageRegion: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+      imageRegionVisibility: 'complete',
+      imageAnchor: { x: 0.25, y: 0.4 },
+    });
+    expect(normalizeSceneImageEvidence(inside)).toBe(inside);
+    const malformed = {
+      ...proposal(),
+      objects: [{ ...proposal().objects[0], imageRegion: 'full', imageAnchor: [0.2, 0.4] }],
+    };
+    expect(normalizeSceneImageEvidence(malformed)).toBe(malformed);
+    expect(() => SceneProposalSchema.parse(malformed)).toThrow();
+  });
+
+  it('still rejects forbidden object fields after clipping a cropped region', () => {
+    for (const injected of [
+      { status: 'reported-working' },
+      { connections: [{ from: 'laptop', to: 'dock' }] },
+    ]) {
+      const raw = {
+        ...proposal(),
+        objects: [
+          {
+            ...proposal().objects[0],
+            ...injected,
+            imageRegion: { x: 0.77, y: 0.38, width: 0.27, height: 0.3 },
+          },
+        ],
+      };
+      const normalized = normalizeSceneImageEvidence(raw) as {
+        objects: Array<Record<string, unknown> & { imageRegion: { width: number } }>;
+      };
+      expect(normalized.objects[0]).toMatchObject(injected);
+      expect(normalized.objects[0].imageRegion.width).toBeCloseTo(0.23);
+      expect(() => SceneProposalSchema.parse(normalized)).toThrow();
+    }
   });
 });

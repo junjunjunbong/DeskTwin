@@ -135,7 +135,7 @@ describe('photo object inventory', () => {
     const [endpoint, options] = fetchImpl.mock.calls[0];
     expect(endpoint).toBe('https://api.meta.ai/v1/chat/completions');
     const sent = JSON.parse(String(options?.body));
-    expect(sent.max_completion_tokens).toBe(3000);
+    expect(sent.max_completion_tokens).toBe(8000);
     expect(sent.response_format.json_schema.name).toBe('desktwin_photo_objects');
     expect(sent.response_format.json_schema.strict).toBe(true);
     expect(sent.response_format.json_schema.schema).toEqual(photoObjectListResponseSchema);
@@ -227,7 +227,7 @@ describe('photo object inventory', () => {
       expect(body).not.toContain(privateValue);
   });
 
-  it('uses a 30 second inventory deadline and propagates cancellation', async () => {
+  it('uses a 90 second inventory deadline and propagates cancellation', async () => {
     vi.useFakeTimers();
     let signal: AbortSignal | undefined;
     const pending = callMetaPhotoObjects(
@@ -244,7 +244,7 @@ describe('photo object inventory', () => {
       { image: photoBody().image },
     );
     const timedOut = expect(pending).rejects.toMatchObject({ status: 504 });
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(89_999);
     expect(signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await timedOut;

@@ -233,7 +233,7 @@ export function PhotoPanel({
     const token = version.current;
     const controller = new AbortController();
     request.current = controller;
-    const timeout = setTimeout(() => controller.abort(), 65000);
+    const timeout = setTimeout(() => controller.abort(), 125000);
     setElapsedSeconds(0);
     setPending(true);
     setError('');
@@ -392,7 +392,7 @@ export function PhotoPanel({
     const timeout = setTimeout(() => {
       if (stopReason.current === null) stopReason.current = 'timeout';
       controller.abort();
-    }, 65000);
+    }, 125000);
     const placeStarted = performance.now();
     analysisStarted.current = placeStarted;
     setElapsedSeconds(0);

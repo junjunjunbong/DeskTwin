@@ -126,7 +126,7 @@ test.afterEach(async ({ page }) => {
   expect((page as Page & { reviewErrors?: string[] }).reviewErrors).toEqual([]);
 });
 
-test('photo request remains active until the 65-second browser deadline', async ({ page }) => {
+test('photo request remains active until the 125-second browser deadline', async ({ page }) => {
   await page.addInitScript((fixture) => {
     const originalFetch = window.fetch;
     let attempts = 0;
@@ -172,9 +172,9 @@ test('photo request remains active until the 65-second browser deadline', async 
   await expect(progress).toContainText('Analyzing the photo');
   await expect(progress.getByRole('button', { name: 'Cancel analysis' })).toBeVisible();
   const timeout = page.getByRole('alert');
-  await page.clock.fastForward(64999);
+  await page.clock.fastForward(124999);
   await expect(timeout).toHaveCount(0);
-  await expect(progress).toContainText('64 s elapsed');
+  await expect(progress).toContainText('124 s elapsed');
   await page.clock.fastForward(1);
   await expect(timeout).toContainText('Photo analysis timed out. Your workspace was not changed.');
   await expect(timeout).toContainText('retry using the same photo and notes');

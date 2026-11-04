@@ -22,11 +22,11 @@ The screen uses this split only when `META_PHOTO_TWO_STAGE=true`. Otherwise it s
 
 The same `MODEL_API_KEY` is used. An empty key still makes both photo routes return 503. The key stays on the server. The photo remains in the request body and is not written to disk or logs.
 
-`server/index.ts` reads these variables. A process-level `timeoutMs` on the server config, when set, replaces the 30 second inventory default the same way it replaces the scene default. SAM's 15 second and 25 second limits are separate and always apply.
+`server/index.ts` reads these variables. A process-level `timeoutMs` on the server config, when set, replaces the 90 second inventory default the same way it replaces the scene default. SAM's 15 second and 25 second limits are separate and always apply.
 
 ## Stage 1 — `POST /api/photo/objects`
 
-The body matches `POST /api/photo`: `image` (JPEG, PNG, or WebP data URL), `consent: true`, `workspace`, and optional `context` up to 2000 characters. The same local rate limit, 8 MB body limit, and error mapping apply. The provider call reuses the chat-completions transport with strict JSON schema, a 30 second default deadline, and `max_completion_tokens` of 3000.
+The body matches `POST /api/photo`: `image` (JPEG, PNG, or WebP data URL), `consent: true`, `workspace`, and optional `context` up to 2000 characters. The same local rate limit, 8 MB body limit, and error mapping apply. The provider call reuses the chat-completions transport with strict JSON schema, a 90 second default deadline, and `max_completion_tokens` of 8000. The completion budget includes reasoning tokens: a 2026-11-04 full-scene reply used 9,402 completion tokens, 6,293 of them for reasoning. Regions outside the frame are clipped the same way as in scene replies.
 
 ```json
 {
@@ -92,7 +92,7 @@ The client helper `findPhotoObjects` posts to `/api/photo/objects`. `photoSceneR
 
 When the flag is on:
 
-1. **Create scene preview with Meta** calls `findPhotoObjects` (`POST /api/photo/objects`). The progress line is “Meta is finding objects in the photo...”, with elapsed seconds, cancel, and the same 65 second browser limit.
+1. **Create scene preview with Meta** calls `findPhotoObjects` (`POST /api/photo/objects`). The progress line is “Meta is finding objects in the photo...”, with elapsed seconds, cancel, and the same 125 second browser limit. Placement uses the 120 second scene deadline and the same browser limit.
 2. **Choose what to add** lists the inventory. A row whose `regionSources` entry is `sam` shows “Outlined by SAM 3.1”. Any other source shows no region label. An empty inventory shows an error and does not open the picker.
 3. **Continue** closes the picker and posts `photoSceneRequest` to `POST /api/photo`. The progress line is “Meta is placing N selected objects...”. The same scene-proposal check and `buildScenePreview` path then open **Review your desk scene** directly.
 4. If placement fails, times out, or is canceled, the picker opens again with the same inventory and the same checks, and shows the error. **Continue** retries placement and does not call `/api/photo/objects` again.
