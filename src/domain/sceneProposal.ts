@@ -69,6 +69,120 @@ export const ScenePhotoReferenceSchema = z.strictObject({
   }),
 });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finiteCoordinate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function coordinateOutsideFrame(value: unknown): boolean {
+  return !finiteCoordinate(value) || value < 0 || value > 1;
+}
+
+function clipAxis(
+  start: number,
+  length: number,
+): { start: number; length: number; cropped: boolean } | null {
+  if (!(length > 0)) return null;
+  if (start >= 0 && start + length <= 1) return { start, length, cropped: false };
+  let nextStart = start;
+  let nextLength = length;
+  if (nextStart < 0) {
+    nextLength += nextStart;
+    nextStart = 0;
+  }
+  if (nextStart > 1 || !(nextLength > 0)) return null;
+  if (nextStart + nextLength > 1) nextLength = 1 - nextStart;
+  if (!(nextLength > 0)) return null;
+  return { start: nextStart, length: nextLength, cropped: true };
+}
+
+function normalizeImageRegion(
+  region: Record<string, unknown>,
+): { drop: true } | { drop: false; region?: Record<string, unknown> } {
+  const { x, y, width, height } = region;
+  if (
+    !finiteCoordinate(x) ||
+    !finiteCoordinate(y) ||
+    !finiteCoordinate(width) ||
+    !finiteCoordinate(height)
+  )
+    return { drop: true };
+  const horizontal = clipAxis(x, width);
+  const vertical = clipAxis(y, height);
+  if (!horizontal || !vertical) return { drop: true };
+  if (!horizontal.cropped && !vertical.cropped) return { drop: false };
+  return {
+    drop: false,
+    region: {
+      ...region,
+      x: horizontal.start,
+      y: vertical.start,
+      width: horizontal.length,
+      height: vertical.length,
+    },
+  };
+}
+
+const photoCornerNames = ['backLeft', 'backRight', 'frontRight', 'frontLeft'] as const;
+
+function normalizePhotoReference(reference: unknown): unknown {
+  if (!isRecord(reference) || !isRecord(reference.corners)) return reference;
+  for (const name of photoCornerNames) {
+    const point = reference.corners[name];
+    if (!isRecord(point)) continue;
+    if (coordinateOutsideFrame(point.x) || coordinateOutsideFrame(point.y)) return null;
+  }
+  return reference;
+}
+
+function normalizeSceneObject(item: unknown): unknown {
+  if (!isRecord(item)) return item;
+  const patch: Record<string, unknown> = {};
+  if (isRecord(item.imageRegion)) {
+    const normalized = normalizeImageRegion(item.imageRegion);
+    if (normalized.drop) {
+      patch.imageRegion = null;
+      if (item.imageRegionVisibility === 'complete') patch.imageRegionVisibility = 'unknown';
+    } else if (normalized.region) {
+      patch.imageRegion = normalized.region;
+      patch.imageRegionVisibility = 'partial';
+    }
+  }
+  if (
+    isRecord(item.imageAnchor) &&
+    (coordinateOutsideFrame(item.imageAnchor.x) || coordinateOutsideFrame(item.imageAnchor.y))
+  )
+    patch.imageAnchor = null;
+  return Object.keys(patch).length ? { ...item, ...patch } : item;
+}
+
+function normalizeSceneObjects(objects: unknown): unknown {
+  if (!Array.isArray(objects)) return objects;
+  let changed = false;
+  const next = objects.map((item) => {
+    const normalized = normalizeSceneObject(item);
+    if (normalized !== item) changed = true;
+    return normalized;
+  });
+  return changed ? next : objects;
+}
+
+/** Cropped objects may extend past the frame; keep the visible intersection. */
+export function normalizeSceneImageEvidence(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+  const objects = normalizeSceneObjects(raw.objects);
+  const photoReference = normalizePhotoReference(raw.photoReference);
+  if (objects === raw.objects && photoReference === raw.photoReference) return raw;
+  return {
+    ...raw,
+    ...(objects !== raw.objects ? { objects } : {}),
+    ...(photoReference !== raw.photoReference ? { photoReference } : {}),
+  };
+}
+
 /** A model may propose only bounded visual data, never executable geometry or device facts. */
 export const SceneProposalItemSchema = z.strictObject({
   id: IdSchema,

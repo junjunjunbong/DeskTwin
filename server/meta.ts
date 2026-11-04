@@ -15,6 +15,7 @@ import {
 } from '../src/domain/workspace';
 import {
   buildSceneDraft,
+  normalizeSceneImageEvidence,
   SceneProposalSchema,
   type SceneProposal,
 } from '../src/domain/sceneProposal';
@@ -263,7 +264,7 @@ TEMPLATE DIMENSIONS (unscaled scene units):
 ${JSON.stringify(sceneTemplateDimensions)}`;
 
 export function validateSceneReply(raw: unknown, workspace: Workspace): SceneProposal {
-  const proposal = SceneProposalSchema.parse(raw);
+  const proposal = SceneProposalSchema.parse(normalizeSceneImageEvidence(raw));
   // Semantic checks share the application's deterministic draft builder. Nothing is persisted.
   buildSceneDraft(workspace, proposal);
   return proposal;

@@ -388,6 +388,131 @@ describe('local API and Meta boundary', () => {
     ).toBe(400);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+  it('accepts a cropped image region by clipping it to the frame', () => {
+    const reply: unknown = {
+      ...sceneReply(),
+      objects: [
+        sceneReply().objects[0],
+        {
+          ...sceneReply().objects[1],
+          imageRegion: { x: 0.77, y: 0.38, width: 0.27, height: 0.3 },
+          imageRegionVisibility: 'complete',
+        },
+        {
+          ...sceneReply().objects[2],
+          imageRegion: { x: 0, y: 0.2, width: 1.0000001, height: 0.25 },
+          imageRegionVisibility: 'unknown',
+        },
+      ],
+    };
+    const accepted = validateSceneReply(reply, createDemoWorkspace());
+    const cropped = accepted.objects[1].imageRegion!;
+    expect(cropped.y).toBe(0.38);
+    expect(cropped.height).toBe(0.3);
+    expect(cropped.width).toBeCloseTo(0.23);
+    expect(cropped.x + cropped.width).toBeLessThanOrEqual(1);
+    expect(accepted.objects[1].imageRegionVisibility).toBe('partial');
+    expect(accepted.objects[2].imageRegion).toEqual({ x: 0, y: 0.2, width: 1, height: 0.25 });
+    expect(accepted.objects[2].imageRegionVisibility).toBe('partial');
+  });
+  it('drops a region outside the frame and clips one that crosses the left edge', () => {
+    const reply: unknown = {
+      ...sceneReply(),
+      objects: [
+        sceneReply().objects[0],
+        {
+          ...sceneReply().objects[1],
+          imageRegion: { x: 1.2, y: 0.2, width: 0.3, height: 0.4 },
+          imageRegionVisibility: 'complete',
+        },
+        {
+          ...sceneReply().objects[2],
+          imageRegion: { x: -0.25, y: 0.25, width: 0.5, height: 0.5 },
+          imageRegionVisibility: 'complete',
+        },
+      ],
+    };
+    const accepted = validateSceneReply(reply, createDemoWorkspace());
+    expect(accepted.objects[1].imageRegion).toBeNull();
+    expect(accepted.objects[1].imageRegionVisibility).toBe('unknown');
+    expect(accepted.objects[2].imageRegion).toEqual({ x: 0, y: 0.25, width: 0.25, height: 0.5 });
+    expect(accepted.objects[2].imageRegionVisibility).toBe('partial');
+  });
+  it('drops an out-of-frame anchor and photo reference instead of clamping them', () => {
+    const reply: unknown = {
+      ...sceneReply(),
+      objects: [
+        sceneReply().objects[0],
+        {
+          ...sceneReply().objects[1],
+          imageAnchor: { x: 1.2, y: 0.4 },
+          imageRegion: { x: 0.2, y: 0.2, width: 0.2, height: 0.2 },
+        },
+        sceneReply().objects[2],
+      ],
+      photoReference: {
+        objectId: 'photo-desk',
+        surface: 'tabletop',
+        corners: {
+          backLeft: { x: 0.1, y: 0.2 },
+          backRight: { x: 1.04, y: 0.2 },
+          frontRight: { x: 0.8, y: 0.8 },
+          frontLeft: { x: 0.2, y: 0.8 },
+        },
+      },
+    };
+    const accepted = validateSceneReply(reply, createDemoWorkspace());
+    expect(accepted.objects[1].imageAnchor).toBeNull();
+    expect(accepted.objects[1].imageRegion).toEqual({ x: 0.2, y: 0.2, width: 0.2, height: 0.2 });
+    expect(accepted.photoReference).toBeNull();
+  });
+  it('still rejects forbidden scene fields when an image region is out of frame', () => {
+    for (const injected of [
+      { status: 'reported-working' },
+      { connections: [{ from: 'a', to: 'b' }] },
+    ]) {
+      const reply: unknown = {
+        ...sceneReply(),
+        objects: [
+          {
+            ...sceneReply().objects[1],
+            ...injected,
+            imageRegion: { x: 0.77, y: 0.38, width: 0.27, height: 0.3 },
+          },
+        ],
+      };
+      expect(() => validateSceneReply(reply, createDemoWorkspace())).toThrow();
+    }
+  });
+  it('returns the clipped image region from photo analysis', async () => {
+    const reply = {
+      ...sceneReply(),
+      objects: [
+        sceneReply().objects[0],
+        {
+          ...sceneReply().objects[1],
+          imageRegion: { x: 0.77, y: 0.38, width: 0.27, height: 0.3 },
+          imageRegionVisibility: 'complete',
+        },
+        sceneReply().objects[2],
+      ],
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(upstream(reply));
+    const url = await app({ apiKey: 'test-key', fetchImpl });
+    const res = await post(url, '/api/photo', photoRequest());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.objects[1].imageRegion.x).toBe(0.77);
+    expect(body.objects[1].imageRegion.y).toBe(0.38);
+    expect(body.objects[1].imageRegion.height).toBe(0.3);
+    expect(body.objects[1].imageRegion.width).toBeCloseTo(0.23);
+    expect(body.objects[1].imageRegion.x + body.objects[1].imageRegion.width).toBeLessThanOrEqual(
+      1,
+    );
+    expect(body.objects[1].imageRegionVisibility).toBe('partial');
+    expect(body.objects[0].imageRegion).toBeUndefined();
+    expect(body.mode).toBe('meta');
+  });
   it('rejects photo responses containing connection, status or executable fields', async () => {
     const cases: unknown[] = [
       { ...sceneReply(), connections: [{ from: 'laptop', to: 'dock' }] },
