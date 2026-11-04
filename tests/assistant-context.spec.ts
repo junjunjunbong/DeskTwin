@@ -12,7 +12,10 @@ async function seed(page: Page, workspace: Workspace) {
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
 }
 async function send(page: Page, message: string) {
-  await page.getByRole('textbox', { name: 'Message DeskTwin' }).fill(message);
+  const input = page.getByRole('textbox', { name: 'Message DeskTwin' });
+  if (!(await input.isVisible()))
+    await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  await input.fill(message);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
 }
 

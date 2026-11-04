@@ -53,7 +53,10 @@ test('browser hardware consent, session, start, polling and stop cross the real 
   proxyStack: proxy,
 }) => {
   await page.goto(proxy.origin);
-  await page.getByRole('button', { name: 'Mac hardware', exact: true }).click();
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const hardware = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await hardware.getByRole('button', { name: 'Devices', exact: true }).click();
+  await hardware.getByRole('button', { name: 'Open Mac hardware details', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Mac hardware panel', exact: true });
   const start = panel.getByRole('button', { name: 'Start detection', exact: true });
   await expect(start).toBeDisabled();

@@ -285,9 +285,18 @@ test('pointer cancellation restores both desk and attached object without a save
 
 async function selectObject(page: Page, name: string) {
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
-  const list = page.getByRole('complementary', { name: 'Scene objects panel' });
-  await list.getByRole('button', { name: new RegExp(`^${name} `) }).click();
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const editing =
+    (await page
+      .getByRole('group', { name: 'Workspace mode' })
+      .getByRole('button', { name: 'Edit', exact: true })
+      .getAttribute('aria-pressed')) === 'true';
+  if (!editing) await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const room = overview.locator('details.room-objects');
+  if ((await room.getAttribute('open')) === null) await room.locator('summary').click();
+  await room.getByRole('button', { name: new RegExp(`^${name} `) }).click();
   await expect(page.getByRole('complementary', { name: 'Selected scene object' })).toBeVisible();
 }
 

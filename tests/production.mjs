@@ -77,7 +77,10 @@ try {
   await page.screenshot({ path: 'test-results/production.png' });
   // Exercise the local HEIC decoder through the production bundle and CSP. This
   // tiny red/blue fixture was generated for tests; no user photo is included.
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Build from a photo', exact: true })
+    .click();
   await page
     .getByLabel('Desk photo file')
     .setInputFiles(resolve('tests/fixtures/synthetic-rotated.heic'));

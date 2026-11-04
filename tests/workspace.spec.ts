@@ -3,12 +3,25 @@ import { startDiagnosis } from '../src/domain/diagnosis';
 import { createDemoWorkspace, type Workspace } from '../src/domain/workspace';
 const key = 'desktwin.workspace.v1';
 const eraseNotice =
-  'Your devices, connections and checks will be removed. The room stays. You can undo this right after.';
+  'Your devices, connections and checks will be removed, and the room returns to its default furniture. You can undo this right after.';
 async function saved(page: Page): Promise<Workspace | null> {
   return page.evaluate((name) => {
     const value = localStorage.getItem(name);
     return value ? JSON.parse(value) : null;
   }, key);
+}
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
+async function openChat(page: Page) {
+  const input = page.getByRole('textbox', { name: 'Message DeskTwin' });
+  if (!(await input.isVisible()))
+    await page.getByRole('button', { name: 'AI chat', exact: true }).click();
 }
 async function seed(page: Page, workspace: Workspace) {
   await page.addInitScript(({ storageKey, value }) => localStorage.setItem(storageKey, value), {
@@ -70,7 +83,7 @@ test('adds a device and persists across reload', async ({ page }) => {
   await page.goto('/');
   await page
     .getByRole('complementary', { name: 'Workspace overview', exact: true })
-    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .getByRole('button', { name: 'Add a device', exact: true })
     .click();
   const modal = page.getByRole('dialog', { name: 'Add device' });
   await modal.getByLabel('Device name').fill('Test display');
@@ -140,6 +153,7 @@ test('editing a legacy example device model preserves the saved name', async ({ 
 });
 test('conversation proposals require confirmation and never verify operation', async ({ page }) => {
   await page.goto('/');
+  await openChat(page);
   await page
     .getByRole('textbox', { name: 'Message DeskTwin' })
     .fill('I connected the right monitor to the dock with HDMI');
@@ -199,14 +213,18 @@ test('a first visit starts an own desk from the example without losing furniture
   await expect(start.getByText('This is an example desk')).toBeVisible();
   await expect(start).toContainText('8 sample devices');
   await start.getByRole('button', { name: 'Start my own desk' }).click();
-  await expect(page.getByRole('complementary', { name: 'Desk setup panel' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Hardware panel' })).toHaveCount(0);
+  await expect(overview).toBeVisible();
   await expect.poll(async () => (await saved(page))?.devices.length).toBe(0);
   const stored = (await saved(page))!;
   expect(stored.connections).toHaveLength(0);
   expect(stored.objects.length).toBe(createDemoWorkspace().objects.length);
-  await page.getByRole('button', { name: 'My desk', exact: true }).click();
   await expect(overview.getByRole('region', { name: 'Start your own desk' })).toHaveCount(0);
-  await expect(overview.getByRole('region', { name: 'Get started with your desk' })).toBeVisible();
+  await expect(
+    overview.getByRole('button', { name: 'Build from a photo', exact: true }),
+  ).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Add a device', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Add an object', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(async () => (await saved(page))?.devices.length).toBe(8);
   await expect(overview.getByRole('region', { name: 'Start your own desk' })).toBeVisible();
@@ -225,15 +243,13 @@ test('erasing my desk removes records, keeps the room and name, and undo restore
   await expect(settings.getByRole('group', { name: 'Start fresh confirmation' })).toHaveCount(0);
   await confirmation.getByRole('button', { name: 'Confirm erase my desk', exact: true }).click();
   await expect(settings).toHaveCount(0);
-  const setup = page.getByRole('complementary', { name: 'Desk setup panel' });
+  const setup = page.getByRole('complementary', { name: 'Hardware panel' });
   await expect(setup).toBeVisible();
-  await expect(setup.getByRole('button', { name: '1. Devices', exact: true })).toHaveAttribute(
+  await expect(setup.getByRole('button', { name: 'Devices', exact: true })).toHaveAttribute(
     'aria-current',
     'step',
   );
-  await expect(
-    page.getByText('Desk erased. The room stays. You can undo this change.'),
-  ).toBeVisible();
+  await expect(page.getByText('Desk erased. You can undo this change.')).toBeVisible();
   await expect.poll(async () => (await saved(page))?.devices.length).toBe(0);
   const stored = (await saved(page))!;
   expect(stored.connections).toHaveLength(0);
@@ -244,7 +260,9 @@ test('erasing my desk removes records, keeps the room and name, and undo restore
   await page.getByRole('button', { name: 'My desk', exact: true }).click();
   const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
   await expect(overview.getByRole('region', { name: 'Start your own desk' })).toHaveCount(0);
-  await expect(overview.getByRole('region', { name: 'Get started with your desk' })).toBeVisible();
+  await expect(
+    overview.getByRole('button', { name: 'Build from a photo', exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(async () => (await saved(page))?.devices.length).toBe(initial.devices.length);
@@ -292,7 +310,7 @@ test('canceling erase leaves the saved workspace unchanged', async ({ page }) =>
   await expect(
     settings.getByRole('heading', { name: 'Manage workspace', exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('complementary', { name: 'Desk setup panel' })).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Hardware panel' })).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Desk photo panel' })).toHaveCount(0);
   expect(await page.evaluate((storageKey) => localStorage.getItem(storageKey), key)).toBe(before);
 });
@@ -324,7 +342,7 @@ test('mobile layout fits the viewport and opens a usable device dialog', async (
   if (await expand.isVisible()) await expand.click();
   await page
     .getByRole('complementary', { name: 'Workspace overview', exact: true })
-    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .getByRole('button', { name: 'Add a device', exact: true })
     .click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -405,7 +423,7 @@ test('photo selection alone never sends an image; applying a scene needs a secon
     });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const dataURL = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 8;
@@ -445,6 +463,7 @@ test('Meta is off until explicitly enabled and provider errors preserve state', 
     await route.fulfill({ status: 502, json: { error: 'Test provider error' } });
   });
   await page.goto('/');
+  await openChat(page);
   await expect(
     page.getByText('Chat: local demo · Photo analysis: Meta, after your consent'),
   ).toBeVisible();
@@ -519,4 +538,43 @@ test('exports inspectable workspace JSON without chat or photos', async ({ page 
   expect(data.devices).toHaveLength(8);
   expect(data).not.toHaveProperty('messages');
   expect(data).not.toHaveProperty('photo');
+});
+test('the left nav has three tabs and chat lives in the AI chat panel', async ({ page }) => {
+  await page.goto('/');
+  const nav = page.getByRole('navigation', { name: 'Main navigation' });
+  await expect(nav.getByRole('button')).toHaveCount(3);
+  expect(
+    await nav
+      .getByRole('button')
+      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))),
+  ).toEqual(['My desk', 'Hardware', 'AI chat']);
+  await expect(page.locator('.command-area')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message DeskTwin' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  const chat = page.getByRole('complementary', { name: 'DeskTwin conversation', exact: true });
+  await expect(chat.getByRole('textbox', { name: 'Message DeskTwin' })).toBeVisible();
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+  await expect(chat.locator('.privacy-note')).toHaveText('Local demo · No external data sent');
+  await expect(chat.getByRole('button', { name: 'Connect Meta API', exact: true })).toBeVisible();
+});
+test('my desk builds from a photo, adds objects, and selects room furniture', async ({ page }) => {
+  await page.goto('/');
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await expect(overview.getByText('This is an example desk', { exact: true })).toBeVisible();
+  await expect(
+    overview.getByRole('button', { name: 'Build from a photo', exact: true }),
+  ).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Add a device', exact: true })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Add an object', exact: true })).toBeVisible();
+  await expect(
+    overview.getByRole('button', { name: 'Next: check connections in Hardware →', exact: true }),
+  ).toHaveCount(0);
+  await expect(overview.locator('.button.primary')).toHaveText(['Start my own desk']);
+  const room = overview.locator('details.room-objects');
+  await expect(room).not.toHaveAttribute('open');
+  await room.locator('summary').click();
+  await expect(room.getByRole('button', { name: /^Desk Desk / })).toBeVisible();
+  await room.getByRole('button', { name: /^Desk chair Chair / }).click();
+  const inspector = page.getByRole('complementary', { name: 'Selected scene object', exact: true });
+  await expect(inspector.getByRole('heading', { name: 'Desk chair', exact: true })).toBeVisible();
 });

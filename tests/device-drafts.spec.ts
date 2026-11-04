@@ -109,8 +109,10 @@ test('device drafts survive View, Home, device switches, close and other panels 
     .click();
   await page.getByLabel('Model optional').fill('Separate laptop draft');
   await page.getByRole('button', { name: 'Close device details' }).click();
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
-  await page.getByRole('button', { name: 'Change history', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Build from a photo', exact: true })
+    .click();
   await page.getByRole('button', { name: 'My desk', exact: true }).click();
   const drafts = page.getByRole('region', { name: 'Unsaved device drafts', exact: true });
   await expect(

@@ -5,14 +5,12 @@ import {
   Desktop,
   PencilSimple,
   Image as ImageIcon,
-  ClockCounterClockwise,
   GearSix,
   Plus,
   Minus,
   ArrowsOut,
   Sun,
   Moon,
-  ArrowUp,
   ArrowCounterClockwise,
   ArrowUUpLeft,
   ArrowUUpRight,
@@ -23,7 +21,6 @@ import {
   ChatCircleDots,
   Link,
   Hand,
-  Sparkle,
   Cpu,
   WarningCircle,
   CaretDown,
@@ -34,17 +31,11 @@ import { useWorkspace, downloadFile, STORAGE_KEY } from './domain/useWorkspace';
 import { useAssistant } from './domain/useAssistant';
 import { useHardware } from './domain/useHardware';
 import { portableWorkspace } from './domain/workspacePrivacy';
-import {
-  HardwarePanel,
-  HardwareSummary,
-  HardwareBadge,
-  DeviceHardwareStatus,
-} from './components/HardwarePanel';
+import { HardwarePanel, HardwareBadge, DeviceHardwareStatus } from './components/HardwarePanel';
 import {
   createDemoWorkspace,
   localizeLegacyDemoForDisplay,
   parseWorkspace,
-  sourceLabels,
   type Workspace,
   type WorkspaceCommand,
 } from './domain/workspace';
@@ -58,11 +49,7 @@ import { AssistantPanel } from './components/AssistantPanel';
 import { DeskSetupPanel } from './components/DeskSetupPanel';
 import { setupConnectionForPair } from './domain/deskSetup';
 import type { ConnectionFocusPath } from './domain/connectionView';
-import {
-  AddObjectDialog,
-  SceneObjectInspector,
-  SceneObjectList,
-} from './components/SceneObjectPanel';
+import { AddObjectDialog, SceneObjectInspector } from './components/SceneObjectPanel';
 import { applySceneDraft, retainedDevices } from './domain/sceneProposal';
 import { CommitTextInput } from './components/CommitInput';
 import { useDeviceDrafts } from './components/useDeviceDrafts';
@@ -71,8 +58,7 @@ const PhotoPanel = lazy(() =>
   import('./components/PhotoPanel').then((module) => ({ default: module.PhotoPanel })),
 );
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
-type Panel =
-  'objects' | 'assistant' | 'history' | 'settings' | 'photo' | 'hardware' | 'setup' | null;
+type Panel = 'assistant' | 'settings' | 'photo' | 'hardware' | 'setup' | null;
 
 function erasedDesk(current: Workspace): Workspace {
   const room = createDemoWorkspace();
@@ -105,10 +91,10 @@ export default function App() {
   const [photoContext, setPhotoContext] = useState('');
   const [focusPath, setFocusPath] = useState<ConnectionFocusPath | null>(null);
   const [setupStep, setSetupStep] = useState<0 | 1 | 2>(0);
+  const [hardwareVisit, setHardwareVisit] = useState(0);
   const [checkFocusId, setCheckFocusId] = useState<string | null>(null);
   const scene = useRef<CanvasHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const device = workspace.devices.find((d) => d.id === selected);
   const sceneObject = workspace.objects.find((o) => o.id === selected);
   const safe = async (run: () => unknown | Promise<unknown>): Promise<boolean> => {
@@ -153,8 +139,10 @@ export default function App() {
     setFocusPath(path);
     setShowConnections(true);
   }
-  function openSetup(step: 0 | 1 | 2 = 0) {
-    setSetupStep(step);
+  function openHardware(step?: 0 | 1 | 2) {
+    const next = step ?? (workspace.devices.length >= 2 ? 1 : 0);
+    setSetupStep(next);
+    setHardwareVisit((visit) => visit + 1);
     setSelected(null);
     setPanel('setup');
     setDetailsExpanded(true);
@@ -167,9 +155,9 @@ export default function App() {
     setPhotoContext('');
     setReferencePhoto(null);
     setStartOver(null);
-    setToast('Desk erased. The room stays. You can undo this change.');
+    setToast('Desk erased. You can undo this change.');
     if (action === 'photo') openPanel('photo');
-    else openSetup(0);
+    else openHardware(0);
   }
   function focusSavedConnection(from: string, to: string) {
     let current = workspace;
@@ -200,7 +188,7 @@ export default function App() {
     });
   }
   async function startOwnDesk() {
-    if (await clearSamples()) openSetup();
+    await clearSamples();
   }
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -356,6 +344,20 @@ export default function App() {
       )}
     </div>
   );
+  const detailLabel =
+    device?.name ||
+    sceneObject?.name ||
+    (panel === 'setup'
+      ? 'Hardware'
+      : panel === 'hardware'
+        ? 'Mac hardware'
+        : panel === 'assistant'
+          ? 'AI chat'
+          : panel === 'photo'
+            ? 'Desk photo'
+            : panel === 'settings'
+              ? 'Settings'
+              : 'Workspace overview');
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -423,47 +425,15 @@ export default function App() {
               <House size={22} />
             </button>
             <button
-              className={`nav-button ${panel === 'setup' ? 'active' : ''}`}
-              aria-label="Setup guide"
-              title="Setup guide"
-              onClick={() => openSetup()}
-            >
-              <Check size={22} />
-            </button>
-            <button
-              className={`nav-button ${panel === 'photo' ? 'active' : ''}`}
-              aria-label="Desk photo"
-              title="Desk photo"
-              onClick={() => openPanel('photo')}
-            >
-              <ImageIcon size={22} />
-            </button>
-            <button
-              className={`nav-button ${panel === 'objects' ? 'active' : ''}`}
-              aria-label="Scene objects"
-              title="Scene objects"
-              onClick={() => openPanel('objects')}
-            >
-              <Cube size={22} />
-            </button>
-            <button
-              className={`nav-button ${panel === 'hardware' ? 'active' : ''}`}
-              aria-label="Mac hardware"
-              title="Mac hardware"
-              onClick={() => openPanel('hardware')}
+              className={`nav-button ${panel === 'setup' || panel === 'hardware' ? 'active' : ''}`}
+              aria-label="Hardware"
+              title="Hardware"
+              onClick={() => {
+                if (panel !== 'setup') openHardware();
+              }}
             >
               <Cpu size={22} />
             </button>
-            <button
-              className={`nav-button ${panel === 'history' ? 'active' : ''}`}
-              aria-label="Change history"
-              title="Change history"
-              onClick={() => openPanel('history')}
-            >
-              <ClockCounterClockwise size={22} />
-            </button>
-          </div>
-          <div className="nav-bottom">
             <button
               className={`nav-button ${panel === 'assistant' ? 'active' : ''}`}
               aria-label="AI chat"
@@ -643,11 +613,7 @@ export default function App() {
             onClick={() => setDetailsExpanded((expanded) => !expanded)}
           >
             <span>
-              <strong>
-                {device?.name ||
-                  sceneObject?.name ||
-                  (panel ? `${panel[0].toUpperCase()}${panel.slice(1)}` : 'Workspace overview')}
-              </strong>
+              <strong>{detailLabel}</strong>
               <small>
                 {detailsExpanded
                   ? 'Collapse to make more room for your desk'
@@ -670,18 +636,10 @@ export default function App() {
                 onSelect={select}
                 onAdd={() => setDialog('device')}
                 onAddObject={() => setDialog('object')}
-                onConnect={() => (mode === 'edit' ? setDialog('connection') : setMode('edit'))}
-                onSetup={() => openSetup()}
+                onBuildFromPhoto={() => openPanel('photo')}
+                onCheckConnections={() => openHardware(1)}
                 removableSamples={removableSamples}
                 onStartOwnDesk={startOwnDesk}
-                hardwareSummary={
-                  <HardwareSummary
-                    hardware={hardware}
-                    workspace={workspace}
-                    onOpen={() => openPanel('hardware')}
-                    onSelect={select}
-                  />
-                }
                 renderHardwareStatus={(device) => (
                   <HardwareBadge device={device} snapshot={hardware.snapshot} />
                 )}
@@ -704,7 +662,7 @@ export default function App() {
                   openPanel('assistant');
                 }}
                 onFocusPath={showPath}
-                onReviewConnections={() => openSetup()}
+                onReviewConnections={() => openHardware(1)}
                 focusCheck={checkFocusId === device.id}
                 onCheckFocused={() => setCheckFocusId(null)}
                 hardwareDetails={
@@ -728,30 +686,24 @@ export default function App() {
                 onClose={() => setSelected(null)}
               />
             )}
-            {panel === 'objects' && (
-              <SceneObjectList
-                workspace={workspace}
-                onSelect={select}
-                onClose={() => setPanel(null)}
-                onAdd={() => setDialog('object')}
-              />
-            )}
             {panel === 'hardware' && (
               <HardwarePanel
                 hardware={hardware}
                 workspace={workspace}
                 onCommand={command}
                 onSelect={select}
-                onClose={() => setPanel(null)}
+                onClose={() => openHardware(0)}
               />
             )}
             {panel === 'setup' && (
               <DeskSetupPanel
+                key={hardwareVisit}
                 workspace={workspace}
                 hardware={hardware}
                 onCommand={command}
                 onPhoto={() => openPanel('photo')}
                 onAddDevice={() => setDialog('device')}
+                onOpenMacHardware={() => openPanel('hardware')}
                 onSelect={select}
                 onTroubleshoot={(id) => {
                   setMode('desk');
@@ -780,6 +732,11 @@ export default function App() {
                 onEditConnections={() => setMode('edit')}
                 onClose={() => setPanel(null)}
                 onSend={send}
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                onSubmit={submit}
+                available={assistant.available}
+                onOpenConnection={() => setDialog('cloud')}
                 onDismiss={(key) => assistant.decide(key, 'dismissed')}
                 onApply={(p, key, review) =>
                   safe(async () => {
@@ -790,45 +747,6 @@ export default function App() {
                   })
                 }
               />
-            )}
-            {panel === 'history' && (
-              <aside className="floating-panel" aria-label="Change history panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="eyebrow">A LITTLE MEMORY</span>
-                    <h2>Change history</h2>
-                  </div>
-                  <button
-                    className="icon-button"
-                    aria-label="Close history"
-                    onClick={() => setPanel(null)}
-                  >
-                    <X size={19} />
-                  </button>
-                </div>
-                <div className="panel-scroll">
-                  {workspace.history.length ? (
-                    workspace.history.map((event) => (
-                      <div className="history-item" key={event.id}>
-                        <ClockCounterClockwise size={18} />
-                        <div>
-                          <strong>{event.summary}</strong>
-                          <small>
-                            {new Date(event.at).toLocaleString('en-US')} ·{' '}
-                            {sourceLabels[event.source]}
-                          </small>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="empty-state">
-                      <ClockCounterClockwise size={36} />
-                      <h3>No changes yet</h3>
-                      <p>Changes to devices and connections will appear here.</p>
-                    </div>
-                  )}
-                </div>
-              </aside>
             )}
             {panel === 'photo' && (
               <Suspense
@@ -845,10 +763,9 @@ export default function App() {
                   available={assistant.available}
                   twoStage={assistant.photoTwoStage}
                   onClose={() => setPanel(null)}
-                  onAdd={() => setDialog('device')}
                   onContinue={(context) => {
                     setPhotoContext(context);
-                    openSetup(1);
+                    openHardware(1);
                   }}
                   onApply={async (draft, base, review) => {
                     if (
@@ -870,48 +787,6 @@ export default function App() {
           </div>
         </section>
       </div>
-      <footer className="command-area">
-        <form className="composer" onSubmit={submit}>
-          <span className="composer-star">
-            <Sparkle size={22} weight="fill" />
-          </span>
-          <input
-            ref={inputRef}
-            aria-label="Message DeskTwin"
-            maxLength={2000}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={
-              assistant.targetDevice
-                ? `Ask about ${assistant.targetDevice.name}, or describe what you checked.`
-                : 'Describe your devices, connections, or a problem you observed.'
-            }
-          />
-          <button
-            className="send-button"
-            type="submit"
-            aria-label="Send message"
-            disabled={!prompt.trim() || assistant.pending}
-          >
-            <ArrowUp size={22} weight="bold" />
-          </button>
-        </form>
-        <div className="composer-bottom">
-          <span className="privacy-note">
-            <span className="neutral-dot" />
-            {assistant.mode === 'meta'
-              ? 'Meta model · Sends conversation and device setup'
-              : assistant.available
-                ? 'Chat: local demo · Photo analysis: Meta, after your consent'
-                : 'Local demo · No external data sent'}
-          </span>
-          <div className="quick-prompts">
-            <button className="provider-toggle" onClick={() => setDialog('cloud')}>
-              {assistant.mode === 'meta' ? 'Meta connection settings' : 'Connect Meta API'}
-            </button>
-          </div>
-        </div>
-      </footer>
       {dialog === 'object' && (
         <AddObjectDialog onClose={() => setDialog(null)} onCommand={command} />
       )}
@@ -998,8 +873,8 @@ export default function App() {
             {startOver === 'photo' ? (
               <div className="delete-confirm" role="group" aria-label="Start fresh confirmation">
                 <p>
-                  Your devices, connections and checks will be removed. The room stays. You can undo
-                  this right after.
+                  Your devices, connections and checks will be removed, and the room returns to its
+                  default furniture. You can undo this right after.
                 </p>
                 <button
                   className="button danger"
@@ -1021,8 +896,8 @@ export default function App() {
             {startOver === 'erase' ? (
               <div className="delete-confirm" role="group" aria-label="Erase my desk confirmation">
                 <p>
-                  Your devices, connections and checks will be removed. The room stays. You can undo
-                  this right after.
+                  Your devices, connections and checks will be removed, and the room returns to its
+                  default furniture. You can undo this right after.
                 </p>
                 <button
                   className="button danger"

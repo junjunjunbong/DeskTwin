@@ -4,7 +4,6 @@ import {
   createSceneObject,
   ObjectKindSchema,
   objectKindLabels,
-  kindLabels,
   sourceLabels,
   type SceneObject,
   type SceneObjectPatch,
@@ -12,80 +11,40 @@ import {
   type WorkspaceCommand,
   type ObjectKind,
 } from '../domain/workspace';
-import { DeviceIcon, Modal } from './ui';
+import { Modal } from './ui';
 import { TransformEditor } from './TransformEditor';
 import { ShapeEditor } from './ShapeEditor';
 import { PlacementControls } from './PlacementControls';
 import { CommitTextInput } from './CommitInput';
 
-export function SceneObjectList({
+export function SceneObjectRows({
   workspace,
   onSelect,
-  onClose,
-  onAdd,
 }: {
   workspace: Workspace;
   onSelect: (id: string) => void;
-  onClose: () => void;
-  onAdd: () => void;
 }) {
-  const [search, setSearch] = useState('');
   return (
-    <aside className="floating-panel" aria-label="Scene objects panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">MAKE IT YOURS</span>
-          <h2>
-            Scene objects{' '}
-            <span className="count">{workspace.objects.length + workspace.devices.length}</span>
-          </h2>
-        </div>
-        <button className="icon-button" aria-label="Close scene objects" onClick={onClose}>
-          <X size={19} />
+    <>
+      {!workspace.appearance.decor && (
+        <p className="inference-note">
+          Decor is hidden. Turn it on in settings to see furniture and props.
+        </p>
+      )}
+      {workspace.objects.map((object) => (
+        <button className="device-list-row" key={object.id} onClick={() => onSelect(object.id)}>
+          <span className="list-device-glyph">
+            <Cube size={24} />
+          </span>
+          <span>
+            <strong>{object.name}</strong>
+            <small>
+              {objectKindLabels[object.kind]} · {sourceLabels[object.visual.source]}
+            </small>
+          </span>
         </button>
-      </div>
-      <div className="panel-scroll">
-        <input
-          className="search-input"
-          aria-label="Search scene objects"
-          placeholder="Search furniture, devices, decor..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {!workspace.appearance.decor && (
-          <p className="inference-note">
-            Decor is hidden. Turn it on in settings to see furniture and props.
-          </p>
-        )}
-        {[...workspace.objects, ...workspace.devices]
-          .filter((o) => `${o.name} ${o.kind}`.toLowerCase().includes(search.toLowerCase()))
-          .map((o) => (
-            <button className="device-list-row" key={o.id} onClick={() => onSelect(o.id)}>
-              <span className="list-device-glyph">
-                {'status' in o ? <DeviceIcon kind={o.kind} size={24} /> : <Cube size={24} />}
-              </span>
-              <span>
-                <strong>{o.name}</strong>
-                <small>
-                  {'status' in o ? kindLabels[o.kind] : objectKindLabels[o.kind]} ·{' '}
-                  {sourceLabels[o.visual.source]}
-                </small>
-              </span>
-            </button>
-          ))}
-        <button
-          className="button secondary full"
-          disabled={workspace.objects.length >= 60}
-          onClick={onAdd}
-        >
-          <Plus size={18} />
-          Add an object
-        </button>
-      </div>
-      <div className="panel-footnote">
-        Select an object to inspect it. Switch to Edit to change placement, size, color, and shape.
-      </div>
-    </aside>
+      ))}
+    </>
   );
 }
 

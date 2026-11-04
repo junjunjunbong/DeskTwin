@@ -108,7 +108,7 @@ export function HardwareSummary({
       )}
       <button className="text-button" onClick={onOpen}>
         <Cpu size={16} />
-        Open Mac hardware
+        Open Mac hardware details
         <ArrowRight size={14} />
       </button>
     </section>

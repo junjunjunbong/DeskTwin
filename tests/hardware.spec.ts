@@ -184,10 +184,24 @@ function hardwarePanel(page: Page) {
   return page.getByRole('complementary', { name: 'Mac hardware panel', exact: true });
 }
 async function openHardware(page: Page) {
-  await page.getByRole('button', { name: 'Mac hardware', exact: true }).click();
   const panel = hardwarePanel(page);
+  if (await panel.isVisible()) return panel;
+  const hardware = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  if (!(await hardware.isVisible()))
+    await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const devices = hardware.getByRole('button', { name: 'Devices', exact: true });
+  if ((await devices.getAttribute('aria-current')) !== 'step') await devices.click();
+  await hardware.getByRole('button', { name: 'Open Mac hardware details', exact: true }).click();
   await expect(panel).toBeVisible();
   return panel;
+}
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
 }
 async function start(page: Page) {
   const panel = await openHardware(page);
@@ -235,7 +249,10 @@ test('hardware reads need explicit local consent and keep observations out of th
 }) => {
   const initial = createDemoWorkspace();
   const bridge = await setup(page, initial);
-  const summary = page.getByRole('region', { name: 'OS detection summary', exact: true });
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const hardware = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await hardware.getByRole('button', { name: 'Devices', exact: true }).click();
+  const summary = hardware.getByRole('region', { name: 'OS detection summary', exact: true });
   await expect(summary).toContainText('Detection stopped');
   expect(bridge.calls.start + bridge.calls.snapshot).toBe(0);
   const panel = await openHardware(page);
@@ -319,7 +336,10 @@ test('matching is explicit, preserves existing evidence, prevents duplicates, an
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
   await expect.poll(() => saved(page)).toEqual(approved);
   await page.getByRole('button', { name: 'My desk', exact: true }).click();
-  const summary = page.getByRole('region', { name: 'OS detection summary', exact: true });
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const hardware = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await hardware.getByRole('button', { name: 'Devices', exact: true }).click();
+  const summary = hardware.getByRole('region', { name: 'OS detection summary', exact: true });
   await summary.getByRole('button', { name: 'Right monitor OS detected', exact: true }).click();
   await expect(
     inspector.getByRole('heading', { name: 'Right monitor', exact: true }),
@@ -737,6 +757,7 @@ test('provider payloads exclude OS-derived records and local-demo history while 
     summary: `Updated ${privateDevice.name}`,
   });
   const bridge = await setup(page, initial);
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
   const message = page.getByRole('textbox', { name: 'Message DeskTwin', exact: true });
   const send = page.getByRole('button', { name: 'Send message', exact: true });
   // The user's alias contains no private label; the offline reply reads the
@@ -828,7 +849,7 @@ test('provider payloads exclude OS-derived records and local-demo history while 
   expect(JSON.stringify(chats)).not.toContain(privateDevice.model);
   assertSafeContext(chats[1].workspace);
 
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 4;
@@ -863,6 +884,7 @@ test('provider payloads exclude OS-derived records and local-demo history while 
     page.getByRole('region', { name: 'OS detection summary', exact: true }),
   ).toContainText('4 OS observations · 2 matched desk devices');
   if (process.env.DESKTWIN_CAPTURE_REVIEW === '1') {
+    await page.getByRole('button', { name: 'AI chat', exact: true }).click();
     await page.getByRole('button', { name: 'Meta connection settings', exact: true }).click();
     await page
       .getByRole('button', { name: 'Turn off Meta and use the local demo', exact: true })

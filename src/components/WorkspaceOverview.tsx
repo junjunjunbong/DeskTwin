@@ -8,9 +8,11 @@ import {
   Plus,
   ArrowRight,
   Cube,
+  Image as ImageIcon,
 } from '@phosphor-icons/react';
 import { DeviceIcon } from './ui';
 import { kindLabels, sourceLabels, type Device, type Workspace } from '../domain/workspace';
+import { SceneObjectRows } from './SceneObjectPanel';
 
 export function ReportedStatus({ status }: { status: Device['status'] }) {
   const Icon =
@@ -37,11 +39,10 @@ export function WorkspaceOverview({
   onSelect,
   onAdd,
   onAddObject,
-  onConnect,
-  onSetup,
+  onBuildFromPhoto,
+  onCheckConnections,
   removableSamples = 0,
   onStartOwnDesk,
-  hardwareSummary,
   renderHardwareStatus,
 }: {
   workspace: Workspace;
@@ -49,18 +50,15 @@ export function WorkspaceOverview({
   onSelect: (id: string) => void;
   onAdd: () => void;
   onAddObject: () => void;
-  onConnect: () => void;
-  onSetup?: () => void;
+  onBuildFromPhoto: () => void;
+  onCheckConnections: () => void;
   removableSamples?: number;
   onStartOwnDesk?: () => Promise<void>;
-  hardwareSummary?: ReactNode;
   renderHardwareStatus?: (device: Device) => ReactNode;
 }) {
   const [starting, setStarting] = useState(false);
   const exampleDesk = removableSamples > 0 && !!onStartOwnDesk;
   const issues = workspace.devices.filter((device) => device.status === 'reported-issue');
-  const working = workspace.devices.filter((device) => device.status === 'reported-working').length;
-  const unknown = workspace.devices.filter((device) => device.status === 'unknown').length;
   return (
     <aside className="floating-panel workspace-overview" aria-label="Workspace overview">
       <div className="panel-heading">
@@ -82,7 +80,7 @@ export function WorkspaceOverview({
             ? 'Select an object to move it, adjust its shape, or change its color. Drag directly in the scene.'
             : 'Select a device to inspect its evidence, recorded connections, and user reports.'}
         </p>
-        {exampleDesk ? (
+        {exampleDesk && (
           <section className="setup-intro example-start" aria-label="Start your own desk">
             <strong>This is an example desk</strong>
             <p>
@@ -107,17 +105,37 @@ export function WorkspaceOverview({
             </button>
             <small>Or select an example device to look around first.</small>
           </section>
-        ) : (
-          onSetup && (
-            <section className="setup-intro" aria-label="Get started with your desk">
-              <strong>Make this your desk</strong>
-              <p>Review devices, confirm connections, then work through a display issue.</p>
-              <button className="button primary full" onClick={onSetup}>
-                Open setup guide <ArrowRight size={16} />
-              </button>
-            </section>
-          )
         )}
+        <section className="setup-intro desk-build" aria-label="Build your desk">
+          <button
+            className={`button ${exampleDesk ? 'secondary' : 'primary'} full`}
+            onClick={onBuildFromPhoto}
+          >
+            <ImageIcon size={16} />
+            Build from a photo
+          </button>
+          <button
+            className="button secondary full"
+            onClick={onAdd}
+            disabled={workspace.devices.length >= 40}
+          >
+            <Plus size={16} />
+            Add a device
+          </button>
+          <button
+            className="button secondary full"
+            onClick={onAddObject}
+            disabled={workspace.objects.length >= 60}
+          >
+            <Cube size={16} />
+            Add an object
+          </button>
+          {workspace.devices.length > 0 && !exampleDesk && (
+            <button className="text-button" onClick={onCheckConnections}>
+              Next: check connections in Hardware →
+            </button>
+          )}
+        </section>
         <div className="overview-totals" aria-label="Workspace counts">
           <div>
             <Desktop size={19} aria-hidden="true" />
@@ -130,28 +148,6 @@ export function WorkspaceOverview({
             <span>recorded links</span>
           </div>
         </div>
-        {hardwareSummary}
-        <section className="overview-reports" aria-label="User report summary">
-          <h3>User reports</h3>
-          <div className="report-counts">
-            <span>
-              <CheckCircle size={16} aria-hidden="true" />
-              <strong>{working}</strong> working
-            </span>
-            <span>
-              <WarningCircle size={16} aria-hidden="true" />
-              <strong>{issues.length}</strong> issues
-            </span>
-            <span>
-              <Question size={16} aria-hidden="true" />
-              <strong>{unknown}</strong> to check
-            </span>
-          </div>
-          <p className="micro-note">
-            User reports and OS recognition are separate evidence. Recognition alone does not verify
-            that a device works.
-          </p>
-        </section>
         {issues.length > 0 && (
           <section className="attention-list" aria-label="Devices with reported issues">
             <h3>
@@ -199,34 +195,10 @@ export function WorkspaceOverview({
             </p>
           )}
         </section>
-        <div className="overview-actions">
-          <button
-            className="button secondary full"
-            onClick={onAdd}
-            disabled={workspace.devices.length >= 40}
-          >
-            <Plus size={16} />
-            Add a device manually
-          </button>
-          {mode === 'edit' && (
-            <button
-              className="button secondary full"
-              onClick={onAddObject}
-              disabled={workspace.objects.length >= 60}
-            >
-              <Cube size={16} />
-              Add an object
-            </button>
-          )}
-          <button
-            className="text-button"
-            onClick={onConnect}
-            disabled={workspace.devices.length < 2}
-          >
-            <ShareNetwork size={16} />
-            {mode === 'edit' ? 'Record a connection' : 'Edit connections'}
-          </button>
-        </div>
+        <details className="room-objects">
+          <summary>Room objects ({workspace.objects.length})</summary>
+          <SceneObjectRows workspace={workspace} onSelect={onSelect} />
+        </details>
         <p className="micro-note">
           Example data, photo estimates, and user records keep their own sources. Recorded links
           include Bluetooth and do not establish physical cable routes.

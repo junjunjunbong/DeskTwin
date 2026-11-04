@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Sparkle, X, Check, ArrowRight } from '@phosphor-icons/react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Sparkle, X, Check, ArrowRight, ArrowUp } from '@phosphor-icons/react';
 import type { ChatMessage } from '../domain/useAssistant';
 import {
   assistantSceneFocus,
@@ -29,6 +29,11 @@ interface Props {
   onClose: () => void;
   editing: boolean;
   onEditConnections: () => void;
+  prompt: string;
+  onPromptChange: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+  available: boolean;
+  onOpenConnection: () => void;
 }
 export function AssistantPanel({
   workspace,
@@ -42,6 +47,11 @@ export function AssistantPanel({
   onClose,
   editing,
   onEditConnections,
+  prompt,
+  onPromptChange,
+  onSubmit,
+  available,
+  onOpenConnection,
   targetDeviceId = null,
   onTargetChange,
   onFocusPath,
@@ -115,6 +125,13 @@ export function AssistantPanel({
             <small className="muted">
               {mode === 'demo' ? 'Local demo · no LLM connected' : 'Meta AI · server connected'}
             </small>
+            <button
+              type="button"
+              className="provider-toggle assistant-connect"
+              onClick={onOpenConnection}
+            >
+              {mode === 'meta' ? 'Meta connection settings' : 'Connect Meta API'}
+            </button>
           </div>
         </div>
         <button className="icon-button" aria-label="Close conversation" onClick={onClose}>
@@ -330,6 +347,40 @@ export function AssistantPanel({
           {applyError}
         </p>
       )}
+      <form className="assistant-composer" onSubmit={onSubmit}>
+        <div className="composer">
+          <span className="composer-star">
+            <Sparkle size={22} weight="fill" />
+          </span>
+          <input
+            aria-label="Message DeskTwin"
+            maxLength={2000}
+            value={prompt}
+            onChange={(event) => onPromptChange(event.target.value)}
+            placeholder={
+              target
+                ? `Ask about ${target.name}, or describe what you checked.`
+                : 'Describe your devices, connections, or a problem you observed.'
+            }
+          />
+          <button
+            className="send-button"
+            type="submit"
+            aria-label="Send message"
+            disabled={!prompt.trim() || pending}
+          >
+            <ArrowUp size={22} weight="bold" />
+          </button>
+        </div>
+        <span className="privacy-note">
+          <span className="neutral-dot" />
+          {mode === 'meta'
+            ? 'Meta model · Sends conversation and device setup'
+            : available
+              ? 'Chat: local demo · Photo analysis: Meta, after your consent'
+              : 'Local demo · No external data sent'}
+        </span>
+      </form>
       <div className="panel-footnote">
         {mode === 'demo'
           ? 'The local demo does not send data to an external API.'

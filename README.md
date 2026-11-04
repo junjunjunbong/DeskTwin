@@ -4,11 +4,11 @@
 
 DeskTwin은 책상을 넓게 보여주는 **실제 3D voxel 작업실**과, 기기·연결 관계를 함께 수정하는 workspace companion입니다. 그림을 배경으로 붙인 UI가 아닙니다. Three.js 장면에서 기기와 가구·소품을 선택하고, 위치·회전·크기·색을 편집하며 연결을 기록할 수 있습니다.
 
-> 아래 화면은 처음 열었을 때의 예시 책상입니다. 기기 8개와 연결 7개는 예시이며 실제 감지 결과가 아닙니다. 오른쪽 패널의 **Start my own desk**를 누르면 예시 기기를 비우고 설정 안내가 열립니다. [초기 구현 검증 기록](docs/VALIDATION.md)과 [PR #4 검토 후 수정·검증 기록](docs/PR4_REVIEW_FIXES.md)을 참고하세요.
+> 아래 화면은 처음 열었을 때의 예시 책상입니다. 기기 8개와 연결 7개는 예시이며 실제 감지 결과가 아닙니다. 오른쪽 패널의 **Start my own desk**를 누르면 예시 기기를 비우고 My desk에 남습니다. 이어서 **Build from a photo**, **Add a device**, **Add an object**로 책상을 만듭니다. [초기 구현 검증 기록](docs/VALIDATION.md)과 [PR #4 검토 후 수정·검증 기록](docs/PR4_REVIEW_FIXES.md)을 참고하세요.
 
 ![처음 열었을 때의 예시 책상과 Start my own desk 안내](docs/screenshots/first-visit-desktop.png)
 
-> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Setup guide**에서 사진·수동 기록·동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 2026-11-01에 별도 승인한 Meta 대화 1건과 사진 분석 2건이 응답 검증을 통과했습니다. 당시 사진 흐름은 기본 35초 제한에서 시간 초과가 났고, 테스트에서만 제한을 늘려 받은 결과에도 배치 문제가 남아 적용은 차단됐습니다. 이후 저장된 19개 응답의 수치 재현은 [공동 기하 보정과 사진 피팅](docs/PHOTO_REFERENCE_FITTING.md)으로 독립 적용 검사를 통과했습니다. 새 실사진 품질과 물리적 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [사진 검토 개선과 검증 범위](docs/PHOTO_REVIEW.md), [이전 워크플로 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
+> **현재 단계: local-first MVP.** 기본 실행은 외부 API를 호출하지 않는 규칙 기반 데모입니다. **Hardware**에서 기기 기록과 동의한 Mac 관측을 비교하고, 연결 확인과 모니터 점검까지 이어갈 수 있습니다. 사진은 **My desk**의 **Build from a photo**에서 시작합니다. 2026-11-01에 별도 승인한 Meta 대화 1건과 사진 분석 2건이 응답 검증을 통과했습니다. 당시 사진 흐름은 기본 35초 제한에서 시간 초과가 났고, 테스트에서만 제한을 늘려 받은 결과에도 배치 문제가 남아 적용은 차단됐습니다. 이후 저장된 19개 응답의 수치 재현은 [공동 기하 보정과 사진 피팅](docs/PHOTO_REFERENCE_FITTING.md)으로 독립 적용 검사를 통과했습니다. 새 실사진 품질과 물리적 하드웨어 재검사는 별도입니다. Bluetooth 실시간 감지는 지원하지 않으며, 수동 Bluetooth 연결 기록은 유지합니다. [사진 검토 개선과 검증 범위](docs/PHOTO_REVIEW.md), [이전 워크플로 검증](docs/PRE_META_WORKFLOW.md)을 참고하세요.
 
 ## 빠르게 실행하기
 
@@ -38,25 +38,25 @@ UI 포트가 이미 사용 중이면 실행이 실패합니다. 다른 포트로
 
 ## View와 Edit
 
-- **View**: 아무것도 선택하지 않으면 오른쪽 **Workspace overview**에 기기·기록된 연결·사용자 보고·Mac 감지 요약이 표시됩니다. 기기를 선택하면 같은 고정 패널에서 이름, 모델, 연결 상대, 양쪽 포트, 출처와 메모를 확인합니다.
+- **View**: 아무것도 선택하지 않으면 오른쪽 **My desk**에 기기, 기록된 연결 수, 가구·소품(**Room objects**)이 표시됩니다. 사용자 보고와 Mac 인식 요약은 **Hardware**의 **Devices**에 있습니다. 기기를 선택하면 같은 고정 패널에서 이름, 모델, 연결 상대, 양쪽 포트, 출처와 메모를 확인합니다.
 - **Edit**: 장면에서 직접 드래그하고 오른쪽 패널에서 위치·회전·크기·색·부품을 수정합니다. 선택 label과 편집 팝업은 장면 위에 나타나지 않습니다. 삭제 확인은 해당 패널 안에서 처리합니다.
 - 데스크톱에서는 장면과 상세 패널이 화면을 나눕니다. 모바일에서는 아래 상세 패널을 접어 드래그 공간을 늘릴 수 있습니다. View/Edit 전환은 저장된 장면을 바꾸지 않으며, 선택한 편집기의 입력 초안도 유지합니다.
 - **Show connections**는 두 모드에서 독립적으로 켜고 끕니다. 선택한 기기의 연결 상대와 선이 강조되고, 편집 중 선의 끝점도 기기를 따라 움직입니다.
 
-기기의 이름·모델·사용자 보고 상태·메모 초안은 **현재 열린 앱의 메모리**에 기기별로 보관됩니다. **My desk**, 다른 기기, 패널 닫기·열기, 사진·히스토리 등으로 이동해도 유지되며, **Unsaved device details**에서 다시 열어 **Save device details** 또는 **Discard draft**를 선택합니다. View에는 저장된 기록을 표시하므로 미저장 정상 작동 보고가 실제 보고처럼 나타나지 않습니다. 초안은 JSON 내보내기나 모델 전송 구성에 포함되지 않으며, 브라우저 새로고침이나 탭 닫기 이후에는 복원되지 않습니다.
+기기의 이름·모델·사용자 보고 상태·메모 초안은 **현재 열린 앱의 메모리**에 기기별로 보관됩니다. **My desk**, 다른 기기, 패널 닫기·열기, **Hardware**, 사진, **AI chat**으로 이동해도 유지되며, **Unsaved device details**에서 다시 열어 **Save device details** 또는 **Discard draft**를 선택합니다. View에는 저장된 기록을 표시하므로 미저장 정상 작동 보고가 실제 보고처럼 나타나지 않습니다. 초안은 JSON 내보내기나 모델 전송 구성에 포함되지 않으며, 브라우저 새로고침이나 탭 닫기 이후에는 복원되지 않습니다.
 
 최신 저장본 불러오기·가져오기·초기화 또는 저장된 이름·모델·보고·메모 변경 후에는 초안을 유지하면서 검토를 요구합니다. **Keep my edited fields after review**는 최신 값과 비교한 뒤 편집을 계속하는 선택이며, 실제 적용에는 다시 **Save device details**가 필요합니다. 삭제된 기기의 초안은 참조하거나 명시적으로 폐기할 수 있습니다. 자세한 경계와 저장 충돌 처리는 [Storage](docs/STORAGE.md)에 설명했습니다.
 
-연결의 추가·제거는 **Edit**에서 수행합니다. View의 **Edit connections**는 모드만 전환하며, 연결 제거는 오른쪽 패널의 **Confirm removal / Cancel removal**로 확인합니다. Assistant의 연결 제안도 **Edit to review connection** 이후 별도의 **Confirm and apply**가 필요합니다.
+연결의 추가·제거는 **Edit**에서 수행합니다. View에서 연결 안내나 기기 상세의 **Edit connections**는 모드만 전환하며, 연결 제거는 오른쪽 패널의 **Confirm removal / Cancel removal**로 확인합니다. 연결 기록은 **Hardware**의 **Connections**에서도 검토합니다. Assistant의 연결 제안도 **Edit to review connection** 이후 별도의 **Confirm and apply**가 필요합니다.
 
 같은 두 기기의 기존 연결을 바꾸려면 현재 기록을 검토하고 **Confirm replacement**로 확인해야 합니다. 검토 후 다른 작업이 기록을 변경했다면 다시 검토합니다. 상태와 메모는 하나의 보고로 함께 저장하므로, 이전 편집 초안과 새 진단 결과가 서로 섞이지 않습니다.
 
 ## 사진에서 문제 확인까지
 
-1. 처음 열면 오른쪽 패널의 **Start my own desk**로 예시 기기를 비웁니다. 이어서 열리는 **Set up your desk**에서 **Use a desk photo** 또는 **Add a device**로 시작합니다. 사진은 별도 전송 동의가 필요하고, 분석 뒤 **Choose what to add**에서 넣을 물건을 고른 다음 3D로 검토하고 승인합니다. 적용 뒤 **Continue to device and connection review**는 **Connections** 단계로 바로 엽니다. 예시를 지운 뒤에는 왼쪽 **Setup guide**나 오른쪽 **Open setup guide**로 다시 열 수 있습니다.
-2. **Devices**에서 사진 추정·사용자 보고·샘플을 구분합니다. 필요한 경우 **Compare with this Mac**에서 로컬 감지에 동의하고 기존 기기와 관측을 직접 매칭합니다.
+1. 처음 열면 오른쪽 **My desk**의 **Start my own desk**로 예시 기기를 비웁니다. 같은 패널에 남는 **Build from a photo**, **Add a device**, **Add an object**로 시작합니다. 사진은 별도 전송 동의가 필요하고, 분석 뒤 **Choose what to add**에서 넣을 물건을 고른 다음 3D로 검토하고 승인합니다. 적용 뒤 **Next: check connections in Hardware**는 **Hardware**의 **Connections**로 바로 엽니다. 기기가 둘 이상이면 왼쪽 **Hardware**도 **Connections**에서 열리고, 그렇지 않으면 **Devices**에서 열립니다.
+2. **Hardware**의 **Devices**에서 사진 추정·사용자 보고·샘플을 구분합니다. Mac 인식 요약과 사용자 보고 요약도 여기에 있습니다. 필요한 경우 **Compare with this Mac**에서 로컬 감지에 동의하고 기존 기기와 관측을 직접 매칭합니다. 자세한 목록은 **Open Mac hardware details**입니다.
 3. **Connections**에서 누락된 연결 질문에 답하고, 실제 확인한 기기·케이블·포트를 저장합니다. 사진 설명은 이 앱 안의 메모로 이어지며, 문장마다 저장된 이름이나 종류·좌우로 한 기기씩 특정되는 연결만 검토 버튼으로 제안합니다. 사진은 그 연결을 확인한 것이 아니며, 저장은 검토와 확인 후에만 됩니다. 불분명한 케이블은 **Unknown**으로 남깁니다.
-4. **Try a check**에서 모니터를 선택합니다. 기록된 경로를 확인한 뒤 직접 연결과 도크 경유에 맞는 점검을 진행합니다. 건너뛴 검사는 실패나 성공으로 처리하지 않습니다.
+4. **Check a monitor**에서 모니터를 선택합니다. 기록된 경로를 확인한 뒤 직접 연결과 도크 경유에 맞는 점검을 진행합니다. 건너뛴 검사는 실패나 성공으로 처리하지 않습니다.
 5. 각 답과 최근 30개 점검은 브라우저에 저장됩니다. 새로고침 후 이어갈 수 있고, 연결이 달라졌다면 이전 이력을 보존한 새 점검을 시작합니다. 작동 상태는 **Save result as user-reported**로 따로 확인해야 바뀝니다.
 6. **Ask about this device**로 대화 대상을 지정하고 기록 경로를 장면에서 강조할 수 있습니다. 로컬 데모는 저장된 점검을 참고하며, Meta 활성화 후에는 공유 가능한 기기의 점검 요약만 전송합니다. OS 관측과 OS에서 만든 기기·점검은 로컬에 남습니다.
 
@@ -107,7 +107,7 @@ npm run hardware:build
 MODEL_API_KEY='' npm run dev
 ```
 
-**http://127.0.0.1:5173**에서 **Open Mac hardware**를 엽니다. 로컬에서 읽을 정보 안내와 **I agree to read this Mac’s hardware metadata locally.**를 확인하고 **Start detection**을 누릅니다. 페이지를 열거나 helper를 빌드한 것만으로는 기기를 읽지 않습니다. **Stop detection**으로 중지합니다. Meta key를 비운 실행은 하드웨어 시연 중 유료 API 호출을 방지합니다.
+**http://127.0.0.1:5173**에서 **Hardware → Devices → Open Mac hardware details**를 엽니다. 같은 **Devices** 안의 **Compare with this Mac**은 기기 카드 옆에서 로컬 비교를 시작합니다. 로컬에서 읽을 정보 안내와 **I agree to read this Mac’s hardware metadata locally.**를 확인하고 **Start detection**을 누릅니다. 페이지를 열거나 helper를 빌드한 것만으로는 기기를 읽지 않습니다. **Stop detection**으로 중지합니다. Meta key를 비운 실행은 하드웨어 시연 중 유료 API 호출을 방지합니다.
 
 | 종류                 | 로컬 OS 정보                                                                                  | 확인하지 못하는 정보                                                                                       |
 | -------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -163,7 +163,7 @@ META_MODEL=muse-spark-1.3
 PORT=4318
 ```
 
-API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 전송 내용을 확인하고 활성화해야 다음 대화부터 실제 모델을 호출합니다. 키가 설정되어 있다는 사실은 API 호출 성공을 검증한 것과 다릅니다.
+API 서버를 재시작한 뒤 **AI chat**의 **Connect Meta API**를 엽니다. 전송 내용을 확인하고 활성화해야 다음 대화부터 실제 모델을 호출합니다. 키가 설정되어 있다는 사실은 API 호출 성공을 검증한 것과 다릅니다.
 
 - 대화 전송: 현재 메시지, Meta 모드에서 작성한 최근 대화 최대 12개, 전송 가능한 기기·연결 구성. Local demo 대화는 자동 전송하지 않습니다.
 - 사진 전송: 사진 패널에서 별도 동의하고 분석 버튼을 누른 경우에만 축소된 사진, 전송 가능한 기기·연결·장면 구성, 입력한 설명을 전송합니다. 설명은 시각적 제안의 문맥이며 연결을 자동 저장하지 않습니다.
@@ -176,7 +176,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 ## 사진에서 편집 가능한 장면 만들기
 
-1. **Desk photo**에서 JPEG, PNG, WebP 또는 HEIC/HEIF 사진을 선택합니다. 방향 보정·축소·HEIC 변환은 로컬에서 수행하며 선택만으로는 전송하지 않습니다.
+1. **My desk**의 **Build from a photo**에서 JPEG, PNG, WebP 또는 HEIC/HEIF 사진을 선택합니다. 방향 보정·축소·HEIC 변환은 로컬에서 수행하며 선택만으로는 전송하지 않습니다.
 2. 알고 있는 기기나 연결 설명을 입력하고 별도 Meta 전송 동의를 확인합니다.
 3. **Create scene preview with Meta**를 누릅니다. 서버 key가 설정된 경우 실제 API 비용이 발생할 수 있습니다.
 4. 응답이 오면 **Choose what to add**에서 넣을 물건을 고릅니다. 모두 체크된 상태로 시작하며, 뺀 물건은 다음 단계에서도 다시 넣을 수 있습니다. 아래 화면은 테스트용 가짜 응답입니다.
@@ -187,7 +187,7 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 5. **Show original estimate**로 원본 추정을 비교하고, **Undo automatic adjustments**로 자동 보정을 되돌릴 수 있습니다. **Fit small gaps**는 사진 피팅 전에는 원래 추정 주변의 작은 이동을 탐색하고, 사진 피팅 후에는 현재 잠금을 반영해 사진 맞춤을 다시 실행합니다. 사용자 잠금값은 유지합니다. 직접 편집한 위치·회전·크기와 선택한 받침은 자동 잠금됩니다. 해결되지 않은 장면도 preview는 열리지만 적용은 차단됩니다.
 6. **Confirm and apply scene**으로 한 번에 적용하거나 **Discard preview**로 취소합니다.
-7. **Scene objects**에서 이후에도 가구·소품을 편집합니다. 기기는 **Edit**에서 배치·연결·부품을 수정합니다.
+7. **My desk**의 **Room objects**에서 이후에도 가구·소품을 고르고, **Edit**에서 배치·크기·색을 수정합니다. 기기는 **Edit**에서 배치·연결·부품을 수정합니다.
 8. 변경은 브라우저에 저장됩니다. 설정의 **Export JSON**과 **Import JSON**으로 구성을 옮길 수 있습니다. 기존 v1 저장본과 JSON은 v2로 읽으며, 사진·대화·key는 JSON에 포함하지 않습니다.
 
 같은 사진을 사용한 후속 실제 평가에서 물체 19개가 반환됐지만 받침·충돌 문제로 적용은 차단됐습니다. 성공한 후속 요청은 테스트 전용 90초 제한에서 38.887초가 걸렸으며 당시 제품의 서버 제한은 35초였습니다. 단일 사진 결과와 자동 기능 검증을 구분합니다. [실사진 평가와 재현 사례](docs/PHOTO_EVALUATION.md), [기능 검증 범위](docs/PHOTO_REVIEW.md), [GPT Pro 검토 프롬프트](docs/GPT_PRO_REVIEW_PROMPT.md)를 참고하세요.
@@ -202,17 +202,17 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 제출용 3분 촬영 순서와 영문 소개문은 [제출 마감 문서](docs/SUBMISSION.md)에 있습니다. 아래는 제품 안내용 순서입니다.
 
-1. **View**에서 책상과 **Workspace overview**를 보여줍니다. 기본 기기·연결은 예시이며 사용자 보고와 OS 인식이 별도라는 점을 설명합니다.
+1. **My desk**에서 책상과 오른쪽 개요를 보여줍니다. 기본 기기·연결은 예시이며 사용자 보고와 OS 인식이 별도라는 점을 설명합니다. 그 요약은 **Hardware**의 **Devices**에 있습니다.
 2. **Show connections**를 켜고 Dock을 선택합니다. 오른쪽 고정 패널에서 상대 기기, 양쪽 포트, 출처와 메모를 확인합니다. Bluetooth 기록도 연결 목록에 남습니다.
 3. **Edit**로 바꾸고 키보드·마우스·SSD 또는 의자를 직접 옮깁니다. 매트/러그 위 이동, 장애물에서 정지, 연결선 갱신, Undo/Redo를 보여줍니다. 부착한 물체가 있는 책상도 함께 이동시킵니다.
-4. 실제 Mac에서 helper 빌드와 수동 확인을 완료했다면 **Open Mac hardware → Start detection**을 시연합니다. 실제 OS 출처·시각을 보여주고 새 기기 연결/분리로 목록 갱신을 확인합니다. Linux나 helper 미설치 환경에서는 Unavailable을 그대로 보여줍니다.
+4. 실제 Mac에서 helper 빌드와 수동 확인을 완료했다면 **Hardware → Devices → Open Mac hardware details → Start detection**을 시연합니다. 실제 OS 출처·시각을 보여주고 새 기기 연결/분리로 목록 갱신을 확인합니다. Linux나 helper 미설치 환경에서는 Unavailable을 그대로 보여줍니다.
 5. 관측 하나를 선택하고 기존 기기 또는 새 기기를 명시적으로 매칭합니다. 검토 전에는 저장되지 않고, 승인해도 사용자 작동 상태는 자동 변경되지 않음을 확인합니다.
 6. **Stop detection**으로 중지합니다. 상태가 Detection stopped가 되며 연결 해제로 표시되지 않는지 확인합니다.
 7. 문제가 보고된 모니터를 선택해 **Troubleshoot monitor step by step**을 엽니다. 각 답은 점검 이력에 저장됩니다. 작동 상태는 **Save result as user-reported**를 눌러야 별도로 저장됩니다.
-8. 사진 흐름은 선택 → 별도 전송 동의 → **Choose what to add**에서 고르기 → 물건별 포함·제외·추가와 배치 검토 → **Confirm and apply scene** 순서입니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 모의 응답 시연과 이전 실제 분석 결과를 구분해서 설명합니다.
+8. 사진 흐름은 **My desk**의 **Build from a photo**에서 선택 → 별도 전송 동의 → **Choose what to add**에서 고르기 → 물건별 포함·제외·추가와 배치 검토 → **Confirm and apply scene** 순서입니다. 적용 뒤 **Next: check connections in Hardware**로 연결 검토에 들어갑니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 모의 응답 시연과 이전 실제 분석 결과를 구분해서 설명합니다.
 9. **Open settings → Export JSON**으로 구성을 내보냅니다. 승인한 장면과 출처는 남고 설치별 하드웨어 매칭은 제외됩니다.
 
-로컬 대화 데모에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. View에서는 **Edit to review connection**으로 Edit에 들어간 뒤 **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.
+**AI chat**에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. View에서는 **Edit to review connection**으로 Edit에 들어간 뒤 **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.
 
 ## Production 실행
 

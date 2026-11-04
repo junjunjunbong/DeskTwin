@@ -28,8 +28,11 @@ test('names retain spaces while typing and decimal fields commit once without bl
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
-  await page.getByRole('button', { name: /^Editable block Generic object/ }).click();
+  const room = page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .locator('details.room-objects');
+  await room.locator('summary').click();
+  await room.getByRole('button', { name: /^Editable block Generic object/ }).click();
   const inspector = page.getByRole('complementary', { name: 'Selected scene object' });
   const name = inspector.getByLabel('Object name', { exact: true });
   await name.fill('');

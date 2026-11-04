@@ -103,9 +103,17 @@ async function choosePhoto(page: Page, color = '#889977') {
   });
   await expect(page.getByAltText('Desk reference photo selected by the user')).toBeVisible();
 }
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
 async function openPhoto(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   await choosePhoto(page);
 }
 async function analyze(page: Page) {
@@ -125,11 +133,27 @@ async function changeColor(input: Locator, value: string) {
   }, value);
 }
 async function openObjects(page: Page) {
-  const panel = page.getByRole('complementary', { name: 'Scene objects panel' });
-  if (!(await panel.isVisible()))
-    await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
-  await expect(panel).toBeVisible();
-  return panel;
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  const edit = page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true });
+  if (!(await overview.isVisible())) {
+    const closeObject = page.getByRole('button', { name: 'Close object details', exact: true });
+    const closeDevice = page.getByRole('button', { name: 'Close device details', exact: true });
+    if (await closeObject.isVisible()) await closeObject.click();
+    else if (await closeDevice.isVisible()) await closeDevice.click();
+    else {
+      const editing = (await edit.getAttribute('aria-pressed')) === 'true';
+      await page.getByRole('button', { name: 'My desk', exact: true }).click();
+      if (editing) await edit.click();
+    }
+  }
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await expect(overview).toBeVisible();
+  const room = overview.locator('details.room-objects');
+  if ((await room.getAttribute('open')) === null) await room.locator('summary').click();
+  return overview;
 }
 async function exportJSON(page: Page) {
   await page.getByRole('button', { name: 'Open settings' }).click();

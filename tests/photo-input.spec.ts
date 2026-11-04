@@ -13,7 +13,8 @@ async function openPanel(page: Page) {
   // Photo selection must never fall through to a real integration, even if a regression sends it.
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
 }
 async function syntheticPng(page: Page, color: string, width = 64, height = 32) {
   return Buffer.from(
@@ -90,7 +91,10 @@ test('HEIC is decoded locally with orientation, stripped to JPEG, and never sent
     await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),
   ).not.toContain('data:image');
   await page.reload();
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Build from a photo', exact: true })
+    .click();
   await expect(page.getByAltText('Desk reference photo selected by the user')).toHaveCount(0);
 });
 

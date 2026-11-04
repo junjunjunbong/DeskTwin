@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, X, Sparkle, Plus, Check, ArrowRight } from '@phosphor-icons/react';
+import { Image as ImageIcon, X, Sparkle, Check, ArrowRight } from '@phosphor-icons/react';
 import { z } from 'zod';
 import { modelWorkspace } from '../domain/workspacePrivacy';
 import { type Workspace } from '../domain/workspace';
@@ -91,7 +91,6 @@ interface Props {
   available: boolean;
   twoStage?: boolean;
   onClose: () => void;
-  onAdd: () => void;
   onApply: (draft: Workspace, base: Workspace, review: SceneReviewMetadata) => void | Promise<void>;
   storageConflict?: boolean;
   onRefresh: () => void;
@@ -104,7 +103,6 @@ export function PhotoPanel({
   available,
   twoStage = false,
   onClose,
-  onAdd,
   onApply,
   onRefresh,
   storageConflict = false,
@@ -469,7 +467,17 @@ export function PhotoPanel({
       <aside className="floating-panel photo-panel" aria-label="Desk photo panel">
         <div className="panel-heading">
           <div>
-            <span className="eyebrow">START WITH YOUR DESK</span>
+            <button
+              type="button"
+              className="text-button photo-back"
+              onClick={() => {
+                cancel();
+                onClose();
+              }}
+            >
+              ← Back to My desk
+            </button>
+            <span className="eyebrow">MY DESK · FROM A PHOTO</span>
             <h2>My desk photo</h2>
           </div>
           <button
@@ -677,20 +685,12 @@ export function PhotoPanel({
               </p>
               {onContinue && (
                 <button className="button primary full" onClick={() => onContinue(context)}>
-                  Continue to device and connection review
+                  Next: check connections in Hardware
                   <ArrowRight size={16} />
                 </button>
               )}
             </>
           )}
-          <button
-            className="button secondary full"
-            onClick={onAdd}
-            disabled={pending || workspace.devices.length >= 40}
-          >
-            <Plus size={18} />
-            Add a device manually
-          </button>
           {photo && (
             <button
               className="text-button danger-text"

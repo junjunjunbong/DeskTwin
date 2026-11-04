@@ -510,12 +510,6 @@ hr {
   font-size: 11px;
   z-index: 3;
 }
-.command-area {
-  padding: 11px 18px 10px 82px;
-  background: #fbfcfd;
-  border-top: 1px solid #e6e9ec;
-  z-index: 8;
-}
 .composer {
   display: flex;
   align-items: center;
@@ -560,13 +554,6 @@ hr {
   background: #a3bbdf;
   opacity: 0.6;
 }
-.composer-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 8px;
-  gap: 10px;
-}
 .privacy-note {
   font-size: 9px;
   color: #8a98a5;
@@ -574,20 +561,34 @@ hr {
   align-items: center;
   gap: 5px;
 }
-.quick-prompts {
-  display: flex;
-  gap: 7px;
-}
-.quick-prompts button {
+.provider-toggle {
   font-size: 9px;
-  color: #8191a4;
+  color: #6785af;
   padding: 4px 10px;
-  background: #f1f5fa;
+  background: #edf2fb;
   border-radius: 6px;
 }
-.quick-prompts button:hover {
+.provider-toggle:hover {
   color: #3778cf;
   background: #eaf0fa;
+}
+.assistant-connect {
+  margin-top: 8px;
+  white-space: normal;
+  text-align: left;
+}
+.assistant-composer {
+  flex-shrink: 0;
+  padding: 10px 14px 6px;
+  border-top: 1px solid var(--border);
+  background: #fbfcfd;
+}
+.assistant-composer .privacy-note {
+  margin-top: 8px;
+}
+.photo-back {
+  margin: 0 0 8px;
+  padding-top: 0;
 }
 .floating-panel {
   position: absolute;
@@ -1299,9 +1300,6 @@ hr {
     right: 14px;
     width: 340px;
   }
-  .command-area {
-    padding-left: 77px;
-  }
 }
 @media (max-width: 680px) {
   .app-shell {
@@ -1440,9 +1438,6 @@ hr {
   .scene-heading {
     z-index: 2;
   }
-  .command-area {
-    padding: 9px 10px 10px;
-  }
   .composer {
     padding: 6px 7px 6px 11px;
     gap: 9px;
@@ -1451,18 +1446,12 @@ hr {
   .composer input {
     font-size: 11px;
   }
-  .composer-bottom {
-    margin-top: 7px;
-  }
   .privacy-note {
     font-size: 8px;
   }
-  .quick-prompts button {
+  .provider-toggle {
     font-size: 8px;
     padding: 4px 7px;
-  }
-  .quick-prompts button:first-child {
-    display: none;
   }
   .composer-star svg {
     width: 19px;
@@ -2066,17 +2055,10 @@ hr {
   margin-top: 12px;
   display: flex;
 }
-.quick-prompts .provider-toggle {
-  color: #6785af;
-  background: #edf2fb;
-}
 @media (max-width: 680px) {
-  .quick-prompts .provider-toggle {
-    display: inline-flex !important;
+  .provider-toggle {
+    display: inline-flex;
     font-size: 8px;
-  }
-  .quick-prompts button:not(.provider-toggle) {
-    display: none !important;
   }
 }
 .placement-controls {
@@ -2558,6 +2540,20 @@ hr {
 .overview-actions > .text-button {
   margin-top: 8px;
 }
+.desk-build .text-button {
+  margin-top: 8px;
+}
+.room-objects {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.room-objects > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
 .attention-list {
   padding: 13px;
   border: 1px solid #eed9ba;
@@ -2775,15 +2771,6 @@ hr {
     padding-top: 0;
     padding-bottom: 0;
     font-size: 9px;
-  }
-  .command-area {
-    padding-left: 10px;
-  }
-  .quick-prompts button:not(.provider-toggle) {
-    display: none;
-  }
-  .quick-prompts .provider-toggle {
-    display: inline-flex;
   }
 }
 

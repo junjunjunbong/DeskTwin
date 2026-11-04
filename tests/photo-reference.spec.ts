@@ -125,7 +125,10 @@ async function openPreview(page: Page, options: FixtureOptions = {}) {
     return route.fulfill({ json: { mode: 'meta', ...fixture.proposal } });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
   const image = await page.evaluate((corners) => {
     const canvas = document.createElement('canvas');
     canvas.width = 900;

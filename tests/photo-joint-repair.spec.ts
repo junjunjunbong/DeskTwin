@@ -32,7 +32,10 @@ test('the complete local photo response is repaired automatically, repeated and 
     return route.fulfill({ json: { mode: 'meta', ...fixture.proposal } });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Build from a photo', exact: true })
+    .click();
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 120;

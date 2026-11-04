@@ -76,9 +76,17 @@ function inventory() {
 async function saved(page: Page) {
   return page.evaluate((key) => localStorage.getItem(key), storageKey);
 }
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
 async function openPhotoPanel(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 20;

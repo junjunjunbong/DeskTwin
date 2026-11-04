@@ -37,9 +37,24 @@ async function seed(page: Page, workspace: Workspace) {
 async function saved(page: Page): Promise<Workspace> {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), storageKey);
 }
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
+async function sendMessage(page: Page, message: string) {
+  const input = page.getByRole('textbox', { name: 'Message DeskTwin' });
+  if (!(await input.isVisible()))
+    await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  await input.fill(message);
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+}
 async function openSetup(page: Page) {
-  await page.getByRole('button', { name: 'Setup guide', exact: true }).click();
-  const panel = page.getByRole('complementary', { name: 'Desk setup panel', exact: true });
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
   await expect(panel).toBeVisible();
   return panel;
 }
@@ -50,7 +65,7 @@ test('setup requires reviewing a replacement and preserves the original on cance
   const initial = createDemoWorkspace();
   await seed(page, initial);
   const panel = await openSetup(page);
-  await panel.getByRole('button', { name: '2. Connections', exact: true }).click();
+  await panel.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(
     panel.getByRole('button', { name: 'Review connection', exact: true }),
   ).toBeDisabled();
@@ -126,7 +141,7 @@ test('photo approval carries notes through reviewed connections, a saved monitor
     return route.fulfill({ json: { mode: 'meta', ...fixture } });
   });
   await seed(page, createDemoWorkspace());
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const photo = page.getByRole('complementary', { name: 'Desk photo panel', exact: true });
   const data = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
@@ -152,10 +167,10 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   await preview.getByRole('button', { name: 'Confirm and apply scene', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await photo
-    .getByRole('button', { name: 'Continue to device and connection review', exact: true })
+    .getByRole('button', { name: 'Next: check connections in Hardware', exact: true })
     .click();
-  const panel = page.getByRole('complementary', { name: 'Desk setup panel', exact: true });
-  await expect(panel.getByRole('button', { name: '2. Connections', exact: true })).toHaveAttribute(
+  const panel = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await expect(panel.getByRole('button', { name: 'Connections', exact: true })).toHaveAttribute(
     'aria-current',
     'step',
   );
@@ -188,7 +203,7 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   expect((await saved(page)).connections).toHaveLength(1);
   await panel.getByRole('button', { name: 'Confirm connection', exact: true }).click();
   await expect.poll(async () => (await saved(page)).connections.length).toBe(2);
-  await panel.getByRole('button', { name: '3. Try a check', exact: true }).click();
+  await panel.getByRole('button', { name: 'Check a monitor', exact: true }).click();
   await panel.getByRole('button', { name: /^Photo monitor / }).click();
   const inspector = page.getByRole('complementary', { name: 'Selected device', exact: true });
   await expect(
@@ -232,8 +247,7 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   await expect(conversation.getByRole('combobox', { name: 'Conversation target' })).toHaveValue(
     monitorId,
   );
-  await page.getByRole('textbox', { name: 'Message DeskTwin' }).fill('What should I check next?');
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await sendMessage(page, 'What should I check next?');
   await expect(conversation.locator('.chat-message.assistant')).toContainText('Saved user checks');
   await expect(conversation.locator('.chat-message.assistant')).toContainText(
     'Cause not determined',
@@ -308,6 +322,7 @@ test('a photo record is matched to an OS observation only after local consent an
   });
   await seed(page, initial);
   const panel = await openSetup(page);
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
   const record = panel.locator('.desk-setup-device').filter({
     has: page.getByRole('button', { name: 'Review device Right monitor', exact: true }),
   });
@@ -357,7 +372,7 @@ test('setup stays inside the contextual panel on a narrow screen', async ({ page
   await page.setViewportSize({ width: 390, height: 844 });
   await seed(page, createDemoWorkspace());
   const panel = await openSetup(page);
-  await panel.getByRole('button', { name: '2. Connections', exact: true }).click();
+  await panel.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(panel.getByRole('button', { name: 'Edit connections', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const scene = (await page.getByTestId('desk-canvas').boundingBox())!;
@@ -405,10 +420,11 @@ test('photo notes open on connections, reveal the saved path, and scroll the mon
     route.fulfill({ json: { mode: 'meta', ...fixture } }),
   );
   await seed(page, createDemoWorkspace());
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
   await expect(
     page.getByText('Chat: local demo · Photo analysis: Meta, after your consent'),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const photo = page.getByRole('complementary', { name: 'Desk photo panel', exact: true });
   const data = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
@@ -430,10 +446,10 @@ test('photo notes open on connections, reveal the saved path, and scroll the mon
   await preview.getByRole('button', { name: 'Confirm and apply scene', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await photo
-    .getByRole('button', { name: 'Continue to device and connection review', exact: true })
+    .getByRole('button', { name: 'Next: check connections in Hardware', exact: true })
     .click();
-  const panel = page.getByRole('complementary', { name: 'Desk setup panel', exact: true });
-  await expect(panel.getByRole('button', { name: '2. Connections', exact: true })).toHaveAttribute(
+  const panel = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await expect(panel.getByRole('button', { name: 'Connections', exact: true })).toHaveAttribute(
     'aria-current',
     'step',
   );
@@ -484,10 +500,7 @@ test('a local demo reply about the selected device focuses its recorded path', a
     .getByRole('button', { name: /Right monitor Monitor/ })
     .click();
   await expect(page.getByRole('region', { name: 'Focused connection path' })).toHaveCount(0);
-  await page
-    .getByRole('textbox', { name: 'Message DeskTwin' })
-    .fill('What should I check next for this monitor?');
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await sendMessage(page, 'What should I check next for this monitor?');
   const conversation = page.getByRole('complementary', {
     name: 'DeskTwin conversation',
     exact: true,
@@ -504,4 +517,24 @@ test('a local demo reply about the selected device focuses its recorded path', a
     'aria-checked',
     'true',
   );
+});
+test('hardware opens on connections for several devices and keeps the Mac summary with devices', async ({
+  page,
+}) => {
+  await seed(page, createDemoWorkspace());
+  const panel = await openSetup(page);
+  await expect(panel.getByRole('heading', { name: 'Hardware', exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Connections', exact: true })).toHaveAttribute(
+    'aria-current',
+    'step',
+  );
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
+  await expect(
+    panel.getByRole('region', { name: 'OS detection summary', exact: true }),
+  ).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Mac recognition', exact: true })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'User reports', exact: true })).toBeVisible();
+  await expect(
+    panel.getByRole('button', { name: 'Open Mac hardware details', exact: true }),
+  ).toBeVisible();
 });

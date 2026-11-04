@@ -5,6 +5,15 @@ import type { SceneProposal, SceneProposalItem } from '../src/domain/scenePropos
 const storageKey = 'desktwin.workspace.v1';
 test.setTimeout(60_000);
 
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
+
 function candidate(
   id: string,
   kind: SceneProposalItem['kind'],
@@ -71,7 +80,7 @@ async function openPicker(
     }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 20;
@@ -149,7 +158,7 @@ test('photo request remains active until the 125-second browser deadline', async
     };
   }, proposal());
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 20;
@@ -198,7 +207,7 @@ test('photo analysis can be canceled on a mobile viewport', async ({ page }) => 
         : originalFetch(input, init);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 20;
@@ -230,7 +239,7 @@ test('a server timeout offers a manual retry without losing photo consent', asyn
     }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 20;

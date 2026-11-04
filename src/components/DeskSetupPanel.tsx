@@ -1,5 +1,15 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Check, Cpu, Image as ImageIcon, Link, Plus, X } from '@phosphor-icons/react';
+import {
+  ArrowRight,
+  Check,
+  CheckCircle,
+  Cpu,
+  Link,
+  Plus,
+  Question,
+  WarningCircle,
+  X,
+} from '@phosphor-icons/react';
 import {
   setupConnectionCommand,
   setupConnectionForPair,
@@ -17,7 +27,7 @@ import {
   type Workspace,
   type WorkspaceCommand,
 } from '../domain/workspace';
-import { HardwareBadge } from './HardwarePanel';
+import { HardwareBadge, HardwareSummary } from './HardwarePanel';
 import '../styles/deskSetup.css';
 
 export interface DeskSetupPanelProps {
@@ -28,6 +38,7 @@ export interface DeskSetupPanelProps {
   onCommand: (command: WorkspaceCommand) => Promise<boolean>;
   onPhoto: () => void;
   onAddDevice: () => void;
+  onOpenMacHardware: () => void;
   onSelect: (id: string) => void;
   onTroubleshoot: (id: string) => void;
   onClose: () => void;
@@ -42,6 +53,35 @@ type MatchReview = {
   observation: HardwareDevice;
   previous: HardwareBinding | null;
 };
+
+function UserReportSummary({ workspace }: { workspace: Workspace }) {
+  const issues = workspace.devices.filter((device) => device.status === 'reported-issue').length;
+  const working = workspace.devices.filter((device) => device.status === 'reported-working').length;
+  const unknown = workspace.devices.filter((device) => device.status === 'unknown').length;
+  return (
+    <section className="overview-reports" aria-label="User report summary">
+      <h3>User reports</h3>
+      <div className="report-counts">
+        <span>
+          <CheckCircle size={16} aria-hidden="true" />
+          <strong>{working}</strong> working
+        </span>
+        <span>
+          <WarningCircle size={16} aria-hidden="true" />
+          <strong>{issues}</strong> issues
+        </span>
+        <span>
+          <Question size={16} aria-hidden="true" />
+          <strong>{unknown}</strong> to check
+        </span>
+      </div>
+      <p className="micro-note">
+        User reports and OS recognition are separate evidence. Recognition alone does not verify
+        that a device works.
+      </p>
+    </section>
+  );
+}
 
 function emptyDraft(from = ''): SetupConnectionDraft {
   return {
@@ -62,6 +102,7 @@ export function DeskSetupPanel({
   onCommand,
   onPhoto,
   onAddDevice,
+  onOpenMacHardware,
   onSelect,
   onTroubleshoot,
   onClose,
@@ -141,23 +182,23 @@ export function DeskSetupPanel({
   }
 
   return (
-    <aside className="floating-panel desk-setup-panel" aria-label="Desk setup panel">
+    <aside className="floating-panel desk-setup-panel" aria-label="Hardware panel">
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">FROM A PHOTO TO A USEFUL DESK</span>
-          <h2>Set up your desk</h2>
+          <span className="eyebrow">DEVICES AND CONNECTIONS</span>
+          <h2>Hardware</h2>
         </div>
         <button
           className="icon-button"
-          aria-label="Close desk setup"
+          aria-label="Close hardware"
           disabled={saving}
           onClick={onClose}
         >
           <X size={19} />
         </button>
       </div>
-      <nav className="desk-setup-steps" aria-label="Desk setup steps">
-        {(['1. Devices', '2. Connections', '3. Try a check'] as const).map((label, index) => (
+      <nav className="desk-setup-steps" aria-label="Hardware sections">
+        {(['Devices', 'Connections', 'Check a monitor'] as const).map((label, index) => (
           <button
             key={label}
             aria-current={step === index ? 'step' : undefined}
@@ -185,16 +226,19 @@ export function DeskSetupPanel({
         )}
         {step === 0 && (
           <>
+            <HardwareSummary
+              hardware={hardware}
+              workspace={workspace}
+              onOpen={onOpenMacHardware}
+              onSelect={onSelect}
+            />
+            <UserReportSummary workspace={workspace} />
             <h3>Start with the devices you can identify</h3>
             <p className="muted">
               Use a photo or add devices yourself. Then compare each desk record with what you know.
               A visual match, an OS observation and a working device are separate claims.
             </p>
             <div className="desk-setup-actions">
-              <button className="button secondary" onClick={onPhoto}>
-                <ImageIcon size={17} />
-                Use a desk photo
-              </button>
               <button
                 className="button secondary"
                 disabled={workspace.devices.length >= 40}
@@ -204,6 +248,9 @@ export function DeskSetupPanel({
                 Add a device
               </button>
             </div>
+            <button type="button" className="text-button" onClick={onPhoto}>
+              Build from a photo in My desk
+            </button>
             {samples.length > 0 && (
               <p className="desk-setup-note" role="note">
                 {samples.length} sample {samples.length === 1 ? 'device is' : 'devices are'} still

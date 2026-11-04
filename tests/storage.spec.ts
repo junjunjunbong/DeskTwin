@@ -5,6 +5,14 @@ const key = 'desktwin.workspace.v1';
 const lockName = 'desktwin.workspace.write';
 test.setTimeout(60_000);
 
+async function openDeskPhoto(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  await overview.getByRole('button', { name: 'Build from a photo', exact: true }).click();
+}
 async function saved(page: Page): Promise<Workspace> {
   return page.evaluate((name) => JSON.parse(localStorage.getItem(name)!), key);
 }
@@ -103,7 +111,7 @@ test('an open photo preview cannot overwrite a newer save from another tab', asy
     }),
   );
   await second.reload();
-  await second.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(second);
   const image = await second.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 4;
@@ -251,7 +259,7 @@ test('a failed browser save keeps a photo preview open and does not consume an u
     }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'Desk photo', exact: true }).click();
+  await openDeskPhoto(page);
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 4;
@@ -363,7 +371,7 @@ test('device and connection dialogs retain entries after a failed save and close
   }, key);
   await page
     .getByRole('complementary', { name: 'Workspace overview', exact: true })
-    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .getByRole('button', { name: 'Add a device', exact: true })
     .click();
   const device = page.getByRole('dialog', { name: 'Add device', exact: true });
   await device.getByLabel('Device name', { exact: true }).fill('Kept display entry');

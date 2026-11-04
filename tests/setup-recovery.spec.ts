@@ -32,11 +32,10 @@ test('adding a device can recover from another tab without losing its entered na
     { storageKey: key, workspace: initial },
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'Setup guide', exact: true }).click();
-  await page
-    .getByRole('complementary', { name: 'Desk setup panel', exact: true })
-    .getByRole('button', { name: 'Add a device', exact: true })
-    .click();
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  const hardware = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await hardware.getByRole('button', { name: 'Devices', exact: true }).click();
+  await hardware.getByRole('button', { name: 'Add a device', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add device', exact: true });
   await dialog.getByRole('combobox', { name: 'Type', exact: true }).selectOption('monitor');
   await dialog.getByLabel('Device name', { exact: true }).fill('My unsaved setup monitor');

@@ -133,11 +133,12 @@ test('device selection highlights its counterparts and shows source-aware endpoi
   await expect(inspector.getByRole('heading', { name: 'MacBook', exact: true })).toBeVisible();
   await expect(page.locator('.connection-summary [data-emphasis="highlighted"]')).toHaveCount(3);
 
-  await page.getByRole('button', { name: 'Scene objects', exact: true }).click();
-  await page
-    .getByRole('complementary', { name: 'Scene objects panel' })
-    .getByRole('button', { name: /^Desk Desk / })
-    .click();
+  await page.getByRole('button', { name: 'Close device details', exact: true }).click();
+  const room = page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .locator('details.room-objects');
+  await room.locator('summary').click();
+  await room.getByRole('button', { name: /^Desk Desk / }).click();
   await expect(page.getByRole('complementary', { name: 'Selected scene object' })).toBeVisible();
   await expect(renderedLines(page)).toHaveCount(7);
   await expect(page.locator('.connection-summary [data-emphasis="normal"]')).toHaveCount(7);
@@ -157,9 +158,9 @@ test('View inspects connections and Edit requires inline confirmation before rem
     overview.getByRole('button', { name: 'Record a connection', exact: true }),
   ).toHaveCount(0);
   await expect(guide.getByRole('button', { name: 'Edit connections', exact: true })).toBeVisible();
-  await expect(
-    overview.getByRole('button', { name: 'Edit connections', exact: true }),
-  ).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Edit connections', exact: true })).toHaveCount(
+    0,
+  );
   await selectDevice(page, 'USB-C Dock');
   const details = page.getByRole('complementary', { name: 'Selected device', exact: true });
   await expect(details.getByRole('button', { name: /^Remove connection/ })).toHaveCount(0);
@@ -172,6 +173,9 @@ test('View inspects connections and Edit requires inline confirmation before rem
     .getByRole('button', { name: 'Select connected device USB-C Dock', exact: true })
     .click();
   expect(await saved(page)).toEqual(initial);
+  await expect(
+    details.getByRole('button', { name: 'Edit connections', exact: true }),
+  ).toBeVisible();
   await details.getByRole('button', { name: 'Edit connections', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -218,14 +222,15 @@ test('View inspects connections and Edit requires inline confirmation before rem
 test('overview and connection guide enter Edit before offering an add dialog', async ({ page }) => {
   const initial = createDemoWorkspace();
   await seed(page, initial);
-  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
-  await overview.getByRole('button', { name: 'Edit connections', exact: true }).click();
+  await selectDevice(page, 'USB-C Dock');
+  const details = page.getByRole('complementary', { name: 'Selected device', exact: true });
+  await details.getByRole('button', { name: 'Edit connections', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await overview.getByRole('button', { name: 'Record a connection', exact: true }).click();
+  await details.getByRole('button', { name: 'Add', exact: true }).click();
   await page
     .getByRole('dialog', { name: 'Record a connection', exact: true })
     .getByRole('button', { name: 'Close', exact: true })
