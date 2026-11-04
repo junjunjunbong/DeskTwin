@@ -266,11 +266,6 @@ hr {
   border-radius: 2px;
   background: #5487e6;
 }
-.rail-divider {
-  height: 1px;
-  background: #e8ecf0;
-  margin: 9px 7px;
-}
 .scene-area {
   flex: 1;
   min-width: 0;
@@ -799,11 +794,6 @@ hr {
   display: block;
   margin-top: 4px;
 }
-.device-library {
-  left: 20px;
-  right: auto;
-  width: 315px;
-}
 .device-list-row {
   width: 100%;
   display: flex;
@@ -1291,10 +1281,6 @@ hr {
     right: 70px;
     width: 310px;
   }
-  .device-library {
-    left: 14px;
-    right: auto;
-  }
   .assistant-panel {
     right: 14px;
     width: 340px;
@@ -1417,8 +1403,7 @@ hr {
     width: 12px;
   }
   .floating-panel,
-  .assistant-panel,
-  .device-library {
+  .assistant-panel {
     left: 8px;
     right: 8px;
     top: 120px;
@@ -1546,12 +1531,6 @@ hr {
 .integration-note code {
   font-size: 10px;
   word-break: break-word;
-}
-.clear-demo-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-top: 13px;
 }
 .photo-panel .checkbox-label {
   line-height: 1.7;
@@ -2559,16 +2538,6 @@ hr {
   margin-top: 5px;
   white-space: normal;
 }
-.device-library .device-list-row {
-  display: grid;
-  grid-template-columns: 37px minmax(0, 1fr);
-  column-gap: 11px;
-  row-gap: 0;
-}
-.device-library .device-list-row .reported-status {
-  grid-column: 2;
-  margin-top: 5px;
-}
 .overview-actions {
   margin-top: 12px;
 }
@@ -2685,9 +2654,6 @@ hr {
   .nav-top,
   .nav-bottom {
     gap: 5px;
-  }
-  .rail-divider {
-    margin: 5px 7px;
   }
   .scene-area {
     grid-column: 2;

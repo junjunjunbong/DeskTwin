@@ -3,7 +3,6 @@ import {
   Cube,
   House,
   Desktop,
-  ShareNetwork,
   PencilSimple,
   Image as ImageIcon,
   ClockCounterClockwise,
@@ -43,7 +42,6 @@ import {
 } from './components/HardwarePanel';
 import {
   createDemoWorkspace,
-  kindLabels,
   localizeLegacyDemoForDisplay,
   parseWorkspace,
   sourceLabels,
@@ -52,9 +50,9 @@ import {
 import type { DeskMode } from './scene/deskScene';
 import type { CanvasHandle } from './components/DeskCanvas';
 import { DeviceInspector } from './components/DeviceInspector';
-import { ReportedStatus, WorkspaceOverview } from './components/WorkspaceOverview';
+import { WorkspaceOverview } from './components/WorkspaceOverview';
 import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs';
-import { DeviceIcon, Modal } from './components/ui';
+import { Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
 import { DeskSetupPanel } from './components/DeskSetupPanel';
 import type { ConnectionFocusPath } from './domain/connectionView';
@@ -72,15 +70,7 @@ const PhotoPanel = lazy(() =>
 );
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel =
-  | 'objects'
-  | 'devices'
-  | 'assistant'
-  | 'history'
-  | 'settings'
-  | 'photo'
-  | 'hardware'
-  | 'setup'
-  | null;
+  'objects' | 'assistant' | 'history' | 'settings' | 'photo' | 'hardware' | 'setup' | null;
 export default function App() {
   const store = useWorkspace();
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
@@ -94,7 +84,6 @@ export default function App() {
   const [dialog, setDialog] = useState<'object' | 'device' | 'connection' | 'cloud' | null>(null);
   const [prompt, setPrompt] = useState('');
   const [toast, setToast] = useState('');
-  const [search, setSearch] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [photoContext, setPhotoContext] = useState('');
@@ -391,51 +380,12 @@ export default function App() {
               <House size={22} />
             </button>
             <button
-              className={`nav-button ${panel === 'devices' ? 'active' : ''}`}
-              aria-label="Device list"
-              title="Device list"
-              onClick={() => openPanel('devices')}
+              className={`nav-button ${panel === 'setup' ? 'active' : ''}`}
+              aria-label="Setup guide"
+              title="Setup guide"
+              onClick={openSetup}
             >
-              <Desktop size={22} />
-            </button>
-            <button
-              className={`nav-button ${panel === 'objects' ? 'active' : ''}`}
-              aria-label="Scene objects"
-              title="Scene objects"
-              onClick={() => openPanel('objects')}
-            >
-              <Cube size={22} />
-            </button>
-            <button
-              className={`nav-button ${mode === 'connections' ? 'active' : ''}`}
-              aria-label="View connections"
-              title="View connections"
-              onClick={() => {
-                setMode('connections');
-                setShowConnections(true);
-                setPanel(null);
-              }}
-            >
-              <ShareNetwork size={22} />
-            </button>
-            <button
-              className={`nav-button ${mode === 'edit' ? 'active' : ''}`}
-              aria-label="Edit placement"
-              title="Edit placement"
-              onClick={() => {
-                setMode('edit');
-              }}
-            >
-              <PencilSimple size={22} />
-            </button>
-            <div className="rail-divider" />
-            <button
-              className={`nav-button ${panel === 'hardware' ? 'active' : ''}`}
-              aria-label="Mac hardware"
-              title="Mac hardware"
-              onClick={() => openPanel('hardware')}
-            >
-              <Cpu size={22} />
+              <Check size={22} />
             </button>
             <button
               className={`nav-button ${panel === 'photo' ? 'active' : ''}`}
@@ -446,12 +396,20 @@ export default function App() {
               <ImageIcon size={22} />
             </button>
             <button
-              className={`nav-button ${panel === 'setup' ? 'active' : ''}`}
-              aria-label="Setup guide"
-              title="Setup guide"
-              onClick={openSetup}
+              className={`nav-button ${panel === 'objects' ? 'active' : ''}`}
+              aria-label="Scene objects"
+              title="Scene objects"
+              onClick={() => openPanel('objects')}
             >
-              <Check size={22} />
+              <Cube size={22} />
+            </button>
+            <button
+              className={`nav-button ${panel === 'hardware' ? 'active' : ''}`}
+              aria-label="Mac hardware"
+              title="Mac hardware"
+              onClick={() => openPanel('hardware')}
+            >
+              <Cpu size={22} />
             </button>
             <button
               className={`nav-button ${panel === 'history' ? 'active' : ''}`}
@@ -463,15 +421,6 @@ export default function App() {
             </button>
           </div>
           <div className="nav-bottom">
-            <button
-              className="nav-button"
-              aria-label="Add device"
-              title="Add device"
-              disabled={workspace.devices.length >= 40}
-              onClick={() => setDialog('device')}
-            >
-              <Plus size={23} />
-            </button>
             <button
               className={`nav-button ${panel === 'assistant' ? 'active' : ''}`}
               aria-label="AI chat"
@@ -766,68 +715,6 @@ export default function App() {
                 photoContext={photoContext}
               />
             )}
-            {panel === 'devices' && (
-              <aside className="floating-panel device-library" aria-label="Device list panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="eyebrow">YOUR COLLECTION</span>
-                    <h2>
-                      Devices on my desk <span className="count">{workspace.devices.length}</span>
-                    </h2>
-                  </div>
-                  <button
-                    className="icon-button"
-                    aria-label="Close device list"
-                    onClick={() => setPanel(null)}
-                  >
-                    <X size={19} />
-                  </button>
-                </div>
-                <div className="panel-scroll">
-                  <input
-                    className="search-input"
-                    aria-label="Search devices"
-                    placeholder="Search devices..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  {workspace.devices
-                    .filter((d) =>
-                      `${d.name} ${d.model} ${kindLabels[d.kind]}`
-                        .toLowerCase()
-                        .includes(search.toLowerCase()),
-                    )
-                    .map((d) => (
-                      <button className="device-list-row" key={d.id} onClick={() => select(d.id)}>
-                        <span className="list-device-glyph">
-                          <DeviceIcon kind={d.kind} size={24} />
-                        </span>
-                        <span>
-                          <strong>{d.name}</strong>
-                          <small>
-                            {kindLabels[d.kind]} · {sourceLabels[d.source]}
-                          </small>
-                        </span>
-                        <ReportedStatus status={d.status} />
-                      </button>
-                    ))}
-                  {workspace.devices.length === 0 && (
-                    <p className="empty-copy">Add your first device.</p>
-                  )}
-                  <button
-                    className="button secondary full"
-                    onClick={() => setDialog('device')}
-                    disabled={workspace.devices.length >= 40}
-                  >
-                    <Plus size={18} />
-                    Add a device manually
-                  </button>
-                </div>
-                <div className="panel-footnote">
-                  Reports are entered by you. OS observations are shown separately.
-                </div>
-              </aside>
-            )}
             {panel === 'assistant' && (
               <AssistantPanel
                 workspace={workspace}
@@ -924,7 +811,6 @@ export default function App() {
                   }}
                   storageConflict={store.conflict}
                   onRefresh={assistant.refreshHealth}
-                  onClearDemo={clearSamples}
                 />
               </Suspense>
             )}
@@ -968,16 +854,6 @@ export default function App() {
           <div className="quick-prompts">
             <button className="provider-toggle" onClick={() => setDialog('cloud')}>
               {assistant.mode === 'meta' ? 'Meta connection settings' : 'Connect Meta API'}
-            </button>
-            <button onClick={openSetup}>Describe a connection</button>
-            <button
-              onClick={() => {
-                const target = device ?? assistant.targetDevice;
-                if (target?.kind === 'monitor') select(target.id);
-                else openSetup();
-              }}
-            >
-              Troubleshoot a monitor
             </button>
           </div>
         </div>

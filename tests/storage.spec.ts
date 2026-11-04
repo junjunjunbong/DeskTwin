@@ -359,7 +359,10 @@ test('device and connection dialogs retain entries after a failed save and close
       return original.call(this, entry, value);
     };
   }, key);
-  await page.getByRole('button', { name: 'Add device', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .click();
   const device = page.getByRole('dialog', { name: 'Add device', exact: true });
   await device.getByLabel('Device name', { exact: true }).fill('Kept display entry');
   await device.getByRole('button', { name: 'Add to my desk' }).click();
@@ -376,7 +379,8 @@ test('device and connection dialogs retain entries after a failed save and close
   await page.evaluate(() => {
     (window as typeof window & { blockWrites: boolean }).blockWrites = true;
   });
-  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  const connections = page.getByRole('switch', { name: 'Show connections' });
+  if ((await connections.getAttribute('aria-checked')) !== 'true') await connections.click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const connection = page.getByRole('dialog', { name: 'Record a connection' });
@@ -411,8 +415,10 @@ test('a failed diagnostic save never claims the user-reported result was saved',
   });
   await page.route('**/api/photo', (route) => route.abort('blockedbyclient'));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /^Left monitor Monitor/ }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /^Left monitor Monitor/ })
+    .click();
   await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
   await page.getByRole('button', { name: 'The screen works', exact: true }).click();
   await expect.poll(async () => (await saved(page)).diagnoses[0]?.result).toBe('resolved');

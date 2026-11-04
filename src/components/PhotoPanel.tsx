@@ -39,7 +39,6 @@ interface Props {
   onAdd: () => void;
   onApply: (draft: Workspace, base: Workspace, review: SceneReviewMetadata) => void | Promise<void>;
   storageConflict?: boolean;
-  onClearDemo: () => unknown | Promise<unknown>;
   onRefresh: () => void;
   onContinue?: (context: string) => void;
 }
@@ -51,7 +50,6 @@ export function PhotoPanel({
   onClose,
   onAdd,
   onApply,
-  onClearDemo,
   onRefresh,
   storageConflict = false,
   onContinue,
@@ -82,7 +80,6 @@ export function PhotoPanel({
     | null
   >(null);
   const [applied, setApplied] = useState(false);
-  const [clearConfirm, setClearConfirm] = useState(false);
   useEffect(
     () => () => {
       version.current++;
@@ -420,28 +417,6 @@ export function PhotoPanel({
             <Plus size={18} />
             Add a device manually
           </button>
-          {workspace.devices.some((d) => d.source === 'demo') && (
-            <div className="clear-demo-row">
-              <button
-                className="text-button"
-                disabled={pending}
-                onClick={async () => {
-                  if (clearConfirm) {
-                    if ((await onClearDemo()) !== false) setClearConfirm(false);
-                  } else setClearConfirm(true);
-                }}
-              >
-                {clearConfirm
-                  ? 'Confirm removal of sample devices'
-                  : 'Remove sample devices and start my setup'}
-              </button>
-              {clearConfirm && (
-                <button className="text-button" onClick={() => setClearConfirm(false)}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          )}
           {photo && (
             <button
               className="text-button danger-text"

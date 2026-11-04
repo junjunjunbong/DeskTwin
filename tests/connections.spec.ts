@@ -42,11 +42,26 @@ function renderedLines(page: Page) {
   // including unsaved drag frames, rather than copied from the saved workspace.
   return page.locator('.connection-summary [data-connection-id]');
 }
+async function revealOverview(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (await overview.isVisible()) return overview;
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (await expand.isVisible()) await expand.click();
+  if (await overview.isVisible()) return overview;
+  const edit = page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true });
+  const editing = (await edit.getAttribute('aria-pressed')) === 'true';
+  await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  if (editing) await edit.click();
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  return overview;
+}
 async function selectDevice(page: Page, name: string) {
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page
-    .getByRole('complementary', { name: 'Device list panel' })
-    .getByRole('button', { name: new RegExp(`^${name} `) })
+  await (
+    await revealOverview(page)
+  )
+    .getByRole('button', { name: new RegExp(`^${name} .+ · `) })
     .click();
 }
 
@@ -62,12 +77,15 @@ test('connection visibility is independent of editing and preserves every connec
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(renderedLines(page)).toHaveCount(initial.connections.length);
   await expect(renderedLines(page).filter({ hasText: 'Bluetooth' })).toHaveCount(2);
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
   await expect(renderedLines(page)).toHaveCount(initial.connections.length);
   await toggle.click();
   await expect(renderedLines(page)).toHaveCount(0);
   expect(await saved(page)).toEqual(initial);
-  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  if ((await toggle.getAttribute('aria-checked')) !== 'true') await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(renderedLines(page)).toHaveCount(initial.connections.length);
   await page.getByRole('button', { name: 'My desk', exact: true }).first().click();
@@ -213,7 +231,13 @@ test('overview and connection guide enter Edit before offering an add dialog', a
     .getByRole('button', { name: 'Close', exact: true })
     .click();
   expect(await saved(page)).toEqual(initial);
-  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'View', exact: true })
+    .click();
+  const showConnections = page.getByRole('switch', { name: 'Show connections' });
+  if ((await showConnections.getAttribute('aria-checked')) !== 'true')
+    await showConnections.click();
   const guide = page.getByRole('note', { name: 'Connection display guide', exact: true });
   await expect(guide.getByRole('button', { name: 'Add connection', exact: true })).toHaveCount(0);
   await guide.getByRole('button', { name: 'Edit connections', exact: true }).click();
@@ -418,7 +442,10 @@ test('a real drag with connections on moves the rendered endpoint before its sin
 }) => {
   const initial = dragWorkspace();
   await seed(page, initial);
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
   await page.getByRole('switch', { name: 'Show connections' }).click();
   const line = renderedLines(page);
   await expect(line).toHaveCount(1);
@@ -463,7 +490,10 @@ test('the mobile toggle stays reachable while a device inspector is open in plac
   await page.setViewportSize({ width: 390, height: 844 });
   const initial = createDemoWorkspace();
   await seed(page, initial);
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
   await selectDevice(page, 'USB-C Dock');
   const toggle = page.getByRole('switch', { name: 'Show connections' });
   await expect(toggle).toBeVisible();
@@ -491,7 +521,10 @@ test('a real desk drag carries its attached device and live connection as one un
   initial.devices[0].attachment = { parentId: desk.id };
   initial.devices[1].placement.x = 3.2;
   await seed(page, initial);
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
   await page.getByRole('switch', { name: 'Show connections' }).click();
   const line = renderedLines(page);
   await expect(line).toHaveCount(1);
