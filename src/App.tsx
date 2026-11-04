@@ -45,6 +45,7 @@ import {
   localizeLegacyDemoForDisplay,
   parseWorkspace,
   sourceLabels,
+  type Workspace,
   type WorkspaceCommand,
 } from './domain/workspace';
 import type { DeskMode } from './scene/deskScene';
@@ -72,6 +73,20 @@ const PhotoPanel = lazy(() =>
 const DeskCanvas = lazy(() => import('./components/DeskCanvas'));
 type Panel =
   'objects' | 'assistant' | 'history' | 'settings' | 'photo' | 'hardware' | 'setup' | null;
+
+function erasedDesk(current: Workspace): Workspace {
+  const room = createDemoWorkspace();
+  return {
+    ...room,
+    name: current.name,
+    appearance: current.appearance,
+    devices: [],
+    connections: [],
+    diagnoses: [],
+    history: [],
+  };
+}
+
 export default function App() {
   const store = useWorkspace();
   const workspace = useMemo(() => localizeLegacyDemoForDisplay(store.workspace), [store.workspace]);
@@ -85,7 +100,7 @@ export default function App() {
   const [dialog, setDialog] = useState<'object' | 'device' | 'connection' | 'cloud' | null>(null);
   const [prompt, setPrompt] = useState('');
   const [toast, setToast] = useState('');
-  const [resetConfirm, setResetConfirm] = useState(false);
+  const [startOver, setStartOver] = useState<'photo' | 'erase' | null>(null);
   const [referencePhoto, setReferencePhoto] = useState<string | null>(null);
   const [photoContext, setPhotoContext] = useState('');
   const [focusPath, setFocusPath] = useState<ConnectionFocusPath | null>(null);
@@ -143,6 +158,18 @@ export default function App() {
     setSelected(null);
     setPanel('setup');
     setDetailsExpanded(true);
+  }
+  async function eraseDesk(action: 'photo' | 'erase') {
+    if (!(await store.replace(erasedDesk(store.workspace)))) return;
+    deviceDrafts.invalidate();
+    assistant.resetConversation();
+    setFocusPath(null);
+    setPhotoContext('');
+    setReferencePhoto(null);
+    setStartOver(null);
+    setToast('Desk erased. The room stays. You can undo this change.');
+    if (action === 'photo') openPanel('photo');
+    else openSetup(0);
   }
   function focusSavedConnection(from: string, to: string) {
     let current = workspace;
@@ -966,34 +993,55 @@ export default function App() {
             browser. Photos, conversations, and API keys are not included in the JSON export.
           </p>
           <hr />
-          {resetConfirm ? (
-            <div className="delete-confirm">
-              <p>Reset your workspace to the example? You can undo this change.</p>
-              <button
-                className="button danger"
-                onClick={async () => {
-                  if (!(await store.replace(createDemoWorkspace()))) return;
-                  deviceDrafts.invalidate();
-                  assistant.resetConversation();
-                  setFocusPath(null);
-                  setPhotoContext('');
-                  setReferencePhoto(null);
-                  setResetConfirm(false);
-                  setPanel(null);
-                }}
-              >
-                Confirm reset to example
+          <section className="manage-workspace" aria-labelledby="manage-workspace-heading">
+            <h3 id="manage-workspace-heading">Manage workspace</h3>
+            {startOver === 'photo' ? (
+              <div className="delete-confirm" role="group" aria-label="Start fresh confirmation">
+                <p>
+                  Your devices, connections and checks will be removed. The room stays. You can undo
+                  this right after.
+                </p>
+                <button
+                  className="button danger"
+                  aria-label="Confirm erase and choose a photo"
+                  onClick={() => void eraseDesk('photo')}
+                >
+                  Erase and choose a photo
+                </button>
+                <button className="text-button" onClick={() => setStartOver(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button className="text-button danger-text" onClick={() => setStartOver('photo')}>
+                <ImageIcon size={16} />
+                Start fresh with a new photo
               </button>
-              <button className="text-button" onClick={() => setResetConfirm(false)}>
-                Cancel
+            )}
+            {startOver === 'erase' ? (
+              <div className="delete-confirm" role="group" aria-label="Erase my desk confirmation">
+                <p>
+                  Your devices, connections and checks will be removed. The room stays. You can undo
+                  this right after.
+                </p>
+                <button
+                  className="button danger"
+                  aria-label="Confirm erase my desk"
+                  onClick={() => void eraseDesk('erase')}
+                >
+                  Erase my desk
+                </button>
+                <button className="text-button" onClick={() => setStartOver(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button className="text-button danger-text" onClick={() => setStartOver('erase')}>
+                <ArrowCounterClockwise size={16} />
+                Erase my desk
               </button>
-            </div>
-          ) : (
-            <button className="text-button danger-text" onClick={() => setResetConfirm(true)}>
-              <ArrowCounterClockwise size={16} />
-              Reset to example
-            </button>
-          )}
+            )}
+          </section>
         </Modal>
       )}
       <input

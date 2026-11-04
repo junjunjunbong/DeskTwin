@@ -130,8 +130,11 @@ test('resetting the workspace aborts a pending conversation and discards the old
   await send(page, 'Review this device');
   await expect.poll(() => !!release).toBe(true);
   await page.getByRole('button', { name: 'Open settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Reset to example', exact: true }).click();
-  await page.getByRole('button', { name: 'Confirm reset to example', exact: true }).click();
+  await page.getByRole('button', { name: 'Erase my desk', exact: true }).click();
+  await page
+    .getByRole('group', { name: 'Erase my desk confirmation' })
+    .getByRole('button', { name: 'Confirm erase my desk', exact: true })
+    .click();
   await expect(page.getByRole('dialog', { name: 'Workspace settings' })).toHaveCount(0);
   release!();
   await page.getByRole('button', { name: 'AI chat', exact: true }).click();

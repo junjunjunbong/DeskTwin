@@ -1169,6 +1169,20 @@ hr {
 .delete-confirm .text-button {
   margin-left: 15px;
 }
+.manage-workspace {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.manage-workspace h3 {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.manage-workspace .delete-confirm {
+  align-self: stretch;
+  margin-top: 8px;
+}
 .toast {
   display: flex;
   align-items: center;

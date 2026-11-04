@@ -1,11 +1,44 @@
 import { test, expect, type Page } from '@playwright/test';
+import { startDiagnosis } from '../src/domain/diagnosis';
 import { createDemoWorkspace, type Workspace } from '../src/domain/workspace';
 const key = 'desktwin.workspace.v1';
+const eraseNotice =
+  'Your devices, connections and checks will be removed. The room stays. You can undo this right after.';
 async function saved(page: Page): Promise<Workspace | null> {
   return page.evaluate((name) => {
     const value = localStorage.getItem(name);
     return value ? JSON.parse(value) : null;
   }, key);
+}
+async function seed(page: Page, workspace: Workspace) {
+  await page.addInitScript(({ storageKey, value }) => localStorage.setItem(storageKey, value), {
+    storageKey: key,
+    value: JSON.stringify(workspace),
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('desk-canvas')).toBeVisible();
+}
+function deskWithRecords(): Workspace {
+  const workspace = createDemoWorkspace();
+  workspace.name = 'Studio desk';
+  workspace.appearance = { lighting: 'night', labels: true, decor: true };
+  workspace.devices = workspace.devices
+    .filter((device) => device.id === 'laptop' || device.id === 'monitor-right')
+    .map((device) => ({ ...device, source: 'user-reported' as const }));
+  workspace.connections = [
+    {
+      id: 'laptop-monitor',
+      from: 'laptop',
+      to: 'monitor-right',
+      connector: 'HDMI',
+      fromPort: '',
+      toPort: '',
+      source: 'user-reported',
+      note: 'Checked at the desk',
+    },
+  ];
+  workspace.diagnoses = [startDiagnosis('monitor-right', workspace, '2026-01-01T00:00:00.000Z')];
+  return workspace;
 }
 let pageErrors: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -177,6 +210,91 @@ test('a first visit starts an own desk from the example without losing furniture
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(async () => (await saved(page))?.devices.length).toBe(8);
   await expect(overview.getByRole('region', { name: 'Start your own desk' })).toBeVisible();
+});
+test('erasing my desk removes records, keeps the room and name, and undo restores devices', async ({
+  page,
+}) => {
+  const initial = deskWithRecords();
+  await seed(page, initial);
+  await expect(page.getByRole('heading', { name: 'Studio desk', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Workspace settings' });
+  await settings.getByRole('button', { name: 'Erase my desk', exact: true }).click();
+  const confirmation = settings.getByRole('group', { name: 'Erase my desk confirmation' });
+  await expect(confirmation).toContainText(eraseNotice);
+  await expect(settings.getByRole('group', { name: 'Start fresh confirmation' })).toHaveCount(0);
+  await confirmation.getByRole('button', { name: 'Confirm erase my desk', exact: true }).click();
+  await expect(settings).toHaveCount(0);
+  const setup = page.getByRole('complementary', { name: 'Desk setup panel' });
+  await expect(setup).toBeVisible();
+  await expect(setup.getByRole('button', { name: '1. Devices', exact: true })).toHaveAttribute(
+    'aria-current',
+    'step',
+  );
+  await expect(
+    page.getByText('Desk erased. The room stays. You can undo this change.'),
+  ).toBeVisible();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(0);
+  const stored = (await saved(page))!;
+  expect(stored.connections).toHaveLength(0);
+  expect(stored.diagnoses).toHaveLength(0);
+  expect(stored.objects.length).toBe(createDemoWorkspace().objects.length);
+  expect(stored.name).toBe('Studio desk');
+  expect(stored.appearance).toEqual({ lighting: 'night', labels: true, decor: true });
+  await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await expect(overview.getByRole('region', { name: 'Start your own desk' })).toHaveCount(0);
+  await expect(overview.getByRole('region', { name: 'Get started with your desk' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(initial.devices.length);
+  const restored = (await saved(page))!;
+  expect(restored.devices.map((device) => device.id).sort()).toEqual(['laptop', 'monitor-right']);
+  expect(restored.connections).toHaveLength(1);
+});
+test('starting fresh with a new photo erases the desk and opens the photo panel', async ({
+  page,
+}) => {
+  await seed(page, deskWithRecords());
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Workspace settings' });
+  await settings.getByRole('button', { name: 'Start fresh with a new photo', exact: true }).click();
+  const confirmation = settings.getByRole('group', { name: 'Start fresh confirmation' });
+  await expect(confirmation).toContainText(eraseNotice);
+  await confirmation
+    .getByRole('button', { name: 'Confirm erase and choose a photo', exact: true })
+    .click();
+  await expect(settings).toHaveCount(0);
+  await expect(
+    page.getByRole('complementary', { name: 'Desk photo panel', exact: true }),
+  ).toBeVisible();
+  await expect.poll(async () => (await saved(page))?.devices.length).toBe(0);
+  expect((await saved(page))?.connections).toHaveLength(0);
+});
+test('canceling erase leaves the saved workspace unchanged', async ({ page }) => {
+  await seed(page, deskWithRecords());
+  const before = await page.evaluate((storageKey) => localStorage.getItem(storageKey), key);
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Workspace settings' });
+  await settings.getByRole('button', { name: 'Erase my desk', exact: true }).click();
+  await expect(settings.getByRole('group', { name: 'Erase my desk confirmation' })).toBeVisible();
+  await settings.getByRole('button', { name: 'Start fresh with a new photo', exact: true }).click();
+  await expect(settings.getByRole('group', { name: 'Erase my desk confirmation' })).toHaveCount(0);
+  const fresh = settings.getByRole('group', { name: 'Start fresh confirmation' });
+  await expect(fresh).toBeVisible();
+  await fresh.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(settings.getByRole('button', { name: 'Erase my desk', exact: true })).toBeVisible();
+  await settings.getByRole('button', { name: 'Erase my desk', exact: true }).click();
+  await settings
+    .getByRole('group', { name: 'Erase my desk confirmation' })
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await expect(
+    settings.getByRole('heading', { name: 'Manage workspace', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Desk setup panel' })).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Desk photo panel' })).toHaveCount(0);
+  expect(await page.evaluate((storageKey) => localStorage.getItem(storageKey), key)).toBe(before);
 });
 test('rejects invalid import without replacing the workspace', async ({ page }) => {
   await page.goto('/');
