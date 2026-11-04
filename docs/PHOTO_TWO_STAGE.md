@@ -1,8 +1,8 @@
 # Two-stage photo analysis and optional SAM regions
 
-This path lists visible objects before placement, and can ask SAM 3.1 for a box around each chosen noun phrase. It has not been called against the live Meta API. Tests use a fake `fetch`. Nothing below that depends on a live response should be treated as measured latency, region quality, or a paid invoice.
+This path lists visible objects before placement, and can ask SAM 3.1 for a box around each chosen noun phrase. On 2026-11-04 it was called twice against the live Meta API; see [Live observations](#live-observations-2026-11-04). Automated tests use a fake `fetch`. Two observations are not measured latency, region quality, or a paid invoice.
 
-The screen uses this split only when `META_PHOTO_TWO_STAGE=true`. Otherwise it still calls `POST /api/photo` once. The screen path below has not been called against the live Meta API.
+The screen uses this split only when `META_PHOTO_TWO_STAGE=true`. Otherwise it still calls `POST /api/photo` once.
 
 ## Flow
 
@@ -100,7 +100,7 @@ When the flag is on:
 
 The photo and the selection stay in memory. Removing the photo, closing the panel, or canceling aborts the in-flight request. Nothing is written to the saved workspace until the user applies the review.
 
-This screen path has not been called against the live Meta API. The browser test intercepts `/api/health`, `/api/photo/objects`, and `/api/photo`.
+The browser test intercepts `/api/health`, `/api/photo/objects`, and `/api/photo`. The live runs below used the same screen path.
 
 ## Failure
 
@@ -133,17 +133,24 @@ Checked against the pages linked below. This is documentation, not a live call.
 - Mask text uses `~` (lossless) or `!` (`one_bit`). The payload is base85 and may itself contain `~` or `!`. This server does not decode it.
 - Image segmentation is billed per image at $2.50 per 1,000 images, not per token. The same price is documented for streaming and non-streaming.
 
+## Live observations (2026-11-04)
+
+Both runs used `muse-spark-1.3`, `sam-3.1`, `META_PHOTO_TWO_STAGE=true`, `META_SAM_ENABLED=true`, an emptied workspace, and an empty description. Each is one observation.
+
+| Photo                                 | Stage 1 (list + SAM)                | Stage 2 (placement)                           | Result                                                                                   |
+| ------------------------------------- | ----------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Generated demo desk (Muse Image JPEG) | 37.4 s, 14 objects, SAM outlined 13 | 60.7 s, 200                                   | Review opened and applied without edits; 6 devices and 8 objects saved.                  |
+| Real desk photo (HEIC, prepared JPEG) | 53.6 s, 19 objects, SAM outlined 12 | 83.6 s, 502 “could not be safely interpreted” | No scene. The raw stage-2 reply was not captured, so the failing rule is not identified. |
+
+The generated run establishes that the JPEG data URL was accepted by SAM and that the non-streaming reply was readable for those requests. The real-photo stage-2 failure is unexplained; one hypothesis is that placing 19 objects reaches the 12,000-token completion budget, which includes reasoning tokens. It has not been checked.
+
 ## Not confirmed
 
-These were not established by a live response, and this change does not claim them.
-
-- Whether a JPEG or WebP data URL is accepted. The docs show a PNG data URL and say a base64 data URL is allowed. This app sends the existing JPEG, PNG, or WebP data URL. That specific acceptance was not tried.
-- The exact non-streaming SAM JSON from production. The reader follows the Responses API example. A body that does not contain readable `output_text` is treated as a SAM failure and falls back to the inventory rectangle.
-- Latency of stage 1, of SAM, and of stage 2.
+- Latency distribution of stage 1, of SAM, and of stage 2. The table above is two observations.
 - Whether SAM boxes are better than the inventory rectangles on a real desk photo, including repeated objects that share a noun phrase.
 - Actual token counts and the resulting Muse Spark charge. The dollar amounts above are the published list prices only.
 - Contributor-mode prices. This path does not switch the model id to a contributor variant.
-- The screen flow with `META_PHOTO_TWO_STAGE`. Browser tests use mocked `/api/health`, `/api/photo/objects`, and `/api/photo` responses. No live Meta call was made for the picker, the selection request, or the direct review handoff.
+- Why stage 2 failed on the real photo.
 
 ## Sources
 
