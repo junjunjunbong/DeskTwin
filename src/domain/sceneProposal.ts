@@ -54,6 +54,74 @@ export const SceneImageRegionSchema = z
     message: 'The image region must stay within the reference image.',
   });
 
+const PhotoObjectKindSchema = z.enum([...DeviceKindSchema.options, ...ObjectKindSchema.options]);
+/** One concrete English noun phrase for a single SAM concept prompt. */
+export const SamPhraseSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z0-9]+(?:[ -][A-Za-z0-9]+)*$/)
+  .refine((phrase) => phrase.split(/ +/).length <= 6, {
+    message: 'A SAM phrase is at most 6 words.',
+  });
+export const PhotoObjectCandidateSchema = z.strictObject({
+  id: IdSchema,
+  kind: PhotoObjectKindSchema,
+  name: z.string().trim().min(1).max(60),
+  samPhrase: SamPhraseSchema,
+  imageRegion: SceneImageRegionSchema.nullable(),
+  imageRegionVisibility: z.enum(['complete', 'partial', 'unknown']),
+});
+export const PhotoObjectListSchema = z
+  .strictObject({
+    message: z.string().trim().min(1).max(2000),
+    objects: z.array(PhotoObjectCandidateSchema).max(32),
+  })
+  .superRefine((list, ctx) => {
+    const ids = new Set<string>();
+    list.objects.forEach((object, index) => {
+      if (!ids.has(object.id)) {
+        ids.add(object.id);
+        return;
+      }
+      ctx.addIssue({
+        code: 'custom',
+        path: ['objects', index, 'id'],
+        message: 'Duplicate object ID.',
+      });
+    });
+  });
+export type PhotoObjectCandidate = z.infer<typeof PhotoObjectCandidateSchema>;
+export type PhotoObjectList = z.infer<typeof PhotoObjectListSchema>;
+
+export const PhotoSelectionItemSchema = z.strictObject({
+  id: IdSchema,
+  kind: PhotoObjectKindSchema,
+  name: z.string().trim().min(1).max(60),
+  imageRegion: SceneImageRegionSchema.nullable(),
+});
+export const PhotoSelectionSchema = z
+  .strictObject({
+    objects: z.array(PhotoSelectionItemSchema).min(1).max(32),
+  })
+  .superRefine((selection, ctx) => {
+    const ids = new Set<string>();
+    selection.objects.forEach((object, index) => {
+      if (!ids.has(object.id)) {
+        ids.add(object.id);
+        return;
+      }
+      ctx.addIssue({
+        code: 'custom',
+        path: ['objects', index, 'id'],
+        message: 'Duplicate selected object ID.',
+      });
+    });
+  });
+export type PhotoSelection = z.infer<typeof PhotoSelectionSchema>;
+export type PhotoSelectionItem = z.infer<typeof PhotoSelectionItemSchema>;
+
 export const SceneImagePointSchema = z.strictObject({
   x: z.number().finite().min(0).max(1),
   y: z.number().finite().min(0).max(1),

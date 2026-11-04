@@ -3,8 +3,16 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { z } from 'zod';
 import { IdSchema, WorkspaceSchema } from '../src/domain/workspace';
+import { PhotoSelectionSchema } from '../src/domain/sceneProposal';
 import { demoReply } from '../src/domain/demoAssistant';
-import { ApiError, callMeta, callMetaScene, HistorySchema, type MetaConfig } from './meta';
+import {
+  ApiError,
+  callMeta,
+  callMetaPhotoObjects,
+  callMetaScene,
+  HistorySchema,
+  type MetaConfig,
+} from './meta';
 import { HardwareRequestError, HardwareService } from './hardware';
 
 const ChatRequest = z.object({
@@ -14,7 +22,7 @@ const ChatRequest = z.object({
   focusDeviceId: IdSchema.nullable().optional(),
   consent: z.literal(true).optional(),
 });
-const PhotoRequest = z.object({
+const PhotoObjectsRequest = z.object({
   image: z
     .string()
     .max(1_900_000)
@@ -22,6 +30,9 @@ const PhotoRequest = z.object({
   consent: z.literal(true),
   workspace: WorkspaceSchema,
   context: z.string().trim().max(2000).optional(),
+});
+const PhotoRequest = PhotoObjectsRequest.extend({
+  selection: PhotoSelectionSchema.optional(),
 });
 interface ServerConfig extends MetaConfig {
   productionRoot?: string;
@@ -206,7 +217,7 @@ export function createApp(config: ServerConfig) {
         else json(res, 404, { error: 'The development UI uses port 5173.' });
         return;
       }
-      if (!['/api/chat', '/api/photo'].includes(path)) {
+      if (!['/api/chat', '/api/photo', '/api/photo/objects'].includes(path)) {
         json(res, 404, { error: 'This API endpoint is not supported.' });
         return;
       }
@@ -248,6 +259,20 @@ export function createApp(config: ServerConfig) {
             signal,
           }),
         );
+      } else if (path === '/api/photo/objects') {
+        const data = PhotoObjectsRequest.parse(body);
+        if (!config.apiKey)
+          throw new ApiError(
+            503,
+            'Photo analysis requires a Meta API key. You can add devices manually.',
+          );
+        await providerRequest(req, res, (signal) =>
+          callMetaPhotoObjects(config, data.workspace, {
+            image: data.image,
+            context: data.context,
+            signal,
+          }),
+        );
       } else {
         const data = PhotoRequest.parse(body);
         if (!config.apiKey)
@@ -259,6 +284,7 @@ export function createApp(config: ServerConfig) {
           callMetaScene(config, data.workspace, {
             image: data.image,
             context: data.context,
+            selection: data.selection,
             signal,
           }),
         );
