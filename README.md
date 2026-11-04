@@ -198,6 +198,8 @@ API 서버를 재시작한 뒤 화면 아래 **Connect Meta API**를 엽니다. 
 
 ## 데모 순서
 
+제출용 3분 촬영 순서와 영문 소개문은 [제출 마감 문서](docs/SUBMISSION.md)에 있습니다. 아래는 제품 안내용 순서입니다.
+
 1. **View**에서 책상과 **Workspace overview**를 보여줍니다. 기본 기기·연결은 예시이며 사용자 보고와 OS 인식이 별도라는 점을 설명합니다.
 2. **Show connections**를 켜고 Dock을 선택합니다. 오른쪽 고정 패널에서 상대 기기, 양쪽 포트, 출처와 메모를 확인합니다. Bluetooth 기록도 연결 목록에 남습니다.
 3. **Edit**로 바꾸고 키보드·마우스·SSD 또는 의자를 직접 옮깁니다. 매트/러그 위 이동, 장애물에서 정지, 연결선 갱신, Undo/Redo를 보여줍니다. 부착한 물체가 있는 책상도 함께 이동시킵니다.
@@ -250,6 +252,7 @@ DESKTWIN_TEST_PORT=5187 DESKTWIN_TEST_API_PORT=4337 npm run test:e2e
 - [기여 방법](CONTRIBUTING.md)
 - [원래 프로젝트 brief](docs/PROJECT.md)
 - [해커톤 제출 체크리스트](docs/HACKATHON.md)
+- [3분 촬영 원고와 제출 문장](docs/SUBMISSION.md)
 
 ## 라이선스와 에셋
 

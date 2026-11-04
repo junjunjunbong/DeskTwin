@@ -1,6 +1,8 @@
 # Hackathon notes
 
-Source: [Participant guide](https://cerebralvalley.ai/e/meta-ai-developer-hackathon/details), accessed 2026-10-27. Check the live guide, official rules, and submission form again before submitting; details can change.
+Source: [Participant guide](https://cerebralvalley.ai/e/meta-ai-developer-hackathon/details), accessed 2026-10-27. The public event page still listed submissions due 2026-11-04 21:00 ET when read on 2026-11-03. The signed-in submission form was not opened. Check the live guide, official rules, and submission form again before submitting; details can change.
+
+The filming script, English form text, and remaining human steps are in [SUBMISSION.md](SUBMISSION.md).
 
 ## Submission facts from the guide
 
