@@ -42,7 +42,7 @@ Photo-fit snapshots are keyed by stable proposal identity and include support me
 4. Insufficient evidence leaves the current preview intact. The user can keep reviewing or choose another photo; there is no demand to set coordinates.
 5. The existing explicit confirmation and storage-conflict checks control saving.
 
-Photo bytes, regions, camera estimates, fit snapshots and comparison state remain outside `Workspace`. Neither retry nor comparison logs or transmits the photo. The expanded model contract is not evidence of live-provider compatibility or better recognition; no new paid request was made. Current photo provider/browser deadlines are 60/65 seconds; chat retains its 35-second provider deadline. Photo review is loaded separately so the added fitting UI does not enlarge the initial application bundle beyond its previous bound.
+Photo bytes, regions, camera estimates, fit snapshots and comparison state remain outside `Workspace`. Neither retry nor comparison logs or transmits the photo. The expanded model contract is not evidence of live-provider compatibility or better recognition; no new paid request was made. Current photo provider/browser deadlines are 120/125 seconds; chat retains its 35-second provider deadline. Photo review is loaded separately so the added fitting UI does not enlarge the initial application bundle beyond its previous bound.
 
 ## Baseline verification at `79ed8b6`
 

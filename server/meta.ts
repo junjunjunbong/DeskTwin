@@ -308,7 +308,7 @@ export async function callMetaScene(
     {
       messages,
       name: 'desktwin_scene',
-      defaultTimeoutMs: 60000,
+      defaultTimeoutMs: 120000,
       schema: sceneResponseSchema,
       maxTokens: 12000,
       signal: input.signal,

@@ -157,7 +157,7 @@ export function PhotoPanel({
     const token = version.current;
     const controller = new AbortController();
     request.current = controller;
-    const timeout = setTimeout(() => controller.abort(), 65000);
+    const timeout = setTimeout(() => controller.abort(), 125000);
     const base = structuredClone(workspace);
     analysisStarted.current = performance.now();
     setElapsedSeconds(0);
