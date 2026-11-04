@@ -24,20 +24,21 @@ test('renders a real canvas without claiming detected hardware', async ({ page }
     'aria-pressed',
     'true',
   );
-  await expect(
-    page.getByRole('complementary', { name: 'Workspace overview', exact: true }),
-  ).toBeVisible();
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  await expect(overview).toBeVisible();
   await expect(page.locator('header').getByRole('link', { name: /github/i })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await expect(page.getByRole('button', { name: /MacBook Laptop/ })).toBeVisible();
-  await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
+  await expect(overview.getByRole('button', { name: /MacBook Laptop/ })).toBeVisible();
+  await overview.getByRole('button', { name: /USB-C Dock Dock/ }).click();
   await expect(page.getByRole('complementary', { name: 'Selected device' })).toBeVisible();
   await expect(page.getByLabel('Operating status user-reported')).toHaveValue('unknown');
   expect(errors).toEqual([]);
 });
 test('adds a device and persists across reload', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Add device', exact: true }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .click();
   const modal = page.getByRole('dialog', { name: 'Add device' });
   await modal.getByLabel('Device name').fill('Test display');
   await modal.getByRole('button', { name: 'Add to my desk' }).click();
@@ -46,8 +47,11 @@ test('adds a device and persists across reload', async ({ page }) => {
     .poll(async () => (await saved(page))?.devices.find((d) => d.name === 'Test display')?.source)
     .toBe('user-reported');
   await page.reload();
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await expect(page.getByRole('button', { name: /Test display Monitor/ })).toBeVisible();
+  await expect(
+    page
+      .getByRole('complementary', { name: 'Workspace overview', exact: true })
+      .getByRole('button', { name: /Test display Monitor/ }),
+  ).toBeVisible();
   const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.devices.find((d: { name: string }) => d.name === 'Test display').source).toBe(
     'user-reported',
@@ -82,8 +86,10 @@ test('editing a legacy example device model preserves the saved name', async ({ 
     value: JSON.stringify(legacy),
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /Right monitor Monitor/ }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /Right monitor Monitor/ })
+    .click();
   await page.getByRole('button', { name: 'Edit device details', exact: true }).click();
   await expect(page.getByLabel('Device name')).toHaveValue('Right monitor');
   await page.getByLabel('Model optional').fill('Display model');
@@ -132,7 +138,8 @@ test('conversation proposals require confirmation and never verify operation', a
 });
 test('supports manual connections and undo', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  const connections = page.getByRole('switch', { name: 'Show connections' });
+  if ((await connections.getAttribute('aria-checked')) !== 'true') await connections.click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Record a connection' });
@@ -195,15 +202,22 @@ test('mobile layout fits the viewport and opens a usable device dialog', async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.getByRole('button', { name: 'Add device', exact: true }).click();
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (await expand.isVisible()) await expand.click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: 'Add a device manually', exact: true })
+    .click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.screenshot({ path: 'test-results/hero-mobile.png' });
 });
 test('guided troubleshooting records only an explicit user test', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /Right monitor Monitor/ }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /Right monitor Monitor/ })
+    .click();
   await page.getByRole('button', { name: 'Troubleshoot monitor step by step' }).click();
   await expect(page.getByRole('heading', { name: 'Check power and input source' })).toBeVisible();
   await page.getByRole('button', { name: 'Still no display' }).click();
@@ -290,6 +304,7 @@ test('photo selection alone never sends an image; applying a scene needs a secon
   await expect(page.getByRole('button', { name: 'Create scene preview with Meta' })).toBeDisabled();
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   await expect(page.getByRole('button', { name: 'Confirm and apply scene' })).toBeVisible();
   expect(calls).toBe(1);
   expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
@@ -340,9 +355,14 @@ test('position changes and deletes can be undone', async ({ page }) => {
     value: JSON.stringify(initial),
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /USB-C Dock Dock/ })
+    .click();
   await page.getByRole('slider', { name: 'Device left / right position' }).fill('1.25');
   await expect
     .poll(async () => (await saved(page))?.devices.find((d) => d.id === 'dock')?.placement.x)

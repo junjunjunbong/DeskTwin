@@ -24,10 +24,25 @@ async function seed(page: Page) {
   await page.goto('/');
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
 }
+async function revealOverview(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (await overview.isVisible()) return overview;
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (await expand.isVisible()) await expand.click();
+  if (await overview.isVisible()) return overview;
+  const edit = page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true });
+  const editing = (await edit.getAttribute('aria-pressed')) === 'true';
+  await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  if (editing) await edit.click();
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  return overview;
+}
 async function selectMonitor(page: Page) {
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page
-    .getByRole('complementary', { name: 'Device list panel' })
+  await (
+    await revealOverview(page)
+  )
     .getByRole('button', { name: /^Right monitor Monitor/ })
     .click();
 }
@@ -157,7 +172,8 @@ test('changing the recorded graph requires a new attempt and preserves the old a
   await panel(page).getByRole('button', { name: 'Still no display', exact: true }).click();
   await expect.poll(async () => (await saved(page)).diagnoses[0].answers.length).toBe(1);
   const prior = (await saved(page)).diagnoses[0];
-  await page.getByRole('button', { name: 'View connections', exact: true }).click();
+  const connections = page.getByRole('switch', { name: 'Show connections' });
+  if ((await connections.getAttribute('aria-checked')) !== 'true') await connections.click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Record a connection', exact: true });

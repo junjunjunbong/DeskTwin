@@ -145,6 +145,7 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   expect(photoCalls).toBe(0);
   await photo.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await photo.getByRole('button', { name: 'Create scene preview with Meta', exact: true }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const preview = page.getByRole('dialog', { name: 'Review your desk scene', exact: true });
   await expect(preview).toBeVisible();
   expect((await saved(page)).devices.some((device) => device.name === 'Photo monitor')).toBe(false);

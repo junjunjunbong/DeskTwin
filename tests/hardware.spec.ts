@@ -205,12 +205,27 @@ async function approveExisting(panel: Locator, observationIndex: number, deviceI
   await panel.getByRole('button', { name: 'Review match', exact: true }).click();
   await panel.getByRole('button', { name: 'Confirm and save match', exact: true }).click();
 }
+async function revealOverview(page: Page) {
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (await overview.isVisible()) return overview;
+  const expand = page.getByRole('button', { name: /Expand details and controls/ });
+  if (await expand.isVisible()) await expand.click();
+  if (await overview.isVisible()) return overview;
+  const edit = page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true });
+  const editing = (await edit.getAttribute('aria-pressed')) === 'true';
+  await page.getByRole('button', { name: 'My desk', exact: true }).click();
+  if (editing) await edit.click();
+  if (!(await overview.isVisible()) && (await expand.isVisible())) await expand.click();
+  return overview;
+}
 async function selectDevice(page: Page, id: string) {
   const names: Record<string, string> = { 'monitor-right': 'Right monitor', dock: 'USB-C Dock' };
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page
-    .getByRole('complementary', { name: 'Device list panel', exact: true })
-    .getByRole('button', { name: new RegExp(`^${names[id]} `) })
+  await (
+    await revealOverview(page)
+  )
+    .getByRole('button', { name: new RegExp(`^${names[id]} .+ · `) })
     .click();
   return page.getByRole('region', { name: 'OS recognition for selected device', exact: true });
 }

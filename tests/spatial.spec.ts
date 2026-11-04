@@ -57,7 +57,10 @@ async function seed(page: Page, value: Workspace) {
   );
   await page.goto('/');
   await expect(page.getByTestId('desk-canvas')).toBeVisible();
-  await page.getByRole('button', { name: 'Edit placement', exact: true }).first().click();
+  await page
+    .getByRole('group', { name: 'Workspace mode' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
 }
 async function saved(page: Page): Promise<Workspace> {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), storageKey);
@@ -390,8 +393,10 @@ test('monitor template parts can be extended, rotated, undone and reloaded witho
   monitor.placement = { x: 0, y: 0, z: 1.1, rotation: 0 };
   initial.devices = [monitor];
   await seed(page, initial);
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /^Editable monitor Monitor/ }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /^Editable monitor Monitor/ })
+    .click();
   await page.getByRole('button', { name: 'Customize template shape', exact: true }).click();
   await expect.poll(async () => (await saved(page)).devices[0].parts?.length).toBe(4);
   expect((await saved(page)).devices[0].parts).toEqual(getTemplateParts('monitor'));

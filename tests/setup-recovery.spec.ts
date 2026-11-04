@@ -43,9 +43,8 @@ test('adding a device can recover from another tab without losing its entered na
 
   const second = await context.newPage();
   await second.goto('/');
-  await second.getByRole('button', { name: 'Device list', exact: true }).click();
   await second
-    .getByRole('complementary', { name: 'Device list panel', exact: true })
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
     .getByRole('button', { name: /^MacBook / })
     .click();
   await second.getByRole('button', { name: 'Edit device details', exact: true }).click();

@@ -119,12 +119,12 @@ test('the mobile details area collapses to give the canvas room without changing
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const initial = await seed(page);
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
+  const toggle = page.locator('.detail-dock-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
   await page
-    .getByRole('complementary', { name: 'Device list panel', exact: true })
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
     .getByRole('button', { name: /^USB-C Dock Dock/ })
     .click();
-  const toggle = page.locator('.detail-dock-toggle');
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const expanded = (await page.getByTestId('desk-canvas').boundingBox())!;
   expect(expanded.height).toBeGreaterThan(180);

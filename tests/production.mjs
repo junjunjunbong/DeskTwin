@@ -69,8 +69,10 @@ try {
   assert.ok(response.headers()['content-security-policy'].includes("frame-ancestors 'none'"));
   assert.ok(response.headers()['content-security-policy'].includes("worker-src 'self'"));
   await page.getByTestId('desk-canvas').waitFor();
-  await page.getByRole('button', { name: 'Device list', exact: true }).click();
-  await page.getByRole('button', { name: /USB-C Dock Dock/ }).click();
+  await page
+    .getByRole('complementary', { name: 'Workspace overview', exact: true })
+    .getByRole('button', { name: /USB-C Dock Dock/ })
+    .click();
   await page.getByRole('button', { name: 'Close device details' }).click();
   await page.screenshot({ path: 'test-results/production.png' });
   // Exercise the local HEIC decoder through the production bundle and CSP. This

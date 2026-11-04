@@ -151,6 +151,7 @@ async function openPreview(page: Page, options: FixtureOptions = {}) {
   expect(calls).toBe(0);
   await page.getByRole('checkbox', { name: /I agree to send this photo/ }).check();
   await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  await page.getByRole('button', { name: /^Continue with \d+ objects?$/ }).click();
   const modal = page.getByRole('dialog', { name: 'Review your desk scene' });
   await expect(modal).toBeVisible();
   await modal.getByText('Compare with your photo', { exact: false }).click();
