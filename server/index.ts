@@ -14,6 +14,9 @@ const server = createApp({
   apiKey,
   model: process.env.META_MODEL?.trim() || 'muse-spark-1.3',
   baseURL: process.env.META_BASE_URL?.trim() || 'https://api.meta.ai/v1',
+  samModel: process.env.META_SAM_MODEL?.trim() || 'sam-3.1',
+  samEnabled: process.env.META_SAM_ENABLED === 'true',
+  photoTwoStage: process.env.META_PHOTO_TWO_STAGE === 'true',
   productionRoot,
 });
 server.on('error', (error) => {

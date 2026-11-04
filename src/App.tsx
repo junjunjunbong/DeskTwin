@@ -792,6 +792,7 @@ export default function App() {
                   photo={referencePhoto}
                   onPhoto={setReferencePhoto}
                   available={assistant.available}
+                  twoStage={assistant.photoTwoStage}
                   onClose={() => setPanel(null)}
                   onAdd={() => setDialog('device')}
                   onContinue={(context) => {

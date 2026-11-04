@@ -3,7 +3,14 @@ import type { SceneReviewCandidate } from '../domain/sceneProposal';
 import { kindLabels, objectKindLabels } from '../domain/workspace';
 import { Modal } from './ui';
 
-function objectKindLabel(kind: SceneReviewCandidate['kind']) {
+export type PhotoPickerItem = {
+  id: string;
+  name: string;
+  kind: SceneReviewCandidate['kind'];
+  note?: string;
+};
+
+function objectKindLabel(kind: PhotoPickerItem['kind']) {
   return kind in kindLabels
     ? kindLabels[kind as keyof typeof kindLabels]
     : objectKindLabels[kind as keyof typeof objectKindLabels];
@@ -11,29 +18,31 @@ function objectKindLabel(kind: SceneReviewCandidate['kind']) {
 
 export function PhotoObjectPicker({
   photo,
-  candidates,
+  items,
   error = '',
+  initialIncluded,
   onContinue,
   onDiscard,
 }: {
   photo: string;
-  candidates: SceneReviewCandidate[];
+  items: PhotoPickerItem[];
   error?: string;
+  initialIncluded?: ReadonlySet<string>;
   onContinue: (included: ReadonlySet<string>) => void;
   onDiscard: () => void;
 }) {
   const [included, setIncluded] = useState(
-    () => new Set(candidates.map((candidate) => candidate.proposalId)),
+    () => new Set(initialIncluded ?? items.map((item) => item.id)),
   );
-  const found = candidates.length;
+  const found = items.length;
   const selected = included.size;
   const summary = `Meta found ${found} ${found === 1 ? 'object' : 'objects'} in your photo. Uncheck anything you do not want in your desk scene. You can still change this in the next step.`;
 
-  function toggle(proposalId: string, checked: boolean) {
+  function toggle(id: string, checked: boolean) {
     setIncluded((current) => {
       const next = new Set(current);
-      if (checked) next.add(proposalId);
-      else next.delete(proposalId);
+      if (checked) next.add(id);
+      else next.delete(id);
       return next;
     });
   }
@@ -48,7 +57,7 @@ export function PhotoObjectPicker({
         <button
           type="button"
           className="text-button"
-          onClick={() => setIncluded(new Set(candidates.map((candidate) => candidate.proposalId)))}
+          onClick={() => setIncluded(new Set(items.map((item) => item.id)))}
         >
           Select all
         </button>
@@ -57,18 +66,18 @@ export function PhotoObjectPicker({
         </button>
       </div>
       <ul className="photo-object-picker-list" aria-label="Objects found in the photo">
-        {candidates.map((candidate) => (
-          <li key={candidate.proposalId}>
+        {items.map((item) => (
+          <li key={item.id}>
             <label className="photo-object-choice">
               <input
                 type="checkbox"
-                checked={included.has(candidate.proposalId)}
-                onChange={(event) => toggle(candidate.proposalId, event.target.checked)}
+                checked={included.has(item.id)}
+                onChange={(event) => toggle(item.id, event.target.checked)}
               />
               <span className="photo-object-choice-text">
-                <strong>{candidate.proposedName}</strong>
-                <span>{objectKindLabel(candidate.kind)}</span>
-                {candidate.matchedSceneId !== null && <small>Updates your saved record</small>}
+                <strong>{item.name}</strong>
+                <span>{objectKindLabel(item.kind)}</span>
+                {item.note && <small>{item.note}</small>}
               </span>
             </label>
           </li>

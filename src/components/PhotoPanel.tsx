@@ -6,10 +6,16 @@ import { type Workspace } from '../domain/workspace';
 import {
   SceneProposalSchema,
   buildScenePreview,
+  type SceneReviewCandidate,
   type SceneReviewMetadata,
 } from '../domain/sceneProposal';
 import { setSceneCandidateIncluded, type SceneReviewState } from '../domain/sceneReview';
-import { PhotoObjectPicker } from './PhotoObjectPicker';
+import {
+  findPhotoObjects,
+  photoSceneRequest,
+  type PhotoObjectsResponse,
+} from '../domain/photoObjects';
+import { PhotoObjectPicker, type PhotoPickerItem } from './PhotoObjectPicker';
 import { ScenePreview } from './ScenePreview';
 import { PHOTO_ACCEPT, preparePhoto } from '../domain/photoInput';
 export { preparePhoto } from '../domain/photoInput';
@@ -32,11 +38,58 @@ function elapsedLabel(milliseconds: number) {
     : `${(milliseconds / 1000).toFixed(2)} s`;
 }
 
+function pickerItems(candidates: SceneReviewCandidate[]): PhotoPickerItem[] {
+  return candidates.map((candidate) => ({
+    id: candidate.proposalId,
+    name: candidate.proposedName,
+    kind: candidate.kind,
+    ...(candidate.matchedSceneId !== null ? { note: 'Updates your saved record' } : {}),
+  }));
+}
+
+function inventoryItems(flow: ObjectInventory): PhotoPickerItem[] {
+  return flow.objects.map((object) => ({
+    id: object.id,
+    name: object.name,
+    kind: object.kind,
+    ...(flow.regionSources[object.id] === 'sam' ? { note: 'Outlined by SAM 3.1' } : {}),
+  }));
+}
+
+function reviewStateFrom(preview: ReturnType<typeof buildScenePreview>): SceneReviewState {
+  return {
+    draft: preview.draft,
+    observations: preview.observations,
+    candidates: preview.candidates,
+    issues: preview.issues,
+    originalDraft: preview.originalDraft,
+    adjustments: preview.adjustments,
+    repairSummary: preview.repairSummary,
+    photoReference: preview.photoReference,
+  };
+}
+
+type ObjectInventory = {
+  base: Workspace;
+  request: {
+    image: string;
+    consent: true;
+    workspace: Workspace;
+    context?: string;
+  };
+  objects: PhotoObjectsResponse['objects'];
+  regionSources: PhotoObjectsResponse['regionSources'];
+  sam: PhotoObjectsResponse['sam'];
+  findingMs: number;
+  included: ReadonlySet<string> | null;
+};
+
 interface Props {
   workspace: Workspace;
   photo: string | null;
   onPhoto: (data: string | null) => void;
   available: boolean;
+  twoStage?: boolean;
   onClose: () => void;
   onAdd: () => void;
   onApply: (draft: Workspace, base: Workspace, review: SceneReviewMetadata) => void | Promise<void>;
@@ -49,6 +102,7 @@ export function PhotoPanel({
   photo,
   onPhoto,
   available,
+  twoStage = false,
   onClose,
   onAdd,
   onApply,
@@ -60,10 +114,13 @@ export function PhotoPanel({
   const request = useRef<AbortController | null>(null);
   const preparation = useRef<AbortController | null>(null);
   const version = useRef(0);
+  const stopReason = useRef<'timeout' | 'cancel' | null>(null);
   const [consent, setConsent] = useState(false);
   const [context, setContext] = useState('');
   const [pending, setPending] = useState(false);
-  const [phase, setPhase] = useState<'analyzing' | 'fitting' | null>(null);
+  const [phase, setPhase] = useState<'analyzing' | 'finding' | 'placing' | 'fitting' | null>(null);
+  const [placingCount, setPlacingCount] = useState(0);
+  const [objectFlow, setObjectFlow] = useState<ObjectInventory | null>(null);
   const analysisStarted = useRef(0);
   const preparedPhotoTiming = useRef<{ photo: string; milliseconds: number } | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -103,12 +160,14 @@ export function PhotoPanel({
   }, [pending]);
   function cancel() {
     version.current++;
+    stopReason.current = null;
     request.current?.abort();
     preparation.current?.abort();
     request.current = null;
     preparation.current = null;
     setPending(false);
     setPhase(null);
+    setPlacingCount(0);
     setTimingSummary('');
     setTimingBreakdown([]);
     setPreparing(false);
@@ -116,26 +175,19 @@ export function PhotoPanel({
     setStage(null);
     setReviewState(null);
     setPickerError('');
+    setObjectFlow(null);
   }
   function dismissResults() {
     setResult(null);
     setStage(null);
     setReviewState(null);
     setPickerError('');
+    setObjectFlow(null);
   }
   function continueWith(included: ReadonlySet<string>) {
     if (!result) return;
     try {
-      let state: SceneReviewState = {
-        draft: result.draft,
-        observations: result.observations,
-        candidates: result.candidates,
-        issues: result.issues,
-        originalDraft: result.originalDraft,
-        adjustments: result.adjustments,
-        repairSummary: result.repairSummary,
-        photoReference: result.photoReference,
-      };
+      let state = reviewStateFrom(result);
       for (const candidate of result.candidates) {
         if (included.has(candidate.proposalId)) continue;
         state = setSceneCandidateIncluded(state, result.base, candidate.proposalId, false);
@@ -151,21 +203,62 @@ export function PhotoPanel({
       );
     }
   }
-  async function analyze() {
-    if (!photo || !consent || !available || pending || request.current) return;
+  async function fitPhotoScene(
+    data: { mode?: unknown; timings?: unknown },
+    base: Workspace,
+    token: number,
+    controller: AbortController,
+  ) {
+    if (data.mode !== 'meta') throw new Error('The photo response was not a Meta scene proposal.');
+    // Transport measurements are separate from scene data. Older frozen replies omit them.
+    const { mode: _mode, timings: _timings, ...proposal } = data;
+    const validationStarted = performance.now();
+    const parsed = SceneProposalSchema.safeParse(proposal);
+    if (!parsed.success)
+      throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
+    const localValidationMs = performance.now() - validationStarted;
+    const serverTimings = responseTimingsSchema.safeParse(_timings);
+    setPhase('fitting');
+    // Yield once before local fitting so cancellation and the actual stage can be reflected.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (token !== version.current) return null;
+    controller.signal.throwIfAborted();
+    const fittingStarted = performance.now();
+    const preview = buildScenePreview(base, parsed.data);
+    const previewReady = performance.now();
+    return { parsed, localValidationMs, serverTimings, preview, fittingStarted, previewReady };
+  }
+  function beginRequest() {
     cancel();
     const token = version.current;
     const controller = new AbortController();
     request.current = controller;
     const timeout = setTimeout(() => controller.abort(), 125000);
-    const base = structuredClone(workspace);
-    analysisStarted.current = performance.now();
     setElapsedSeconds(0);
     setPending(true);
-    setPhase('analyzing');
     setError('');
     setTimedOut(false);
     setApplied(false);
+    return { token, controller, timeout };
+  }
+  function finishRequest(token: number, timeout: ReturnType<typeof setTimeout>) {
+    clearTimeout(timeout);
+    if (token === version.current) {
+      setPending(false);
+      setPhase(null);
+      request.current = null;
+    }
+  }
+  async function analyze() {
+    if (!photo || !consent || !available || pending || request.current) return;
+    if (twoStage) {
+      await analyzeObjects();
+      return;
+    }
+    const { token, controller, timeout } = beginRequest();
+    const base = structuredClone(workspace);
+    analysisStarted.current = performance.now();
+    setPhase('analyzing');
     try {
       const res = await fetch('/api/photo', {
         method: 'POST',
@@ -185,38 +278,23 @@ export function PhotoPanel({
         if (res.status === 504) setTimedOut(true);
         throw new Error(data.error || 'Analysis failed.');
       }
-      if (data.mode !== 'meta')
-        throw new Error('The photo response was not a Meta scene proposal.');
-      // Transport measurements are separate from scene data. Older frozen replies omit them.
-      const { mode: _mode, timings: _timings, ...proposal } = data;
-      const validationStarted = performance.now();
-      const parsed = SceneProposalSchema.safeParse(proposal);
-      if (!parsed.success)
-        throw new Error('The returned scene was invalid. Your saved workspace was not changed.');
-      const localValidationMs = performance.now() - validationStarted;
-      const serverTimings = responseTimingsSchema.safeParse(_timings);
-      setPhase('fitting');
-      // Yield once before local fitting so cancellation and the actual stage can be reflected.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      if (token !== version.current) return;
-      controller.signal.throwIfAborted();
-      const fittingStarted = performance.now();
-      const preview = buildScenePreview(base, parsed.data);
-      const previewReady = performance.now();
+      const fitted = await fitPhotoScene(data, base, token, controller);
+      if (!fitted) return;
       const preparationMs =
         preparedPhotoTiming.current?.photo === photo
           ? preparedPhotoTiming.current.milliseconds
           : null;
       const measuredServer =
-        serverTimings.success && serverTimings.data.objectCount === parsed.data.objects.length
-          ? serverTimings.data
+        fitted.serverTimings.success &&
+        fitted.serverTimings.data.objectCount === fitted.parsed.data.objects.length
+          ? fitted.serverTimings.data
           : null;
-      setResult({ base, ...preview, message: parsed.data.message });
+      setResult({ base, ...fitted.preview, message: fitted.parsed.data.message });
       setReviewState(null);
       setPickerError('');
       setStage('pick');
       setTimingSummary(
-        `Preview prepared in ${((previewReady - analysisStarted.current) / 1000).toFixed(1)} s · ${preview.candidates.length} candidate objects.`,
+        `Preview prepared in ${((fitted.previewReady - analysisStarted.current) / 1000).toFixed(1)} s · ${fitted.preview.candidates.length} candidate objects.`,
       );
       setTimingBreakdown([
         ...(preparationMs === null
@@ -233,11 +311,11 @@ export function PhotoPanel({
                 milliseconds: requestFinished - analysisStarted.current,
               },
             ]),
-        { label: 'Local response checks', milliseconds: localValidationMs },
-        { label: 'Scene fitting', milliseconds: previewReady - fittingStarted },
+        { label: 'Local response checks', milliseconds: fitted.localValidationMs },
+        { label: 'Scene fitting', milliseconds: fitted.previewReady - fitted.fittingStarted },
         {
           label: 'Analysis to preview',
-          milliseconds: previewReady - analysisStarted.current,
+          milliseconds: fitted.previewReady - analysisStarted.current,
         },
       ]);
     } catch (e) {
@@ -251,12 +329,139 @@ export function PhotoPanel({
             : 'Could not analyze the photo.',
       );
     } finally {
-      clearTimeout(timeout);
-      if (token === version.current) {
-        setPending(false);
-        setPhase(null);
-        request.current = null;
-      }
+      finishRequest(token, timeout);
+    }
+  }
+  async function analyzeObjects() {
+    if (!photo || !consent || !available) return;
+    const { token, controller, timeout } = beginRequest();
+    const base = structuredClone(workspace);
+    analysisStarted.current = performance.now();
+    const requestBody = {
+      image: photo,
+      consent: true as const,
+      workspace: modelWorkspace(base),
+      context,
+    };
+    setPhase('finding');
+    setObjectFlow(null);
+    try {
+      const findingStarted = performance.now();
+      const found = await findPhotoObjects(requestBody, controller.signal);
+      const findingMs = performance.now() - findingStarted;
+      if (token !== version.current) return;
+      if (found.objects.length === 0)
+        throw new Error(
+          'Meta did not find any objects in the photo. Your saved workspace was not changed.',
+        );
+      setObjectFlow({
+        base,
+        request: requestBody,
+        objects: found.objects,
+        regionSources: found.regionSources,
+        sam: found.sam,
+        findingMs,
+        included: null,
+      });
+      setPickerError('');
+      setResult(null);
+      setReviewState(null);
+      setStage('pick');
+    } catch (e) {
+      if (token !== version.current) return;
+      if (controller.signal.aborted) setTimedOut(true);
+      setError(
+        controller.signal.aborted
+          ? 'Photo analysis timed out. Your workspace was not changed.'
+          : e instanceof Error
+            ? e.message.split('\n')[0]
+            : 'Could not analyze the photo.',
+      );
+    } finally {
+      finishRequest(token, timeout);
+    }
+  }
+  async function placeSelected(included: ReadonlySet<string>) {
+    if (!photo || !objectFlow || pending || request.current) return;
+    const chosen = objectFlow.objects.filter((object) => included.has(object.id));
+    if (chosen.length === 0) return;
+    const token = version.current;
+    const controller = new AbortController();
+    request.current = controller;
+    stopReason.current = null;
+    const timeout = setTimeout(() => {
+      if (stopReason.current === null) stopReason.current = 'timeout';
+      controller.abort();
+    }, 125000);
+    const placeStarted = performance.now();
+    analysisStarted.current = placeStarted;
+    setElapsedSeconds(0);
+    setPlacingCount(chosen.length);
+    setPending(true);
+    setPhase('placing');
+    setError('');
+    setPickerError('');
+    setTimedOut(false);
+    setStage(null);
+    setObjectFlow({ ...objectFlow, included: new Set(chosen.map((object) => object.id)) });
+    const inventory = objectFlow;
+    try {
+      const res = await fetch('/api/photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify(photoSceneRequest(inventory.request, chosen)),
+      });
+      const data = await res.json();
+      const placedAt = performance.now();
+      if (token !== version.current) return;
+      if (!res.ok) throw new Error(data.error || 'Analysis failed.');
+      const fitted = await fitPhotoScene(data, inventory.base, token, controller);
+      if (!fitted) return;
+      if (controller.signal.aborted) controller.signal.throwIfAborted();
+      const state = reviewStateFrom(fitted.preview);
+      setResult({ base: inventory.base, ...fitted.preview, message: fitted.parsed.data.message });
+      setReviewState(state);
+      setPickerError('');
+      setStage('review');
+      const outlined = inventory.objects.filter(
+        (object) => inventory.regionSources[object.id] === 'sam',
+      ).length;
+      const samUsed = inventory.sam.enabled || inventory.sam.requests > 0 || outlined > 0;
+      const preparedMs = inventory.findingMs + (fitted.previewReady - placeStarted);
+      const preparationMs =
+        preparedPhotoTiming.current?.photo === photo
+          ? preparedPhotoTiming.current.milliseconds
+          : null;
+      setTimingSummary(
+        `Preview prepared in ${(preparedMs / 1000).toFixed(1)} s · ${fitted.preview.candidates.length} candidate objects.${
+          samUsed ? ` SAM 3.1 outlined ${outlined} of ${inventory.objects.length} objects.` : ''
+        }`,
+      );
+      setTimingBreakdown([
+        ...(preparationMs === null
+          ? []
+          : [{ label: 'Photo preparation', milliseconds: preparationMs }]),
+        { label: 'Finding objects', milliseconds: inventory.findingMs },
+        { label: 'Placing selected objects', milliseconds: placedAt - placeStarted },
+        { label: 'Scene fitting', milliseconds: fitted.previewReady - fitted.fittingStarted },
+        { label: 'Analysis to preview', milliseconds: preparedMs },
+      ]);
+    } catch (e) {
+      if (token !== version.current) return;
+      const canceled = stopReason.current === 'cancel';
+      setPickerError(
+        controller.signal.aborted
+          ? canceled
+            ? 'Placement was canceled. Your selected objects were kept.'
+            : 'Photo analysis timed out. Your workspace was not changed.'
+          : e instanceof Error
+            ? e.message.split('\n')[0]
+            : 'Could not analyze the photo.',
+      );
+      setStage('pick');
+    } finally {
+      finishRequest(token, timeout);
     }
   }
   return (
@@ -383,9 +588,15 @@ export function PhotoPanel({
               >
                 <Sparkle size={18} />
                 {pending
-                  ? phase === 'fitting'
-                    ? 'Preparing the scene preview...'
-                    : 'Meta is analyzing the photo...'
+                  ? !twoStage
+                    ? phase === 'fitting'
+                      ? 'Preparing the scene preview...'
+                      : 'Meta is analyzing the photo...'
+                    : phase === 'placing'
+                      ? `Meta is placing ${placingCount} selected objects...`
+                      : phase === 'fitting'
+                        ? 'Preparing the scene preview...'
+                        : 'Meta is finding objects in the photo...'
                   : timedOut
                     ? 'Retry photo analysis'
                     : 'Create scene preview with Meta'}
@@ -395,11 +606,29 @@ export function PhotoPanel({
                   <span className="photo-progress-indicator" aria-hidden="true" />
                   <div>
                     <strong role="status">
-                      {phase === 'fitting' ? 'Preparing the scene preview' : 'Analyzing the photo'}
+                      {!twoStage
+                        ? phase === 'fitting'
+                          ? 'Preparing the scene preview'
+                          : 'Analyzing the photo'
+                        : phase === 'placing'
+                          ? `Meta is placing ${placingCount} selected objects...`
+                          : phase === 'fitting'
+                            ? 'Preparing the scene preview'
+                            : 'Meta is finding objects in the photo...'}
                     </strong>
                     <p aria-live="off">{elapsedSeconds} s elapsed</p>
                   </div>
-                  <button className="text-button" onClick={cancel}>
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      if (twoStage && (phase === 'placing' || phase === 'fitting')) {
+                        stopReason.current = 'cancel';
+                        request.current?.abort();
+                        return;
+                      }
+                      cancel();
+                    }}
+                  >
                     Cancel analysis
                   </button>
                 </div>
@@ -479,13 +708,23 @@ export function PhotoPanel({
           )}
         </div>
       </aside>
-      {result && photo && stage === 'pick' && (
+      {!twoStage && result && photo && stage === 'pick' && (
         <PhotoObjectPicker
           photo={photo}
-          candidates={result.candidates}
+          items={pickerItems(result.candidates)}
           error={pickerError}
           onDiscard={dismissResults}
           onContinue={continueWith}
+        />
+      )}
+      {twoStage && objectFlow && photo && stage === 'pick' && (
+        <PhotoObjectPicker
+          photo={photo}
+          items={inventoryItems(objectFlow)}
+          initialIncluded={objectFlow.included ?? undefined}
+          error={pickerError}
+          onDiscard={dismissResults}
+          onContinue={(included) => void placeSelected(included)}
         />
       )}
       {result && photo && stage === 'review' && reviewState && (
