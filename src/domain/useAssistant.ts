@@ -23,6 +23,7 @@ export function useAssistant(workspace: Workspace) {
   const activeRequest = useRef<AbortController | null>(null);
   const [decisions, setDecisions] = useState<Record<string, 'applied' | 'dismissed'>>({});
   const [available, setAvailable] = useState(false);
+  const [photoTwoStage, setPhotoTwoStage] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [healthCheck, setHealthCheck] = useState(0);
@@ -37,6 +38,7 @@ export function useAssistant(workspace: Workspace) {
         const data = await response.json();
         if (!active) return;
         setAvailable(data.mode === 'meta');
+        setPhotoTwoStage(data.photoTwoStage === true);
         setModel(typeof data.model === 'string' ? data.model : null);
         setHealthState('ready');
         if (data.mode !== 'meta') setEnabled(false);
@@ -44,6 +46,7 @@ export function useAssistant(workspace: Workspace) {
       .catch(() => {
         if (active) {
           setAvailable(false);
+          setPhotoTwoStage(false);
           setEnabled(false);
           setHealthState('offline');
         }
@@ -186,6 +189,7 @@ export function useAssistant(workspace: Workspace) {
     send,
     mode,
     available,
+    photoTwoStage,
     model,
     healthState,
     enableMeta: () => {

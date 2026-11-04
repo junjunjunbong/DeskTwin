@@ -2,7 +2,7 @@
 
 This path lists visible objects before placement, and can ask SAM 3.1 for a box around each chosen noun phrase. It has not been called against the live Meta API. Tests use a fake `fetch`. Nothing below that depends on a live response should be treated as measured latency, region quality, or a paid invoice.
 
-The screen still calls `POST /api/photo` once and does not use this split.
+The screen uses this split only when `META_PHOTO_TWO_STAGE=true`. Otherwise it still calls `POST /api/photo` once. The screen path below has not been called against the live Meta API.
 
 ## Flow
 
@@ -14,14 +14,15 @@ The screen still calls `POST /api/photo` once and does not use this split.
 
 ## Configuration
 
-| Variable           | Default   | Meaning                                       |
-| ------------------ | --------- | --------------------------------------------- |
-| `META_SAM_MODEL`   | `sam-3.1` | Model id on the SAM request.                  |
-| `META_SAM_ENABLED` | off       | SAM runs only when this is the string `true`. |
+| Variable               | Default   | Meaning                                                                 |
+| ---------------------- | --------- | ----------------------------------------------------------------------- |
+| `META_SAM_MODEL`       | `sam-3.1` | Model id on the SAM request.                                            |
+| `META_SAM_ENABLED`     | off       | SAM runs only when this is the string `true`.                           |
+| `META_PHOTO_TWO_STAGE` | off       | The screen uses the two-stage flow only when this is the string `true`. |
 
 The same `MODEL_API_KEY` is used. An empty key still makes both photo routes return 503. The key stays on the server. The photo remains in the request body and is not written to disk or logs.
 
-`server/index.ts` reads both variables. A process-level `timeoutMs` on the server config, when set, replaces the 30 second inventory default the same way it replaces the scene default. SAM's 15 second and 25 second limits are separate and always apply.
+`server/index.ts` reads these variables. A process-level `timeoutMs` on the server config, when set, replaces the 30 second inventory default the same way it replaces the scene default. SAM's 15 second and 25 second limits are separate and always apply.
 
 ## Stage 1 — `POST /api/photo/objects`
 
@@ -83,7 +84,23 @@ Within one phrase, objects that already have an inventory rectangle take boxes i
 
 When it is present, `selection.objects` has 1 to 32 items of `{ id, kind, name, imageRegion }`. `imageRegion` may be null. The prompt tells the model to place only those ids and to copy a non-null rectangle. Validation still rejects unknown or duplicate device matches under the existing rules. A scene object whose id is outside the selection is rejected and nothing is applied. A non-null selected rectangle replaces that object's `imageRegion` on the returned proposal. A null selected rectangle leaves the model's rectangle as it was.
 
-The client helper `findPhotoObjects` posts to `/api/photo/objects`. `photoSceneRequest` builds the stage-2 body from chosen rows and omits `samPhrase`, visibility, and region provenance. No screen imports them yet.
+The client helper `findPhotoObjects` posts to `/api/photo/objects`. `photoSceneRequest` builds the stage-2 body from chosen rows and omits `samPhrase`, visibility, and region provenance. The screen calls those helpers only when health reports `photoTwoStage: true`.
+
+## Screen
+
+`/api/health` includes `photoTwoStage`. It is `true` only when `META_PHOTO_TWO_STAGE` is the string `true`. A missing value is `false`. The photo panel reads that flag from health. If health does not send it, the screen keeps the single-request flow.
+
+When the flag is on:
+
+1. **Create scene preview with Meta** calls `findPhotoObjects` (`POST /api/photo/objects`). The progress line is “Meta is finding objects in the photo...”, with elapsed seconds, cancel, and the same 65 second browser limit.
+2. **Choose what to add** lists the inventory. A row whose `regionSources` entry is `sam` shows “Outlined by SAM 3.1”. Any other source shows no region label. An empty inventory shows an error and does not open the picker.
+3. **Continue** closes the picker and posts `photoSceneRequest` to `POST /api/photo`. The progress line is “Meta is placing N selected objects...”. The same scene-proposal check and `buildScenePreview` path then open **Review your desk scene** directly.
+4. If placement fails, times out, or is canceled, the picker opens again with the same inventory and the same checks, and shows the error. **Continue** retries placement and does not call `/api/photo/objects` again.
+5. **View processing times** lists Finding objects, Placing selected objects, Scene fitting, and Analysis to preview. When SAM ran, the summary also says “SAM 3.1 outlined X of N objects”.
+
+The photo and the selection stay in memory. Removing the photo, closing the panel, or canceling aborts the in-flight request. Nothing is written to the saved workspace until the user applies the review.
+
+This screen path has not been called against the live Meta API. The browser test intercepts `/api/health`, `/api/photo/objects`, and `/api/photo`.
 
 ## Failure
 
@@ -126,6 +143,7 @@ These were not established by a live response, and this change does not claim th
 - Whether SAM boxes are better than the inventory rectangles on a real desk photo, including repeated objects that share a noun phrase.
 - Actual token counts and the resulting Muse Spark charge. The dollar amounts above are the published list prices only.
 - Contributor-mode prices. This path does not switch the model id to a contributor variant.
+- The screen flow with `META_PHOTO_TWO_STAGE`. Browser tests use mocked `/api/health`, `/api/photo/objects`, and `/api/photo` responses. No live Meta call was made for the picker, the selection request, or the direct review handoff.
 
 ## Sources
 

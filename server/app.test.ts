@@ -123,6 +123,15 @@ describe('local API and Meta boundary', () => {
     expect(text).not.toContain('test-secret');
     expect(JSON.parse(text).photoAvailable).toBe(true);
   });
+  it('reports photo two-stage only when the server setting is enabled', async () => {
+    const disabled = await (await fetch((await app()) + '/api/health')).json();
+    expect(disabled.photoTwoStage).toBe(false);
+    const enabled = await (
+      await fetch((await app({ photoTwoStage: true })) + '/api/health')
+    ).json();
+    expect(enabled.photoTwoStage).toBe(true);
+    expect(JSON.stringify(enabled)).not.toContain('MODEL_API_KEY');
+  });
   it('serves production assets with local workers while retaining the script policy', async () => {
     const productionRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktwin-csp-')));
     try {

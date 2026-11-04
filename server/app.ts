@@ -38,6 +38,7 @@ interface ServerConfig extends MetaConfig {
   productionRoot?: string;
   requestsPerMinute?: number;
   hardware?: HardwareService;
+  photoTwoStage?: boolean;
 }
 const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
@@ -180,6 +181,7 @@ export function createApp(config: ServerConfig) {
           mode: config.apiKey ? 'meta' : 'demo',
           model: config.apiKey ? config.model : null,
           photoAvailable: !!config.apiKey,
+          photoTwoStage: config.photoTwoStage === true,
         });
         return;
       }
