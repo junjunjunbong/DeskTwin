@@ -47,7 +47,7 @@ import { AddDeviceDialog, ConnectionDialog } from './components/WorkspaceDialogs
 import { Modal } from './components/ui';
 import { AssistantPanel } from './components/AssistantPanel';
 import { DeskSetupPanel } from './components/DeskSetupPanel';
-import { setupConnectionForPair } from './domain/deskSetup';
+import { plugInCommand, setupConnectionForPair } from './domain/deskSetup';
 import type { ConnectionFocusPath } from './domain/connectionView';
 import { AddObjectDialog, SceneObjectInspector } from './components/SceneObjectPanel';
 import { applySceneDraft, retainedDevices } from './domain/sceneProposal';
@@ -92,7 +92,6 @@ export default function App() {
   const [focusPath, setFocusPath] = useState<ConnectionFocusPath | null>(null);
   const [setupStep, setSetupStep] = useState<0 | 1 | 2>(0);
   const [hardwareVisit, setHardwareVisit] = useState(0);
-  const [checkFocusId, setCheckFocusId] = useState<string | null>(null);
   const scene = useRef<CanvasHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const device = workspace.devices.find((d) => d.id === selected);
@@ -637,7 +636,6 @@ export default function App() {
                 onAdd={() => setDialog('device')}
                 onAddObject={() => setDialog('object')}
                 onBuildFromPhoto={() => openPanel('photo')}
-                onCheckConnections={() => openHardware(1)}
                 removableSamples={removableSamples}
                 onStartOwnDesk={startOwnDesk}
                 renderHardwareStatus={(device) => (
@@ -656,6 +654,13 @@ export default function App() {
                 onCommand={command}
                 onClose={() => setSelected(null)}
                 onConnect={() => mode === 'edit' && setDialog('connection')}
+                onPlugIn={async (toId) => {
+                  const saved = await safe(() =>
+                    store.command(plugInCommand(store.workspace, device.id, toId)),
+                  );
+                  if (saved) focusSavedConnection(device.id, toId);
+                  return saved;
+                }}
                 onSelect={select}
                 onAsk={() => {
                   assistant.setTarget(device.id);
@@ -663,8 +668,6 @@ export default function App() {
                 }}
                 onFocusPath={showPath}
                 onReviewConnections={() => openHardware(1)}
-                focusCheck={checkFocusId === device.id}
-                onCheckFocused={() => setCheckFocusId(null)}
                 hardwareDetails={
                   <DeviceHardwareStatus
                     device={device}
@@ -705,10 +708,14 @@ export default function App() {
                 onAddDevice={() => setDialog('device')}
                 onOpenMacHardware={() => openPanel('hardware')}
                 onSelect={select}
-                onTroubleshoot={(id) => {
-                  setMode('desk');
-                  setCheckFocusId(id);
-                  select(id);
+                onAskAssistant={(id) => {
+                  const target = workspace.devices.find((item) => item.id === id);
+                  assistant.setTarget(id);
+                  // A draft only: the person still reviews and sends it.
+                  setPrompt(
+                    `${target?.name ?? 'This device'} is not working. What should I check first?`,
+                  );
+                  openPanel('assistant');
                 }}
                 onClose={() => setPanel(null)}
                 editing={mode === 'edit'}
@@ -765,7 +772,7 @@ export default function App() {
                   onClose={() => setPanel(null)}
                   onContinue={(context) => {
                     setPhotoContext(context);
-                    openHardware(1);
+                    setPanel(null);
                   }}
                   onApply={async (draft, base, review) => {
                     if (

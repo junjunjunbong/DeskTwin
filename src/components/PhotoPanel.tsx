@@ -43,6 +43,7 @@ function pickerItems(candidates: SceneReviewCandidate[]): PhotoPickerItem[] {
     id: candidate.proposalId,
     name: candidate.proposedName,
     kind: candidate.kind,
+    region: candidate.imageRegion,
     ...(candidate.matchedSceneId !== null ? { note: 'Updates your saved record' } : {}),
   }));
 }
@@ -52,6 +53,7 @@ function inventoryItems(flow: ObjectInventory): PhotoPickerItem[] {
     id: object.id,
     name: object.name,
     kind: object.kind,
+    region: object.imageRegion,
     ...(flow.regionSources[object.id] === 'sam' ? { note: 'Outlined by SAM 3.1' } : {}),
   }));
 }
@@ -575,8 +577,8 @@ export function PhotoPanel({
           </label>
           <p className="micro-note">
             Your saved device and connection records are included. These notes guide the visual
-            proposal. After reviewing the scene, continue to desk setup to confirm the connections
-            you described. A photo cannot confirm hidden wiring or device activity.
+            proposal. After the scene is applied, select a device on the desk to say what it plugs
+            into. A photo cannot confirm hidden wiring or device activity.
           </p>
           {available ? (
             <>
@@ -685,7 +687,7 @@ export function PhotoPanel({
               </p>
               {onContinue && (
                 <button className="button primary full" onClick={() => onContinue(context)}>
-                  Next: check connections in Hardware
+                  Back to the desk
                   <ArrowRight size={16} />
                 </button>
               )}

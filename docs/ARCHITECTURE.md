@@ -2,7 +2,7 @@
 
 ## Guided setup and recorded checks
 
-`DeskSetupPanel` combines device evidence review, optional consented Mac matching, targeted connection questions, exact replacement review, and monitor handoff. `deskSetup.ts` only suggests a connection from a clear two-device report; missing or ambiguous information remains a question. Photo descriptions carry into setup in memory after scene approval, never as automatically confirmed topology.
+`DeskSetupPanel` combines a compact device list with a Mac-recognition summary, missing-connection device chips, direct saving of new user-reported connections with explicit review only when an existing record would be replaced, and a Fix a problem list that opens AI chat for any device with an unsent draft question. The guided monitor check starts from the monitor's inspector. Consented Mac matching lives only in `HardwarePanel`. `deskSetup.ts` only suggests a connection from a clear two-device report; missing or ambiguous information remains a question. Photo descriptions carry into setup in memory after scene approval, never as automatically confirmed topology.
 
 `diagnosis.ts` derives a bounded monitor-to-computer route from recorded connections and builds a deterministic check plan. It records route confirmation, distinct failed/skipped answers, and user-confirmed compatibility before a dock-bypass test. The workspace stores up to 30 schema-validated sessions. Queued saves preserve earlier answers and reject route changes; recording a working status is a separate guarded user-confirmed command.
 

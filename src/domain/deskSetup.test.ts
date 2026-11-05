@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createDemoWorkspace, type Connection, type Device } from './workspace';
 import {
+  plugInCommand,
+  plugInReport,
+  plugInTargets,
   setupConnectionCommand,
   setupConnectionForPair,
   setupConnectionQuestions,
@@ -385,5 +388,38 @@ describe('connection review approval', () => {
         null,
       ),
     ).toThrow();
+  });
+});
+
+describe('desk plug-in choice', () => {
+  it('offers every other device only while this device has no link', () => {
+    const workspace = createDemoWorkspace();
+    workspace.connections = [];
+    expect(plugInTargets(workspace, 'keyboard').map((device) => device.id)).toContain('laptop');
+    expect(plugInTargets(workspace, 'keyboard').some((device) => device.id === 'keyboard')).toBe(
+      false,
+    );
+    workspace.connections = createDemoWorkspace().connections;
+    expect(plugInTargets(workspace, 'keyboard')).toEqual([]);
+    expect(() => plugInCommand(workspace, 'keyboard', 'laptop')).toThrow('Choose a device');
+  });
+
+  it('saves an unchecked user report for the clicked device', () => {
+    const workspace = createDemoWorkspace();
+    workspace.connections = [];
+    expect(plugInCommand(workspace, 'keyboard', 'laptop')).toMatchObject({
+      type: 'connect',
+      expectedConnection: null,
+      connection: {
+        from: 'keyboard',
+        to: 'laptop',
+        connector: 'Unknown',
+        fromPort: '',
+        toPort: '',
+        source: 'user-reported',
+        note: plugInReport,
+      },
+    });
+    expect(workspace.connections).toEqual([]);
   });
 });

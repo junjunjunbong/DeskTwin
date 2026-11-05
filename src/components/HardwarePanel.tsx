@@ -93,9 +93,11 @@ export function HardwareSummary({
       <p>
         {snapshot.state === 'running'
           ? `${snapshot.devices.length} OS observations · ${linked.filter((device) => hardwarePresence(device, snapshot).state === 'detected').length} matched desk devices`
-          : 'OS recognition is separate from your saved connections and user reports.'}
+          : 'Optional: compare your devices with the displays and USB devices this Mac reports.'}
       </p>
-      <small>Last successful check: {checkedTime(snapshot.lastCheckedAt)}</small>
+      {snapshot.lastCheckedAt && (
+        <small>Last successful check: {checkedTime(snapshot.lastCheckedAt)}</small>
+      )}
       {linked.length > 0 && (
         <div className="hardware-summary-devices">
           {linked.map((device) => (

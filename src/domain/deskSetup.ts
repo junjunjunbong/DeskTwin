@@ -266,6 +266,35 @@ export function setupSuggestionsFromNotes(
   return drafts;
 }
 
+export const plugInReport =
+  'Saved as what you reported. This does not check that it works.';
+
+/** Devices with no saved link can be answered from the desk. Existing links stay as they are. */
+export function plugInTargets(workspace: Workspace, deviceId: string): Device[] {
+  if (!workspace.devices.some((device) => device.id === deviceId)) return [];
+  if (workspace.connections.some((edge) => edge.from === deviceId || edge.to === deviceId))
+    return [];
+  return workspace.devices.filter((device) => device.id !== deviceId);
+}
+
+/** The clicked device name is the confirmation. Cable and ports stay unchecked. */
+export function plugInCommand(workspace: Workspace, from: string, to: string): WorkspaceCommand {
+  if (!plugInTargets(workspace, from).some((device) => device.id === to))
+    throw new Error('Choose a device on this desk.');
+  return setupConnectionCommand(
+    workspace,
+    {
+      from,
+      to,
+      connector: 'Unknown',
+      fromPort: '',
+      toPort: '',
+      note: plugInReport,
+    },
+    setupConnectionForPair(workspace, from, to) ?? null,
+  );
+}
+
 /** Review is a snapshot, not blanket permission to replace a later record. */
 export function setupConnectionCommand(
   workspace: Workspace,

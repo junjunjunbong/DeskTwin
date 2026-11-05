@@ -260,3 +260,100 @@ test('health without photoTwoStage keeps the single photo request', async ({ pag
   expect(photoCalls).toBe(1);
   expect(await saved(page)).toEqual(before);
 });
+
+function overlappingInventory() {
+  return {
+    message: 'Visible objects only. Placement is not decided.',
+    objects: [
+      {
+        id: 'desk-a',
+        kind: 'desk',
+        name: 'Main desk',
+        samPhrase: 'desk',
+        imageRegion: { x: 0.05, y: 0.08, width: 0.9, height: 0.84 },
+        imageRegionVisibility: 'complete',
+      },
+      {
+        id: 'mug-a',
+        kind: 'mug',
+        name: 'White mug',
+        samPhrase: 'white mug',
+        imageRegion: { x: 0.42, y: 0.46, width: 0.14, height: 0.16 },
+        imageRegionVisibility: 'complete',
+      },
+      {
+        id: 'fan-a',
+        kind: 'generic',
+        name: 'Small desk fan',
+        samPhrase: 'desk fan',
+        imageRegion: null,
+        imageRegionVisibility: 'unknown',
+      },
+    ],
+    regionSources: { 'desk-a': 'sam', 'mug-a': 'sam', 'fan-a': 'none' },
+    sam: { enabled: true, requests: 2, failed: 0 },
+  };
+}
+
+test('the picker opens on the large photo and keeps box clicks on the smallest region', async ({
+  page,
+}) => {
+  const selections: string[][] = [];
+  await page.route('**/api/health', (route) =>
+    route.fulfill({
+      json: { mode: 'meta', model: 'mock-only', photoAvailable: true, photoTwoStage: true },
+    }),
+  );
+  await page.route(pathIs('/api/photo/objects'), (route) =>
+    route.fulfill({ json: overlappingInventory() }),
+  );
+  await page.route(pathIs('/api/photo'), async (route) => {
+    const body = route.request().postDataJSON() as {
+      selection?: { objects?: { id: string }[] };
+    };
+    selections.push((body.selection?.objects ?? []).map((object) => object.id));
+    await route.fulfill({ json: { mode: 'meta', ...scene() } });
+  });
+  await openPhotoPanel(page);
+  await page.getByRole('button', { name: 'Create scene preview with Meta' }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose what to add' });
+  const photo = picker.locator('.photo-object-picker-photo');
+  await expect
+    .poll(() =>
+      photo
+        .locator('img')
+        .evaluate((img: HTMLImageElement) =>
+          img.naturalWidth > 0 ? img.naturalWidth / img.naturalHeight : 0,
+        ),
+    )
+    .toBeGreaterThan(1.6);
+  await expect.poll(async () => (await photo.boundingBox())?.width ?? 0).toBeGreaterThan(400);
+  const opened = await photo.boundingBox();
+  await expect(picker.getByRole('button', { name: 'Reduce photo', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(picker.getByRole('button', { name: 'Small desk fan photo region' })).toHaveCount(0);
+  const mug = picker.getByRole('button', { name: 'White mug photo region' });
+  const desk = picker.getByRole('button', { name: 'Main desk photo region' });
+  await mug.click();
+  await expect(mug).toHaveAttribute('aria-pressed', 'false');
+  await expect(desk).toHaveAttribute('aria-pressed', 'true');
+  await expect(picker.getByRole('checkbox', { name: /White mug/ })).not.toBeChecked();
+  await expect(picker.getByRole('checkbox', { name: /Main desk/ })).toBeChecked();
+  await picker.getByRole('checkbox', { name: /Main desk/ }).hover();
+  await expect(picker.locator('.photo-object-region-label')).toHaveText('Main desk');
+  await desk.click({ position: { x: 8, y: 8 } });
+  await expect(desk).toHaveAttribute('aria-pressed', 'false');
+  await expect(mug).toHaveAttribute('aria-pressed', 'false');
+  await picker.getByRole('button', { name: 'Reduce photo', exact: true }).click();
+  await expect
+    .poll(async () => (await photo.boundingBox())?.width ?? 0)
+    .toBeLessThan((opened?.width ?? 0) - 40);
+  await expect
+    .poll(async () => (await photo.boundingBox())?.height ?? 0)
+    .toBeLessThan((opened?.height ?? 0) - 40);
+  await picker.getByRole('button', { name: 'Continue with 1 object', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toBeVisible();
+  expect(selections).toEqual([['fan-a']]);
+});

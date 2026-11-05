@@ -53,10 +53,10 @@ UI 포트가 이미 사용 중이면 실행이 실패합니다. 다른 포트로
 
 ## 사진에서 문제 확인까지
 
-1. 처음 열면 오른쪽 **My desk**의 **Start my own desk**로 예시 기기를 비웁니다. 같은 패널에 남는 **Build from a photo**, **Add a device**, **Add an object**로 시작합니다. 사진은 별도 전송 동의가 필요하고, 분석 뒤 **Choose what to add**에서 넣을 물건을 고른 다음 3D로 검토하고 승인합니다. 적용 뒤 **Next: check connections in Hardware**는 **Hardware**의 **Connections**로 바로 엽니다. 기기가 둘 이상이면 왼쪽 **Hardware**도 **Connections**에서 열리고, 그렇지 않으면 **Devices**에서 열립니다.
-2. **Hardware**의 **Devices**에서 사진 추정·사용자 보고·샘플을 구분합니다. Mac 인식 요약과 사용자 보고 요약도 여기에 있습니다. 필요한 경우 **Compare with this Mac**에서 로컬 감지에 동의하고 기존 기기와 관측을 직접 매칭합니다. 자세한 목록은 **Open Mac hardware details**입니다.
-3. **Connections**에서 누락된 연결 질문에 답하고, 실제 확인한 기기·케이블·포트를 저장합니다. 사진 설명은 이 앱 안의 메모로 이어지며, 문장마다 저장된 이름이나 종류·좌우로 한 기기씩 특정되는 연결만 검토 버튼으로 제안합니다. 사진은 그 연결을 확인한 것이 아니며, 저장은 검토와 확인 후에만 됩니다. 불분명한 케이블은 **Unknown**으로 남깁니다.
-4. **Check a monitor**에서 모니터를 선택합니다. 기록된 경로를 확인한 뒤 직접 연결과 도크 경유에 맞는 점검을 진행합니다. 건너뛴 검사는 실패나 성공으로 처리하지 않습니다.
+1. 처음 열면 오른쪽 **My desk**의 **Start my own desk**로 예시 기기를 비웁니다. 같은 패널에 남는 **Build from a photo**, **Add a device**, **Add an object**로 시작합니다. 사진은 별도 전송 동의가 필요하고, 분석 뒤 **Choose what to add**에서 넣을 물건을 고른 다음 3D로 검토하고 승인합니다. 적용 뒤에는 책상으로 돌아갑니다. 기기를 누르면 그 기기가 어디에 꽂혀 있는지만 묻고, 고른 기기가 사용자 보고로 바로 저장됩니다. 케이블은 확인 전이라 Unknown입니다. 자세한 포트 기록은 **Hardware**의 **Connections**에 남아 있습니다. 기기가 둘 이상이면 왼쪽 **Hardware**도 **Connections**에서 열리고, 그렇지 않으면 **Devices**에서 열립니다.
+2. **Hardware**의 **Devices**에는 기기가 한 줄씩 나옵니다. 각 줄에 사진 추정·사용자 보고·샘플 출처와 사용자 보고 작동 상태가 보이고, 누르면 기기 상세가 열립니다. Mac 인식은 아래 **Mac recognition** 상자의 **Open Mac hardware details**에서 엽니다. 로컬 감지 동의와 기존 기기와의 매칭은 그 패널에서만 합니다.
+3. **Connections** 맨 위에는 저장된 연결이 보입니다. **Not recorded yet**에서 기기 이름을 누르면 Edit 모드로 바뀌고 그 기기가 선택된 폼이 열립니다. 연결된 기기와 케이블 종류(모르면 **Unknown**)를 고르고 **Save connection**을 누르면 사용자 보고로 저장됩니다. 포트 이름은 **Port names**에 선택적으로 적습니다. 이미 있는 연결을 바꿀 때만 이전 기록과 새 기록을 비교하는 확인이 한 번 더 나옵니다. 사진 설명은 이 앱 안의 메모로 이어지며, 문장마다 한 기기씩 특정되는 연결만 제안 버튼으로 보여 줍니다. 제안은 폼을 채울 뿐이고 저장은 사용자가 Save를 눌러야 됩니다. 사진은 그 연결을 확인한 것이 아닙니다.
+4. **Fix a problem**에서 문제가 있는 기기를 고르면 그 기기를 대상으로 AI chat이 열리고 질문 초안만 채워집니다. 보내기는 사용자가 누릅니다. 보고된 문제가 있는 기기가 먼저 나옵니다. 모니터의 단계별 점검은 책상에서 모니터를 눌러 상세 화면의 **Troubleshoot monitor step by step**으로 엽니다. 기록된 경로를 확인한 뒤 직접 연결과 도크 경유에 맞는 점검을 진행하며, 건너뛴 검사는 실패나 성공으로 처리하지 않습니다.
 5. 각 답과 최근 30개 점검은 브라우저에 저장됩니다. 새로고침 후 이어갈 수 있고, 연결이 달라졌다면 이전 이력을 보존한 새 점검을 시작합니다. 작동 상태는 **Save result as user-reported**로 따로 확인해야 바뀝니다.
 6. **Ask about this device**로 대화 대상을 지정하고 기록 경로를 장면에서 강조할 수 있습니다. 로컬 데모는 저장된 점검을 참고하며, Meta 활성화 후에는 공유 가능한 기기의 점검 요약만 전송합니다. OS 관측과 OS에서 만든 기기·점검은 로컬에 남습니다.
 
@@ -179,7 +179,7 @@ API 서버를 재시작한 뒤 **AI chat**의 **Connect Meta API**를 엽니다.
 1. **My desk**의 **Build from a photo**에서 JPEG, PNG, WebP 또는 HEIC/HEIF 사진을 선택합니다. 방향 보정·축소·HEIC 변환은 로컬에서 수행하며 선택만으로는 전송하지 않습니다.
 2. 알고 있는 기기나 연결 설명을 입력하고 별도 Meta 전송 동의를 확인합니다.
 3. **Create scene preview with Meta**를 누릅니다. 서버 key가 설정된 경우 실제 API 비용이 발생할 수 있습니다.
-4. 응답이 오면 **Choose what to add**에서 넣을 물건을 고릅니다. 모두 체크된 상태로 시작하며, 뺀 물건은 다음 단계에서도 다시 넣을 수 있습니다. 아래 화면은 테스트용 가짜 응답입니다.
+4. 응답이 오면 **Choose what to add**에서 넣을 물건을 고릅니다. 모두 체크된 상태로 시작하며, 뺀 물건은 다음 단계에서도 다시 넣을 수 있습니다. 사진에 영역이 있으면 그 사각형을 눌러도 같은 체크가 바뀝니다. 이 창은 큰 사진으로 열리고, **Reduce photo**로만 작게 볼 수 있습니다. 사각형이 없는 물건은 목록에서만 고릅니다. 아래 화면은 테스트용 가짜 응답입니다.
 
    ![사진 분석 뒤 넣을 물건을 고르는 Choose what to add 화면 (테스트용 가짜 응답)](docs/screenshots/photo-object-picker.png)
 
@@ -209,7 +209,7 @@ API 서버를 재시작한 뒤 **AI chat**의 **Connect Meta API**를 엽니다.
 5. 관측 하나를 선택하고 기존 기기 또는 새 기기를 명시적으로 매칭합니다. 검토 전에는 저장되지 않고, 승인해도 사용자 작동 상태는 자동 변경되지 않음을 확인합니다.
 6. **Stop detection**으로 중지합니다. 상태가 Detection stopped가 되며 연결 해제로 표시되지 않는지 확인합니다.
 7. 문제가 보고된 모니터를 선택해 **Troubleshoot monitor step by step**을 엽니다. 각 답은 점검 이력에 저장됩니다. 작동 상태는 **Save result as user-reported**를 눌러야 별도로 저장됩니다.
-8. 사진 흐름은 **My desk**의 **Build from a photo**에서 선택 → 별도 전송 동의 → **Choose what to add**에서 고르기 → 물건별 포함·제외·추가와 배치 검토 → **Confirm and apply scene** 순서입니다. 적용 뒤 **Next: check connections in Hardware**로 연결 검토에 들어갑니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 모의 응답 시연과 이전 실제 분석 결과를 구분해서 설명합니다.
+8. 사진 흐름은 **My desk**의 **Build from a photo**에서 선택 → 별도 전송 동의 → **Choose what to add**에서 고르기 → 물건별 포함·제외·추가와 배치 검토 → **Confirm and apply scene** 순서입니다. 적용 뒤 **Back to the desk**로 책상에 돌아와, 기기를 눌러 꽂힌 곳을 고릅니다. 실제 Meta 분석은 별도 승인과 key가 있을 때만 실행합니다. 모의 응답 시연과 이전 실제 분석 결과를 구분해서 설명합니다.
 9. **Open settings → Export JSON**으로 구성을 내보냅니다. 승인한 장면과 출처는 남고 설치별 하드웨어 매칭은 제외됩니다.
 
 **AI chat**에서 `I connected the right monitor to the dock with HDMI`를 입력하면 제한된 규칙 기반 제안이 나옵니다. View에서는 **Edit to review connection**으로 Edit에 들어간 뒤 **Confirm and apply**를 눌러야 사용자 보고 연결이 저장됩니다. 자유로운 대화와 실제 사진 분석은 Meta 연결이 필요합니다.

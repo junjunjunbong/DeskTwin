@@ -739,7 +739,7 @@ test('the object picker lists every found object before the 3D review', async ({
   const picker = await openPicker(page, fixture);
   await expect(page.getByRole('dialog', { name: 'Review your desk scene' })).toHaveCount(0);
   await expect(picker).toContainText(
-    'Meta found 3 objects in your photo. Uncheck anything you do not want in your desk scene. You can still change this in the next step.',
+    'Meta found 3 objects in your photo. Click a box on the photo or uncheck a row to leave something out. You can still change this in the next step.',
   );
   await expect(picker.getByRole('img', { name: 'Selected desk photo' })).toBeVisible();
   for (const name of ['Photo desk', 'Photo monitor', 'Photo plant']) {
@@ -750,10 +750,14 @@ test('the object picker lists every found object before the 3D review', async ({
   await expect(picker.getByText('Plant', { exact: true })).toBeVisible();
   await expect(picker.getByText('Updates your saved record', { exact: true })).toBeVisible();
   const plant = picker.getByRole('checkbox', { name: /Photo plant/ });
+  const plantRegion = picker.getByRole('button', { name: 'Photo plant photo region' });
+  await expect(plantRegion).toHaveAttribute('aria-pressed', 'true');
+  await expect(picker.getByRole('button', { name: 'Photo desk photo region' })).toHaveCount(0);
   await plant.focus();
   await expect(plant).toBeFocused();
   await page.keyboard.press('Space');
   await expect(plant).not.toBeChecked();
+  await expect(plantRegion).toHaveAttribute('aria-pressed', 'false');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );

@@ -66,22 +66,21 @@ test('setup requires reviewing a replacement and preserves the original on cance
   await seed(page, initial);
   const panel = await openSetup(page);
   await panel.getByRole('button', { name: 'Connections', exact: true }).click();
-  await expect(
-    panel.getByRole('button', { name: 'Review connection', exact: true }),
-  ).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Save connection', exact: true })).toHaveCount(0);
   await panel.getByRole('button', { name: 'Edit connections', exact: true }).click();
   await panel.getByLabel('Setup first device', { exact: true }).selectOption('monitor-right');
   await panel.getByLabel('Setup connected device', { exact: true }).selectOption('dock');
   await panel.getByLabel('Setup connector', { exact: true }).selectOption('DisplayPort');
+  await panel.locator('summary', { hasText: 'Port names' }).click();
   await panel.getByLabel('Setup first port', { exact: true }).fill('DP input');
-  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Save connection', exact: true }).click();
   const confirmation = panel.getByRole('region', { name: 'Confirm setup connection', exact: true });
   await expect(confirmation).toContainText('Replace the existing connection?');
   await expect(confirmation).toContainText('HDMI');
   expect((await saved(page)).connections).toEqual(initial.connections);
   await confirmation.getByRole('button', { name: 'Cancel connection', exact: true }).click();
   expect((await saved(page)).connections).toEqual(initial.connections);
-  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Save connection', exact: true }).click();
   await confirmation.getByRole('button', { name: 'Confirm replacement', exact: true }).click();
   await expect
     .poll(
@@ -166,10 +165,13 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   expect((await saved(page)).devices.some((device) => device.name === 'Photo monitor')).toBe(false);
   await preview.getByRole('button', { name: 'Confirm and apply scene', exact: true }).click();
   await expect(preview).toHaveCount(0);
-  await photo
-    .getByRole('button', { name: 'Next: check connections in Hardware', exact: true })
-    .click();
+  await photo.getByRole('button', { name: 'Back to the desk', exact: true }).click();
+  await expect(
+    page.getByRole('complementary', { name: 'Hardware panel', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await panel.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(panel.getByRole('button', { name: 'Connections', exact: true })).toHaveAttribute(
     'aria-current',
     'step',
@@ -182,10 +184,8 @@ test('photo approval carries notes through reviewed connections, a saved monitor
     })
     .click();
   await expect(panel.getByLabel('Setup connector', { exact: true })).toHaveValue('HDMI');
-  await panel.getByRole('button', { name: 'Edit connections', exact: true }).click();
-  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
   expect((await saved(page)).connections).toHaveLength(0);
-  await panel.getByRole('button', { name: 'Confirm connection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect.poll(async () => (await saved(page)).connections.length).toBe(1);
   const result = await saved(page);
   expect(result.connections[0]).toMatchObject({ connector: 'HDMI', source: 'user-reported' });
@@ -199,12 +199,11 @@ test('photo approval carries notes through reviewed connections, a saved monitor
   await panel.getByLabel('Setup first device', { exact: true }).selectOption(dockId);
   await panel.getByLabel('Setup connected device', { exact: true }).selectOption(laptopId);
   await panel.getByLabel('Setup connector', { exact: true }).selectOption('USB-C');
-  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
   expect((await saved(page)).connections).toHaveLength(1);
-  await panel.getByRole('button', { name: 'Confirm connection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect.poll(async () => (await saved(page)).connections.length).toBe(2);
-  await panel.getByRole('button', { name: 'Check a monitor', exact: true }).click();
-  await panel.getByRole('button', { name: /^Photo monitor / }).click();
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
+  await panel.getByRole('button', { name: 'Review device Photo monitor', exact: true }).click();
   const inspector = page.getByRole('complementary', { name: 'Selected device', exact: true });
   await expect(
     inspector.getByRole('heading', { name: 'Photo monitor', exact: true }),
@@ -323,30 +322,29 @@ test('a photo record is matched to an OS observation only after local consent an
   await seed(page, initial);
   const panel = await openSetup(page);
   await panel.getByRole('button', { name: 'Devices', exact: true }).click();
-  const record = panel.locator('.desk-setup-device').filter({
-    has: page.getByRole('button', { name: 'Review device Right monitor', exact: true }),
-  });
+  const record = panel.getByRole('button', { name: 'Review device Right monitor', exact: true });
   await expect(record).toContainText('Photo-inferred');
-  await record.getByRole('button', { name: 'Match local observation', exact: true }).click();
+  // Without detection the list does not show an OS badge at all.
+  await expect(record.locator('.hardware-badge')).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Open Mac hardware details', exact: true }).click();
   expect(starts).toBe(0);
-  await panel.locator('summary').filter({ hasText: 'Compare with this Mac' }).click();
-  const start = panel.getByRole('button', { name: 'Start local detection', exact: true });
+  const mac = page.getByRole('complementary', { name: 'Mac hardware panel', exact: true });
+  const start = mac.getByRole('button', { name: 'Start detection', exact: true });
   await expect(start).toBeDisabled();
-  await panel
+  await mac
     .getByRole('checkbox', {
       name: 'I agree to read this Mac’s hardware metadata locally.',
       exact: true,
     })
     .check();
   await start.click();
-  await record
-    .getByLabel('Local observation for Right monitor', { exact: true })
-    .selectOption('setup-display');
-  await record.getByRole('button', { name: 'Review this OS match', exact: true }).click();
+  await mac.getByRole('button', { name: /Fixture display/ }).click();
+  await mac.getByLabel('Desk device match', { exact: true }).selectOption('monitor-right');
+  await mac.getByRole('button', { name: 'Review match', exact: true }).click();
   expect(
     (await saved(page)).devices.find((device) => device.id === monitor.id)?.hardwareBinding,
   ).toBeUndefined();
-  await record.getByRole('button', { name: 'Confirm OS match', exact: true }).click();
+  await mac.getByRole('button', { name: 'Confirm and save match', exact: true }).click();
   await expect
     .poll(
       async () =>
@@ -363,8 +361,13 @@ test('a photo record is matched to an OS observation only after local consent an
   });
   expect(result.connections).toEqual(initial.connections);
   expect(starts).toBe(1);
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
   await expect(record).toContainText('OS detected');
-  await panel.getByRole('button', { name: 'Stop local detection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Open Mac hardware details', exact: true }).click();
+  await mac.getByRole('button', { name: 'Stop detection', exact: true }).click();
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
   await expect(record).toContainText('Detection stopped');
 });
 
@@ -380,7 +383,7 @@ test('setup stays inside the contextual panel on a narrow screen', async ({ page
   await page.screenshot({ path: testInfo.outputPath('setup-mobile.png') });
 });
 
-test('photo notes open on connections, reveal the saved path, and scroll the monitor check into view', async ({
+test('photo notes open on connections, reveal the saved path, and lead to the monitor check', async ({
   page,
 }) => {
   const item = (
@@ -445,10 +448,13 @@ test('photo notes open on connections, reveal the saved path, and scroll the mon
   const preview = page.getByRole('dialog', { name: 'Review your desk scene', exact: true });
   await preview.getByRole('button', { name: 'Confirm and apply scene', exact: true }).click();
   await expect(preview).toHaveCount(0);
-  await photo
-    .getByRole('button', { name: 'Next: check connections in Hardware', exact: true })
-    .click();
+  await photo.getByRole('button', { name: 'Back to the desk', exact: true }).click();
+  await expect(
+    page.getByRole('complementary', { name: 'Hardware panel', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Hardware', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Hardware panel', exact: true });
+  await panel.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(panel.getByRole('button', { name: 'Connections', exact: true })).toHaveAttribute(
     'aria-current',
     'step',
@@ -466,10 +472,8 @@ test('photo notes open on connections, reveal the saved path, and scroll the mon
   await expect(usb).toBeVisible();
   await hdmi.click();
   await expect(panel.getByLabel('Setup connector', { exact: true })).toHaveValue('HDMI');
-  await panel.getByRole('button', { name: 'Edit connections', exact: true }).click();
-  await panel.getByRole('button', { name: 'Review connection', exact: true }).click();
   expect((await saved(page)).connections).toHaveLength(0);
-  await panel.getByRole('button', { name: 'Confirm connection', exact: true }).click();
+  await panel.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect(page.getByRole('switch', { name: 'Show connections' })).toHaveAttribute(
     'aria-checked',
     'true',
@@ -480,17 +484,14 @@ test('photo notes open on connections, reveal the saved path, and scroll the mon
   await expect(page.getByRole('region', { name: 'Focused connection path' })).toContainText(
     'Silver docking station',
   );
-  await panel.getByRole('button', { name: 'Continue to a check', exact: true }).click();
-  await panel.getByRole('button', { name: /^Right computer monitor/ }).click();
-  await expect(
-    page
-      .getByRole('group', { name: 'Workspace mode' })
-      .getByRole('button', { name: 'View', exact: true }),
-  ).toHaveAttribute('aria-pressed', 'true');
+  await panel.getByRole('button', { name: 'Devices', exact: true }).click();
+  await panel
+    .getByRole('button', { name: 'Review device Right computer monitor', exact: true })
+    .click();
   const inspector = page.getByRole('complementary', { name: 'Selected device', exact: true });
   await expect(
     inspector.getByRole('button', { name: 'Troubleshoot monitor step by step', exact: true }),
-  ).toBeInViewport();
+  ).toBeVisible();
 });
 
 test('a local demo reply about the selected device focuses its recorded path', async ({ page }) => {
@@ -533,8 +534,79 @@ test('hardware opens on connections for several devices and keeps the Mac summar
     panel.getByRole('region', { name: 'OS detection summary', exact: true }),
   ).toBeVisible();
   await expect(panel.getByRole('heading', { name: 'Mac recognition', exact: true })).toBeVisible();
-  await expect(panel.getByRole('heading', { name: 'User reports', exact: true })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Your devices (8)', exact: true })).toBeVisible();
+  await expect(panel).toContainText('0 reported working · 0 reported issues · 8 not checked');
   await expect(
     panel.getByRole('button', { name: 'Open Mac hardware details', exact: true }),
   ).toBeVisible();
+});
+
+test('choosing what a device plugs into saves that report without the connection form', async ({
+  page,
+}) => {
+  const workspace = createDemoWorkspace();
+  workspace.connections = [];
+  await seed(page, workspace);
+  const overview = page.getByRole('complementary', { name: 'Workspace overview', exact: true });
+  if (!(await overview.isVisible()))
+    await page.getByRole('button', { name: /Expand details and controls/ }).click();
+  await overview.getByRole('button', { name: /^Keyboard / }).click();
+  const inspector = page.getByRole('complementary', { name: 'Selected device', exact: true });
+  await expect(
+    inspector.getByRole('heading', { name: 'What is Keyboard plugged into?', exact: true }),
+  ).toBeVisible();
+  await inspector.getByRole('button', { name: "I don't know", exact: true }).click();
+  await expect(
+    inspector.getByRole('heading', { name: 'What is Keyboard plugged into?', exact: true }),
+  ).toHaveCount(0);
+  expect((await saved(page)).connections).toHaveLength(0);
+  await inspector.getByRole('button', { name: 'Close device details', exact: true }).click();
+  await overview.getByRole('button', { name: /^Mouse / }).click();
+  await inspector.getByRole('button', { name: 'Plugged into MacBook', exact: true }).click();
+  await expect.poll(async () => (await saved(page)).connections).toHaveLength(1);
+  const [link] = (await saved(page)).connections;
+  expect(link).toMatchObject({
+    from: 'mouse',
+    to: 'laptop',
+    connector: 'Unknown',
+    source: 'user-reported',
+  });
+  await expect(inspector).toContainText(
+    'Saved as what you reported. This does not check that it works.',
+  );
+  await expect(
+    inspector.getByRole('heading', { name: 'What is Mouse plugged into?', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'View', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(
+    page.getByRole('complementary', { name: 'Hardware panel', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('fix a problem sends any device to AI chat as an unsent draft', async ({ page }) => {
+  const initial = createDemoWorkspace();
+  const keyboard = initial.devices.find((device) => device.name === 'Keyboard')!;
+  let chatCalls = 0;
+  await page.route('**/api/chat', (route) => {
+    chatCalls++;
+    return route.abort();
+  });
+  await seed(page, initial);
+  const panel = await openSetup(page);
+  await panel.getByRole('button', { name: 'Fix a problem', exact: true }).click();
+  await expect(panel.getByRole('button', { name: /^Left monitor / })).toBeVisible();
+  await expect(panel).not.toContainText('Step-by-step check');
+  await panel.getByRole('button', { name: /^Keyboard / }).click();
+  const chat = page.getByRole('complementary', { name: 'DeskTwin conversation', exact: true });
+  await expect(chat.getByLabel('Conversation target', { exact: true })).toHaveValue(keyboard.id);
+  await expect(chat.getByLabel('Message DeskTwin', { exact: true })).toHaveValue(
+    'Keyboard is not working. What should I check first?',
+  );
+  expect(chatCalls).toBe(0);
+  const result = await saved(page);
+  expect(result.devices).toEqual(initial.devices);
+  expect(result.connections).toEqual(initial.connections);
 });

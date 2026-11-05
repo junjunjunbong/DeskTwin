@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { X, Link, Trash, Check, PencilSimple, ChatCircleDots } from '@phosphor-icons/react';
 import type { ConnectionFocusPath } from '../domain/connectionView';
 import { DeviceIcon } from './ui';
@@ -8,6 +8,7 @@ import { ShapeEditor } from './ShapeEditor';
 import { PlacementControls } from './PlacementControls';
 import { ReportedStatus } from './WorkspaceOverview';
 import { deviceDetails, type useDeviceDrafts } from './useDeviceDrafts';
+import { plugInTargets } from '../domain/deskSetup';
 import {
   kindLabels,
   sourceLabels,
@@ -23,6 +24,7 @@ interface Props {
   onCommand: (command: WorkspaceCommand) => void | boolean | Promise<boolean>;
   onClose: () => void;
   onConnect: () => void;
+  onPlugIn: (deviceId: string) => Promise<boolean>;
   onSelect: (id: string) => void;
   onEdit: () => void;
   onAsk?: () => void;
@@ -30,8 +32,6 @@ interface Props {
   onReviewConnections?: () => void;
   hardwareDetails?: ReactNode;
   drafts: ReturnType<typeof useDeviceDrafts>;
-  focusCheck?: boolean;
-  onCheckFocused?: () => void;
 }
 export function DeviceInspector({
   device: d,
@@ -40,6 +40,7 @@ export function DeviceInspector({
   onCommand,
   onClose,
   onConnect,
+  onPlugIn,
   onSelect,
   onEdit,
   onAsk,
@@ -47,8 +48,6 @@ export function DeviceInspector({
   onReviewConnections,
   hardwareDetails,
   drafts,
-  focusCheck = false,
-  onCheckFocused,
 }: Props) {
   const draft = drafts.drafts[d.id];
   const { name, model, status, statusNote: note } = draft?.values ?? deviceDetails(d);
@@ -58,21 +57,31 @@ export function DeviceInspector({
   const [removingConnection, setRemovingConnection] = useState<string | null>(null);
   const [removalPending, setRemovalPending] = useState(false);
   const [removalError, setRemovalError] = useState('');
-  const diagnosticRef = useRef<HTMLDivElement>(null);
-  const checkFocusedRef = useRef(onCheckFocused);
-  checkFocusedRef.current = onCheckFocused;
   useEffect(() => {
     if (mode !== 'edit') {
       setRemovingConnection(null);
       setRemovalError('');
     }
   }, [mode]);
-  useEffect(() => {
-    if (!focusCheck) return;
-    if (d.kind === 'monitor') diagnosticRef.current?.scrollIntoView({ block: 'start' });
-    checkFocusedRef.current?.();
-  }, [focusCheck, d.id, d.kind]);
   const links = workspace.connections.filter((c) => c.from === d.id || c.to === d.id);
+  const plugTargets = plugInTargets(workspace, d.id);
+  const [plugDismissed, setPlugDismissed] = useState(false);
+  const [plugSaving, setPlugSaving] = useState(false);
+  const [plugError, setPlugError] = useState('');
+  async function choosePlug(deviceId: string) {
+    if (plugSaving) return;
+    setPlugError('');
+    setPlugSaving(true);
+    try {
+      if (!(await onPlugIn(deviceId))) setPlugError('The connection was not saved.');
+    } catch (error) {
+      setPlugError(
+        error instanceof Error ? error.message.split('\n')[0] : 'The connection was not saved.',
+      );
+    } finally {
+      setPlugSaving(false);
+    }
+  }
   return (
     <aside className="floating-panel inspector" aria-label="Selected device">
       <div className="panel-heading">
@@ -270,6 +279,42 @@ export function DeviceInspector({
             </button>
           )}
         </form>
+        {plugTargets.length > 0 && !plugDismissed && (
+          <section className="plug-in-prompt" aria-label={`What is ${d.name} plugged into`}>
+            <h3>What is {d.name} plugged into?</h3>
+            <div className="plug-in-choices">
+              {plugTargets.map((device) => (
+                <button
+                  key={device.id}
+                  type="button"
+                  className="button secondary full"
+                  disabled={plugSaving}
+                  aria-label={`Plugged into ${device.name}`}
+                  onClick={() => void choosePlug(device.id)}
+                >
+                  {device.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="text-button"
+                disabled={plugSaving}
+                onClick={() => setPlugDismissed(true)}
+              >
+                I don't know
+              </button>
+            </div>
+            {plugError && (
+              <p className="form-error" role="alert">
+                {plugError}
+              </p>
+            )}
+            <p className="micro-note">
+              Nothing is saved until you choose. A choice records your report and does not check
+              that it works.
+            </p>
+          </section>
+        )}
         <section className="panel-section">
           <div className="section-heading">
             <h3>
@@ -398,7 +443,7 @@ export function DeviceInspector({
           </button>
         )}
         {d.kind === 'monitor' && (
-          <div ref={diagnosticRef}>
+          <div>
             <DiagnosticPanel
               key={d.id}
               device={d}

@@ -46,7 +46,6 @@
   font-size: 12px;
   color: #756449;
 }
-.desk-setup-local,
 .desk-setup-notes,
 .desk-setup-records {
   margin: 15px 0;
@@ -61,81 +60,66 @@
   font-weight: 650;
   line-height: 1.6;
 }
-.desk-setup-local summary > svg {
-  vertical-align: middle;
-  margin-right: 5px;
-}
-.desk-setup-local summary > span {
-  display: block;
-  color: #748277;
-  font-weight: 400;
-  font-size: 10px;
-}
-.desk-setup-local small,
 .desk-setup-notes small,
 .desk-setup-questions small {
   display: block;
   color: #748078;
   line-height: 1.5;
 }
-.desk-setup-panel .desk-setup-check {
+.desk-setup-list-head {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 13px 0;
-  line-height: 1.6;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-bottom: 8px;
 }
-.desk-setup-check input {
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
-  margin-top: 3px;
+.desk-setup-list-head h3 {
+  margin: 0;
+  font-size: 15px;
 }
-.desk-setup-devices {
-  display: grid;
-  gap: 10px;
-  margin: 16px 0;
+.desk-setup-list-head small {
+  font-size: 11px;
+  color: #748078;
 }
-.desk-setup-device {
-  border: 1px solid #e2e7e5;
-  border-radius: 10px;
-  padding: 12px;
-}
-.desk-setup-device-title {
+.desk-setup-device-row {
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid #e6ebe8;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.desk-setup-device-row:hover {
+  background: #f6f9f7;
+}
+.desk-setup-device-row > svg {
+  flex-shrink: 0;
+  color: #8a968f;
+}
+.desk-setup-device-row .hardware-badge {
+  flex-shrink: 0;
+}
+.desk-setup-device-text {
+  flex: 1;
+  min-width: 0;
+}
+.desk-setup-device-text strong,
+.desk-setup-device-text small {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.desk-setup-device-text strong {
   font-size: 13px;
 }
-.desk-setup-device-title > strong {
-  overflow-wrap: anywhere;
-}
-.desk-setup-device dl {
-  display: grid;
-  gap: 5px;
-  margin: 10px 0;
+.desk-setup-device-text small {
   font-size: 11px;
-}
-.desk-setup-device dl > div {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  gap: 6px;
-}
-.desk-setup-device dt {
-  color: #7c8981;
-}
-.desk-setup-device dd {
-  margin: 0;
-}
-.desk-setup-device > .text-button {
-  display: flex;
-  margin-top: 8px;
-}
-.desk-setup-match {
-  padding-top: 10px;
-  margin-top: 10px;
-  border-top: 1px dashed #d7e0da;
+  color: #748078;
 }
 .desk-setup-notes > p {
   white-space: pre-wrap;
@@ -151,30 +135,26 @@
   font-size: 12px;
   margin: 0 0 8px;
 }
-.desk-setup-questions > button {
-  width: 100%;
+.desk-setup-chips {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 9px;
-  text-align: left;
-  border: 1px solid #e1e6e2;
-  border-radius: 8px;
-  background: #fafcfa;
-  padding: 10px;
-  margin: 5px 0;
-  font-size: 12px;
-  line-height: 1.5;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.desk-setup-questions > button.active {
+.desk-setup-chips > button {
+  border: 1px solid #e1e6e2;
+  border-radius: 999px;
+  background: #fafcfa;
+  padding: 6px 11px;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.desk-setup-chips > button.active {
   border-color: #b9cfc1;
   background: #eff5f0;
-}
-.desk-setup-questions > button svg {
-  flex-shrink: 0;
-}
-.desk-setup-questions > small {
-  margin-top: 8px;
+  font-weight: 650;
 }
 .desk-setup-connection-form {
   margin: 18px 0 10px;
@@ -193,22 +173,49 @@
   overflow-wrap: anywhere;
   font-size: 12px;
 }
+.desk-setup-records h4 {
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+.desk-setup-records > .micro-note {
+  margin: 4px 0 0;
+}
 .desk-setup-edge {
-  padding: 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
   border-bottom: 1px solid #dde5df;
 }
-.desk-setup-edge > strong,
-.desk-setup-edge > span {
-  display: block;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
+.desk-setup-edge:last-child {
+  border-bottom: 0;
 }
 .desk-setup-edge > span {
+  min-width: 0;
+}
+.desk-setup-edge strong,
+.desk-setup-edge small {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.desk-setup-edge small {
   font-size: 11px;
   color: #748078;
 }
 .desk-setup-edge > .text-button {
-  margin-top: 6px;
+  flex-shrink: 0;
+}
+.desk-setup-ports {
+  margin: 4px 0 12px;
+  font-size: 12px;
+}
+.desk-setup-ports summary .muted {
+  font-weight: 400;
+}
+.desk-setup-ports .two-columns {
+  margin-top: 8px;
 }
 .desk-setup-suggestions {
   display: grid;

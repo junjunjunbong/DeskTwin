@@ -40,7 +40,6 @@ export function WorkspaceOverview({
   onAdd,
   onAddObject,
   onBuildFromPhoto,
-  onCheckConnections,
   removableSamples = 0,
   onStartOwnDesk,
   renderHardwareStatus,
@@ -51,7 +50,6 @@ export function WorkspaceOverview({
   onAdd: () => void;
   onAddObject: () => void;
   onBuildFromPhoto: () => void;
-  onCheckConnections: () => void;
   removableSamples?: number;
   onStartOwnDesk?: () => Promise<void>;
   renderHardwareStatus?: (device: Device) => ReactNode;
@@ -130,11 +128,6 @@ export function WorkspaceOverview({
             <Cube size={16} />
             Add an object
           </button>
-          {workspace.devices.length > 0 && !exampleDesk && (
-            <button className="text-button" onClick={onCheckConnections}>
-              Next: check connections in Hardware →
-            </button>
-          )}
         </section>
         <div className="overview-totals" aria-label="Workspace counts">
           <div>
