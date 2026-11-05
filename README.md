@@ -144,7 +144,7 @@ MODEL_API_KEY='' DESKTWIN_WEB_PORT=5187 PORT=4337 npm run dev
 
 </details>
 
-## 🏗️ Architecture
+## 🧩 Architecture
 
 ```mermaid
 flowchart LR
